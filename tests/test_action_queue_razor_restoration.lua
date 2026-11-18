@@ -66,6 +66,9 @@ print('PASS actual native razor pickup/equip/trim, owned hand restoration and re
 local canceled,oldPrimary,borrowedRazor,active,retained=prepared()
 local toolkit=canceled.env.PZSurvivorToolkit
 local token=active.toolkitQueueOperation
+canceled.env.ISInventoryPaneContextMenu.readItem(canceled.book(812,canceled.inventory),0)
+local reader=canceled.queue.queue[#canceled.queue.queue]
+assert(reader.Type=='ISReadABook' and reader.toolkitQueueOperation~=token)
 local ok,why=toolkit.ActionQueue.cancelOperation(canceled.queue,active)
 assert(ok,'active native trim cancellation refused: '..tostring(why))
 canceled.stop(active,true)
@@ -80,5 +83,40 @@ canceled.start(command);canceled.dispatch(command,'perform')
 local transfer=canceled.queue.current
 assert(transfer and transfer.Type=='ISInventoryTransferAction' and transfer.item==borrowedRazor)
 canceled.start(transfer);canceled.dispatch(transfer,'perform')
+assert(canceled.queue.current==reader)
+canceled.dispatch(reader,'perform')
 assert(#canceled.queue.queue==0 and #canceled.effects==2 and borrowedRazor.container==canceled.source
  and canceled.player.primary==oldPrimary and #toolkit.ActionQueueSettlement.blockedReturns(canceled.player)==0)
+
+-- The container can change after the razor was borrowed. Only the location
+-- obligation is waived by Keep; native hand restoration has already finished.
+for _, obstacle in ipairs({'unavailable', 'full'}) do
+    local run, hammer, tool, grooming, restore = prepared()
+    local queue, execution = run.queue, run.env.PZSurvivorToolkit.ActionQueueExecution
+    if obstacle == 'unavailable' then run.bag.container = nil else run.source.room = false end
+    run.env.ISInventoryPaneContextMenu.readItem(run.book(812, run.inventory), 0)
+    local tail = queue.queue[#queue.queue]
+    assert(tail.Type == 'ISReadABook')
+    run.dispatch(grooming, 'perform')
+    run.start(restore); run.dispatch(restore, 'perform')
+    local hand = queue.current
+    assert(hand.Type == 'ISEquipWeaponAction' and hand.item == hammer)
+    run.start(hand); run.dispatch(hand, 'perform')
+    local continuation = queue.current
+    run.start(continuation); run.dispatch(continuation, 'perform')
+    if obstacle == 'full' then
+        local transfer = queue.current
+        assert(transfer.Type == 'ISInventoryTransferAction' and transfer.item == tool and not transfer:isValid())
+        run.remove(transfer)
+        queue:tick()
+    end
+    assert(queue.current == tail and tool.container == run.inventory and run.player.primary == hammer,
+        obstacle .. ': blocked return interrupted independent work')
+    local debts = execution.blockedReturns(run.player)
+    assert(#debts == 1 and debts[1].itemId == tool:getID() and debts[1].state == 'blocked',
+        obstacle .. ': missing unpaid return')
+    assert(execution.keepReturn(run.player, debts[1].id) and #execution.blockedReturns(run.player) == 0,
+        obstacle .. ': cannot keep borrowed razor')
+    run.dispatch(tail, 'perform')
+    assert(#queue.queue == 0 and #run.effects == 1 and tool.container == run.inventory)
+end

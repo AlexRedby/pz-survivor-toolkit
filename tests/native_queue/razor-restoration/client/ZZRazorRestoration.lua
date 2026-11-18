@@ -8,6 +8,18 @@ local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit
 local Proof=require 'PZSurvivorToolkit/SourceProof'
+-- Select the fixture character before ZZStartup advances the creation menu.
+Events.OnPreUIDraw.Add(function()
+ if isIngameState() then return end
+ local main=MainScreen and MainScreen.instance
+ local panel=main and main.charCreationMain
+ if not panel or not panel.genderCombo or not main.desc or not main.avatar then return end
+ if main.desc:isFemale() or panel.genderCombo.selected~=2 then
+  assert(Proof.closure(panel.onGenderSelected,'CharacterCreationMain.lua'),'native character creation callback unavailable')
+  panel.genderCombo.selected=2
+  panel:onGenderSelected(panel.genderCombo)
+ end
+end)
 local Approach=T.ActionQueueApproach
 local isContainerApproach=Approach and Approach.isContainer
 local phase,index,since='prepare',1,getTimestampMs()
@@ -15,6 +27,9 @@ local started,ready,done=false,false,false
 local state,authority,previous,ids,receipt,placement,placing,placementProof,quiet
 local evidence,actions,tracks,order={},{},{},{}
 local menu,primaryMenu,nativeMethods
+local originReceipt,originRequestedAt
+local observeCancelStop
+local function originCase()return ids.case=='full-origin'or ids.case=='unavailable-origin'or ids.case=='keep-return'end
 local function q()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #q().queue==0 and not getPlayer():hasTimedActions()end
 local function raw(event,row)print('[RAZOR_RESTORATION] '..event..' '..JSON.encode(row))end
@@ -26,7 +41,8 @@ end
 local function exactApproach(action)
  assert(T.ActionQueueApproach==Approach and Approach.isContainer==isContainerApproach
   and Proof.closure(isContainerApproach,'ActionQueueApproach.lua'),'container approach predicate binding changed')
- local bag=assert(F.find(getPlayer(),ids.bag.id))
+ local bag=F.find(getPlayer(),ids.bag.id)or state and state.bag
+ assert(bag and bag:getID()==ids.bag.id and bag:getFullType()==ids.bag.type,'exact origin bag observation unavailable')
  return isContainerApproach(action,bag:getItemContainer(),getPlayer())==true
 end
 local function role(action)
@@ -44,10 +60,24 @@ local function role(action)
  return 'unknown'
 end
 local function track(action)
- if tracks[action]then return tracks[action]end
+ if tracks[action]then
+  local row=tracks[action]
+  if row.operation~=action.toolkitQueueOperation then
+   local original=actions.trim and actions.trim.toolkitQueueOperation;local token=action.toolkitQueueOperation
+   assert(ids.case=='cancel-active'and evidence.control and row.role=='command'and not row.operationTransition
+    and row.actionRef==evidence.producerQueue[#evidence.producerQueue]and row.operation==original
+    and token and token~=original and token~=actions.tail.toolkitQueueOperation and not action.action and not row.native,
+    'operation changed outside exact preallocated canceled razor cleanup command')
+   row.originalOperationRef=row.operationRef
+   row.operationTransition={at=getTimestampMs(),from=row.operationRef,to=tostring(token),preallocation=true,sameAction=true}
+   row.operation=token;row.operationRef=tostring(token)
+   raw('RETOKEN',{case=ids.case,actionRef=row.actionRef,observation=row.operationTransition})
+  end
+  return row
+ end
  local name=role(action);assert(name~='unknown','unexpected native producer action '..tostring(action.Type))
  if name~='command'then assert(not actions[name]or actions[name]==action,'duplicate exact native action '..name);actions[name]=action end
- local row={role=name,type=action.Type,actionRef=tostring(action),itemId=action.item and action.item:getID()or false,
+ local row={role=name,type=action.Type,actionRef=tostring(action),operationRef=tostring(action.toolkitQueueOperation),itemId=action.item and action.item:getID()or false,
   constructorDuration=action.maxTime,sourceRef=action.srcContainer and tostring(action.srcContainer)or false,allocated=false,started=false,progress=false,events={},ack={},transfers={}}
  row.actor,row.queue,row.root,row.item,row.operation=action.character,q(),action.character:getInventory(),action.item,action.toolkitQueueOperation
  row.source,row.destination=action.srcContainer,action.destContainer
@@ -79,6 +109,7 @@ local function itemIdentity(action,row,boundary)
 end
 local function transferObservation(action,row,boundary)
  if row.role~='pickup'and row.role~='returned'then return end
+ if boundary=='poll'and q().current~=action and(not row.started or row.transferDone)then return end
  local identity=itemIdentity(action,row,boundary);local physical=F.transferSnapshot(state,row.role)
  local transaction=action.transactionId or 0
  local done=isClient()and transaction~=0 and isItemTransactionDone(transaction)or false
@@ -115,6 +146,7 @@ end
 assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
  started=function(action)
   if phase~='running'or action.character~=getPlayer()then return end
+  if observeCancelStop then observeCancelStop('before-next-admission',action)end
   local row=track(action);row.admittedAt=getTimestampMs()
   if row.role=='tail'then evidence.tailBoundary={at=getTimestampMs(),snapshot=F.snapshot(state),debts=T.ActionQueueSettlement.blockedReturns(getPlayer())}end
  end,
@@ -134,16 +166,17 @@ assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
  end,
 }))
 local function request(command)
- local args={case=config.cases[index],placement=placement,clientPlacement=placementProof}
+ local args={case=config.cases[index],placement=placement,clientPlacement=placementProof,requestedAt=originRequestedAt}
  if isClient()then sendClientCommand('RazorRestorationTest',command,args)
  elseif command=='Prepare'then authority=F.prepare(getPlayer(),args.case,placement,placementProof,previous);previous=nil;ids=authority.ids;raw('PREPARED',ids)
+ elseif command=='ChangeOrigin'then originReceipt=F.changeOrigin(authority,originRequestedAt);raw('ORIGIN',originReceipt)
  else receipt=assert(F.verify(authority),'SP exact physical authority differs');receipt.transfers=authority.transfers or{};raw('VERIFIED',receipt)end
 end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='RazorRestorationTest'or done then return end
  if command=='Failed'then fail(args.error)
  elseif args and args.case==config.cases[index]then
-  if command=='Prepared'then ids=args elseif command=='Verified'then receipt=args end
+  if command=='Prepared'then ids=args elseif command=='Verified'then receipt=args elseif command=='OriginChanged'then originReceipt=args end
  end
 end)
 local function callbacksUnchanged()
@@ -197,7 +230,85 @@ local function produce()
  for _,action in ipairs(q().queue)do track(action)end
  assert(actions.tail and actions.tail.toolkitQueueOperation~=actions.trim.toolkitQueueOperation,'native independent reader tail missing')
 end
+local function ownedPanel()
+ local panel=T.ActionQueuePanel:new(80,80,460,640)
+ panel.queue,panel.playerNum=q(),getPlayer():getPlayerNum();panel:initialise();panel:addToUIManager();panel:update()
+ return panel
+end
+local function cancellationState(trim,row,boundary)
+ local player=getPlayer()
+ return{at=getTimestampMs(),boundary=boundary,actionRef=row.actionRef,nativeRef=tostring(trim.action),
+  actionSame=actions.trim==trim,nativeSame=trim.action==row.native,actorSame=trim.character==row.actor and player==row.actor,
+  queueSame=ISTimedActionQueue.queues[row.actor]==row.queue and q()==row.queue,rootSame=player:getInventory()==row.root,
+  member=player:getCharacterActions():contains(row.native),current=q().current==trim,beard=player:getHumanVisual():getBeardModel()or''}
+end
+observeCancelStop=function(boundary,nextAction)
+ local control=evidence.control
+ if not ids or ids.case~='cancel-active'or not control or not control.nativeStop or control.nativeStop.after or control.accepted~=true then return end
+ local trim=actions.trim;local row=tracks[trim];local sample=cancellationState(trim,row,boundary)
+ assert(sample.actionSame and sample.nativeSame and sample.actorSame and sample.queueSame and sample.rootSame and sample.beard==ids.initialBeard,'canceled trim escaped exact native actor/queue/item episode')
+ if not sample.member and not sample.current then
+  sample.snapshot=F.snapshot(state);assert(F.same(sample.snapshot,control.before),'native cancellation mutated physical appearance or inventory before cleanup')
+  control.nativeStop.after=sample;raw('CONTROL',{case=ids.case,observation=control});raw('CANCEL_NATIVE',{case=ids.case,observation=control.nativeStop})
+ elseif nextAction and nextAction~=trim then error('razor cleanup/tail admitted before exact canceled native trim disappeared')end
+end
+local function cancelActive(trim,row)
+ local panel=ownedPanel();local list=panel.list;list:setYScroll(0)
+ local target
+ for _,entry in ipairs(list.items)do if entry.header and entry.operation==trim.toolkitQueueOperation then assert(not target,'ambiguous razor header');target=entry end end
+ target=assert(target,'real active razor operation header missing')
+ local x,y=list:cancelX()+1,list:topOfItem(target.index)+target.height/2
+ assert(list:rowUnderMouse(x,y)==target,'real cancel hit target differs')
+ local before=F.snapshot(state);local token=trim.toolkitQueueOperation
+ local control={source='ActionQueuePanel.List',input='programmatic-press-release',at=getTimestampMs(),trimRef=row.actionRef,
+  trimNative=tostring(trim.action),trimDelta=trim:getJobDelta(),before=before,header=true,hitTested=true,targetRef=tostring(target.item),operationRef=tostring(token)}
+ control.nativeStop={before=cancellationState(trim,row,'before-press')};control.at=control.nativeStop.before.at
+ assert(control.nativeStop.before.member and control.nativeStop.before.current,'cancel press missed exact allocated active native trim')
+ list:onMouseDown(x,y);control.pressCaptured=list.pressedOperation~=nil and list.pressedOperation.operation==token
+ assert(control.pressCaptured,'real active razor header press rejected: '..tostring(list.cancelFeedback and list.cancelFeedback.text))
+ local members={};for _,action in ipairs(list.pressedOperation.members)do members[#members+1]=tostring(action)end;control.members=members
+ evidence.control=control;list:onMouseUp(x,y)
+ for _,action in ipairs(q().queue)do track(action)end
+ control.accepted=list.cancelFeedback==nil;control.reason=list.cancelFeedback and list.cancelFeedback.reason or false
+ control.after=F.snapshot(state);control.tailQueued=false
+ for _,action in ipairs(q().queue)do if action==actions.tail then control.tailQueued=true end end
+ assert(control.accepted and control.tailQueued,'real active cancel rejected or removed independent tail')
+ evidence.control=control;panel:removeFromUIManager();observeCancelStop('after-release')
+end
+local function keepBlocked()
+ local debts=T.ActionQueueExecution.blockedReturns(getPlayer());if #debts==0 then return end
+ assert(#debts==1 and debts[1].itemId==ids.items.razor.id and debts[1].state=='blocked','origin failure lost exact live razor debt')
+ if not evidence.blocked then
+  local tail=tracks[actions.tail]
+  evidence.blocked={at=getTimestampMs(),debts=debts,snapshot=F.snapshot(state),tailRef=tail.actionRef,tailStarted=tail.started,tailProgress=tail.progress}
+  local panel=ownedPanel();local selected=panel.returnEntries and panel.returnEntries[panel.returnIndex or 1]
+  evidence.blocked.ui={source='ActionQueuePanel.KeepReturn',visible=panel:getIsVisible()and panel.keepReturnButton and panel.keepReturnButton:getIsVisible()or false,
+   id=selected and selected.id or false,itemId=selected and selected.itemId or false}
+  assert(evidence.blocked.ui.visible and evidence.blocked.ui.id==debts[1].id and evidence.blocked.ui.itemId==ids.items.razor.id,'exact blocked razor debt is absent from real footer')
+  panel:removeFromUIManager()
+  if actions.returned then
+   local action=actions.returned;local attempt=tracks[action];local queued=false
+   for _,candidate in ipairs(q().queue)do if candidate==action then queued=true end end
+   evidence.blocked.returnAttempt={at=getTimestampMs(),actionRef=attempt.actionRef,nativeRef=tostring(action.action),
+    reason=debts[1].reason,itemId=attempt.itemId,allocated=action.action~=nil,started=attempt.started,progress=attempt.progress,queued=queued,physical=F.transferSnapshot(state,'returned')}
+  end
+  raw('BLOCKED',{case=ids.case,observation=evidence.blocked})
+ end
+ if ids.case~='keep-return'or evidence.keep or not tracks[actions.tail].progress then return end
+ local panel=ownedPanel();assert(panel:getIsVisible()and panel.keepReturnButton and panel.keepReturnButton:getIsVisible(),'real blocked return footer missing')
+ local selected=assert(panel.returnEntries[panel.returnIndex or 1]);assert(selected.id==debts[1].id,'real Keep selected foreign debt')
+ local button=panel.keepReturnButton;local before=F.snapshot(state)
+ local receipt={source='ActionQueuePanel.KeepReturn',input='programmatic-press-callback',at=getTimestampMs(),id=selected.id,itemId=selected.itemId,
+  visible=true,before=before,tailRef=tracks[actions.tail].actionRef,tailStarted=tracks[actions.tail].started,tailProgress=tracks[actions.tail].progress,queueActive=not empty()}
+ button:onMouseDown(1,1);receipt.pressCaptured=button.returnId==selected.id
+ panel:keepFailedReturn(button)
+ receipt.after=F.snapshot(state);receipt.cleared=#T.ActionQueueExecution.blockedReturns(getPlayer())==0
+ receipt.sameSnapshot=F.same(before,receipt.after);receipt.accepted=receipt.pressCaptured and receipt.cleared and receipt.sameSnapshot and not panel.returnRejected
+ assert(receipt.pressCaptured and receipt.cleared and receipt.sameSnapshot and receipt.accepted and receipt.queueActive,'real Keep did not retire exact blocked debt without physical mutation')
+ evidence.keep=receipt;raw('KEEP',{case=ids.case,observation=receipt});panel:removeFromUIManager()
+end
 local function observe()
+ observeCancelStop('poll')
  assert(callbacksUnchanged(),'fixture observed replaced native action or UI callbacks')
  for _,action in ipairs(q().queue)do track(action)end
  for action,row in pairs(tracks)do
@@ -219,6 +330,35 @@ local function observe()
   end
  end
  local trim=actions.trim;local row=tracks[trim]
+ -- Local animation can advance before Host admits the timed action.
+ -- Use the same current Started receipt required by the grooming cancel policy.
+ if row.progress and q().current==trim and (not isClient() or row.receipt
+  and T.ActionQueueAcknowledgements.state(trim,row.receipt)=='started') then
+  if ids.case=='cancel-active'and not evidence.control then cancelActive(trim,row)end
+  if originCase()and not originRequestedAt then
+   originRequestedAt=getTimestampMs()
+   evidence.control={source='authority.ChangeOrigin',input='authority-command',at=originRequestedAt,requestedAt=originRequestedAt,
+    trimRef=row.actionRef,trimNative=tostring(trim.action),trimDelta=trim:getJobDelta(),before=F.snapshot(state),accepted=false}
+   request('ChangeOrigin')
+  end
+ end
+ if originReceipt and not evidence.origin then
+  evidence.origin=originReceipt;evidence.control.accepted=true;evidence.control.acceptedAt=originReceipt.at
+  if isClient()and originReceipt.kind=='full'then
+   local bag=assert(F.find(getPlayer(),ids.bag.id));local source=bag:getItemContainer();local razor=assert(F.find(getPlayer(),ids.items.razor.id))
+   assert(q().current==trim and trim:isStarted()and trim:getJobDelta()>0 and trim:getJobDelta()<1 and bag:getFullType()==ids.bag.type
+    and razor:getContainer()==getPlayer():getInventory()and getPlayer():getPrimaryHandItem()==razor,'capacity replica confirmation missed actual active trim')
+   local replica={source='authority-confirmed-capacity',case=ids.case,at=getTimestampMs(),authorityAt=originReceipt.at,requestedAt=originRequestedAt,bagId=bag:getID(),itemId=razor:getID(),
+    capacityBefore=source:getCapacity(),roomBefore=source:hasRoomFor(getPlayer(),razor),trimRef=row.actionRef,trimNative=tostring(trim.action),trimDelta=trim:getJobDelta(),before=F.snapshot(state)}
+   assert(originReceipt.authority==true and originReceipt.capacityAfter==0 and originReceipt.roomAfter==false and replica.capacityBefore>0 and replica.roomBefore,'capacity authority/replica intervention mismatch')
+   -- ItemContainer capacity is fixture-local data; mirror only the exact authoritative intervention, as the native wring fixture does.
+   source:setCapacity(0);replica.capacityAfter=source:getCapacity();replica.roomAfter=source:hasRoomFor(getPlayer(),razor);replica.after=F.snapshot(state)
+   replica.unchanged=F.same(replica.before,replica.after);assert(replica.capacityAfter==0 and not replica.roomAfter and replica.unchanged,'full origin replica did not preserve exact native inventory')
+   evidence.originReplica=replica;raw('ORIGIN_REPLICA',replica)
+  end
+  raw('CONTROL',{case=ids.case,observation=evidence.control});raw('ORIGIN_CLIENT',originReceipt)
+ end
+ if originCase()then keepBlocked()end
  if ids.case=='new-primary-intent'and row.progress and q().current==trim and not evidence.explicitRequested then
   assert(getPlayer():getPrimaryHandItem()==F.find(getPlayer(),ids.items.razor.id),'explicit request missed actual razor held during trim')
   local before=T.ActionQueueTidyIntent.primaryRequestRevision(getPlayer())
@@ -271,12 +411,17 @@ require('QueuePreflight').onTick(Events,function()
    assert(actions.trim and tracks[actions.trim].started and tracks[actions.trim].progress,'real native trim did not progress')
    assert(actions.tail and tracks[actions.tail].started and tracks[actions.tail].progress,'independent native reader did not progress')
    local debts=T.ActionQueueSettlement.blockedReturns(player)
-   if ids.case=='restore-success'then
+   if ids.case=='restore-success'or ids.case=='cancel-active'then
     assert(actions.restore and actions.returned and #debts==0 and not evidence.explicitRequested,'ordinary producer restore/return missing')
-   else
+    if ids.case=='cancel-active'then assert(evidence.control and evidence.control.nativeStop and evidence.control.nativeStop.after,'exact native trim cancellation was not observed before cleanup')end
+   elseif ids.case=='new-primary-intent'then
     assert(evidence.explicitRequested and actions.explicitEquip and not actions.restore and not actions.returned,
      'new primary intent allowed old restore or borrowed return construction')
     assert(#debts==1 and debts[1].itemId==ids.items.razor.id and debts[1].state=='blocked','new primary intent lost exact unpaid razor debt')
+   else
+    assert(evidence.origin and evidence.blocked and actions.restore and not evidence.explicitRequested,'origin change lost authority receipt, restored hammer, or visible debt')
+    if ids.case=='keep-return'then assert(evidence.keep and #debts==0,'real Keep did not retire exact debt')
+    else assert(#debts==1 and debts[1].itemId==ids.items.razor.id and debts[1].state=='blocked','unpaid blocked razor debt missing')end
    end
    if not F.verify(state)then return end
    quiet=quiet or getTimestampMs();if getTimestampMs()-quiet<500 then return end
@@ -294,6 +439,7 @@ require('QueuePreflight').onTick(Events,function()
    if not config.cases[index]then emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
    for _,debt in ipairs(T.ActionQueueSettlement.blockedReturns(player))do assert(T.ActionQueueExecution.keepReturn(player,debt.id),'explicit fixture debt retirement refused')end
    state,authority,ids,receipt,placement,placing,placementProof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
+   originReceipt,originRequestedAt=nil,nil
    actions,tracks,order,evidence={},{},{},{};phase='prepare';since=getTimestampMs()
   end
  end)

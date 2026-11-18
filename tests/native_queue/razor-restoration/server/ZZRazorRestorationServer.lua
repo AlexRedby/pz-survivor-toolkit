@@ -14,6 +14,9 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   if command=='Prepare'then
    assert(not state and args.clientPlacement.centered==true,'razor-restoration placement proof missing')
    pending={command=command,player=player,case=args.case,target=P.target(args.placement),arrival=P.observeCentered(player,P.target(args.placement)),since=getTimestampMs()}
+  elseif command=='ChangeOrigin'then
+   assert(state and state.player==player,'origin intervention without authority seed')
+   local receipt=F.changeOrigin(state,args.requestedAt);raw('ORIGIN',receipt);sendServerCommand(player,'RazorRestorationTest','OriginChanged',receipt)
   else assert(command=='Verify'and state and state.player==player,'unexpected razor-restoration authority command');pending={command=command,player=player,since=getTimestampMs()}end
  end)
  if not ok then fail(player,reason)end

@@ -2826,6 +2826,7 @@ local function bindPlannedReturn(action, scope, candidate, entry, preparedStep)
         source = entry and entry.source or action.srcContainer, destination = entry and entry.destination or action.destContainer,
         owner = candidate.sourceOwner, scope = scope, candidate = candidate, waivable = candidate.executionOptional == true}
     candidate.plannedReturn, candidate.returnDestination = action, entry and entry.destination or action.destContainer
+    return step.returning
 end
 
 -- A descriptor never executes validation or reserves capacity. Only exact earned
@@ -4011,7 +4012,10 @@ local function enqueueBorrowedReturn(step)
     if not Settlement.inheritCleanup(action, parent) then return end
     if dependency and (candidate.returnSuccess ~= dependency or returnSuccessState(dependency) ~= "earned"
         or queue.current ~= parent or queue.queue[1] ~= parent) then return end
-    bindPlannedReturn(action, scope, candidate)
+    local planned = bindPlannedReturn(action, scope, candidate)
+    -- A paid hand restore leaves only the location obligation. Let the
+    -- ordinary execution guard isolate a native refusal for this exact return.
+    if dependency then planned.waivable = true end
     ISTimedActionQueue.add(action)
     return action
 end

@@ -12,17 +12,34 @@ ACTION_TYPES = {'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEq
                 'restore': 'ISEquipWeaponAction', 'returned': 'ISInventoryTransferAction', 'tail': 'ISReadABook',
                 'explicitEquip': 'ISEquipWeaponAction', 'command': 'ISQueueActionsAction', 'approach': 'ISQueueActionsAction'}
 ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration')
+RETURNED_CASES = {'restore-success', 'cancel-active'}
+ORIGIN_CASES = {'full-origin', 'unavailable-origin', 'keep-return'}
+
+
+def action_key(value):
+    """Kahlua action identity excludes its mutable diagnostic field dump."""
+    if isinstance(value, str):
+        match = re.fullmatch(r'([A-Za-z][A-Za-z0-9_]*) 0x(0|[1-9][0-9]*)(?:\{[^\r\n]*\})?', value)
+        if match and int(match[2]) <= 2147483647:
+            return ('native-action', match[1], match[2])
+    return ('literal', value)
 
 
 def expected(ids, authority):
     row = copy.deepcopy(ids['baseline'])
-    row['appearance']['beard'] = ids['targetBeard']
-    row['primary'] = ids['items']['previous' if ids['case'] == 'restore-success' else 'replacement']['id']
+    row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
+    row['primary'] = ids['items']['replacement' if ids['case'] == 'new-primary-intent' else 'previous']['id']
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
-    if ids['case'] == 'new-primary-intent':
+    if ids['case'] not in RETURNED_CASES:
+        row['origin']['sourceCount'] = 0
         for item in row['items']:
             if item['id'] == ids['items']['razor']['id']:
                 item['container'] = 'root'
+    if ids['case'] == 'unavailable-origin':
+        row['origin'].update(container='unavailable', worn=False)
+        for item in row['items']:
+            if item['id'] == ids['bag']['id']: item['container'] = 'unavailable'
+        row['worn'] = [item for item in row['worn'] if item['id'] != ids['bag']['id']]
     row['authority'] = authority
     return row
 
@@ -62,6 +79,8 @@ def validate_prepared(ids, selection):
             or baseline.get('primary') != owned['previous']['id'] or baseline.get('secondary') is not False
             or baseline['appearance'].get('beard') != ids['initialBeard']):
         raise ValueError('authority seed equipment/appearance differs')
+    if baseline.get('origin') != dict(id=bag['id'], type=bag['type'], container='root', worn=True, sourceCount=1):
+        raise ValueError('origin baseline exact carried/worn inventory differs')
     tail = owned['tail']; checkpoint = baseline['tail']
     if (type(tail.get('total')) is not int or type(tail.get('initial')) is not int
             or tail['total'] - tail['initial'] != 2 or tail['initial'] <= 0
@@ -119,7 +138,7 @@ def transfer_errors(action, ids, kind):
 
 
 def authority_transfer_errors(receipt, ids):
-    values = receipt.get('transfers'); expected_roles = ['pickup', 'returned'] if ids['case'] == 'restore-success' else ['pickup']
+    values = receipt.get('transfers'); expected_roles = ['pickup', 'returned'] if ids['case'] in RETURNED_CASES else ['pickup']
     if type(values) is not list or [value.get('role') for value in values] != expected_roles:
         return ['Independent authority physical transfer transitions missing/reordered']
     errors = []
@@ -146,7 +165,7 @@ def producer_errors(ev, roles, ids):
         if (entry.get('position') != index or entry.get('actionRef') != action['actionRef'] or entry.get('role') != name
                 or any(entry.get(key) is not True for key in ('sameToken', 'actorSame', 'queueEntrySame'))
                 or operation_key(entry.get('operationRef')) != token
-                or operation_key(action.get('operationRef')) != token):
+                or operation_key(action.get('originalOperationRef', action.get('operationRef'))) != token):
             errors.append('Producer queue array identity/position/actor/token differs: ' + name)
     approach = ev.get('approach')
     if not prefix:
@@ -165,10 +184,236 @@ def producer_errors(ev, roles, ids):
     return errors
 
 
+def borrowed_snapshot(ids):
+    row = copy.deepcopy(ids['baseline']); row['primary'] = ids['items']['razor']['id']
+    row['origin']['sourceCount'] = 0
+    for item in row['items']:
+        if item['id'] == ids['items']['razor']['id']: item['container'] = 'root'
+    return row
+
+
+def blocked_debt_errors(debts, ids):
+    if (type(debts) is not list or len(debts) != 1 or type(debts[0].get('id')) is not int
+            or debts[0]['id'] <= 0 or debts[0].get('itemId') != ids['items']['razor']['id']
+            or debts[0].get('itemType') != 'Base.Razor' or debts[0].get('state') != 'blocked'
+            or debts[0].get('reason') not in (('cleanup-return',) if ids['case'] == 'unavailable-origin' else ('admission', 'server', 'unmoved'))):
+        return ['Exact unpaid razor debt missing or changed']
+    return []
+
+
+def reader_snapshot_errors(snapshot, ids):
+    wanted = expected(ids, False); wanted.pop('authority')
+    pages = snapshot.get('tail', {}).get('pages')
+    if not number(pages) or not ids['items']['tail']['initial'] <= pages <= ids['items']['tail']['total']:
+        return ['Reader checkpoint escapes exact native range']
+    wanted['tail']['pages'] = wanted['tail']['characterPages'] = pages
+    return [] if snapshot == wanted else ['Exact blocked/Keep inventory, hands, appearance or reader state differs']
+
+
+def control_errors(ev, roles, ids, kind='sp'):
+    case = ids['case']; control = ev.get('control'); errors = []
+    if case not in ORIGIN_CASES and case != 'cancel-active':
+        return [] if all(key not in ev for key in ('control', 'origin', 'originReplica', 'blocked', 'keep')) else ['Unrequested live control evidence']
+    trim, tail = roles['trim'][0], roles['tail'][0]
+    if (type(control) is not dict or not number(control.get('at'))
+            or not trim['startedAt'] <= control['at'] <= tail['startedAt']
+            or control.get('trimRef') != trim['actionRef'] or control.get('trimNative') != trim['nativeRef']
+            or not number(control.get('trimDelta')) or not 0 < control['trimDelta'] < 1
+            or control.get('before') != borrowed_snapshot(ids) or control.get('accepted') is not True):
+        return ['Control lacks exact genuinely progressing native trim identity/state']
+    if case == 'cancel-active':
+        members = control.get('members')
+        if (control.get('source') != 'ActionQueuePanel.List' or control.get('input') != 'programmatic-press-release'
+                or control.get('after') != control['before'] or control.get('reason') is not False
+                or action_key(control.get('targetRef')) != action_key(trim['actionRef'])
+                or operation_key(control.get('operationRef')) != operation_key(trim['operationRef'])
+                or any(control.get(key) is not True for key in ('header', 'hitTested', 'pressCaptured', 'tailQueued'))
+                or type(members) is not list or [action_key(member) for member in members] != [action_key(trim['actionRef']), action_key(roles['command'][0]['actionRef'])]
+                or any(key in ev for key in ('origin', 'originReplica', 'blocked', 'keep'))):
+            errors.append('Real active operation header cancel identity/hit/press/unchanged physical state differs')
+        errors.extend(cancellation_errors(control, trim, roles['restore'][0], ids))
+        return errors
+    origin = ev.get('origin', {}); unavailable = case == 'unavailable-origin'
+    after = borrowed_snapshot(ids)
+    if unavailable:
+        after['origin'].update(container='unavailable', worn=False)
+        for item in after['items']:
+            if item['id'] == ids['bag']['id']: item['container'] = 'unavailable'
+        after['worn'] = [item for item in after['worn'] if item['id'] != ids['bag']['id']]
+    if (control.get('source') != 'authority.ChangeOrigin' or control.get('input') != 'authority-command'
+            or control.get('requestedAt') != control['at'] or control.get('acceptedAt') != origin.get('at') or origin.get('authority') is not True
+            or origin.get('case') != case or origin.get('kind') != ('unavailable' if unavailable else 'full')
+            or origin.get('requestedAt') != control['requestedAt'] or not number(origin.get('at'))
+            or origin.get('bagId') != ids['bag']['id'] or origin.get('itemId') != ids['items']['razor']['id']
+            or origin.get('itemType') != 'Base.Razor' or origin.get('before') != control['before'] or origin.get('after') != after
+            or not number(origin.get('capacityBefore')) or origin['capacityBefore'] <= 0
+            or origin.get('roomBefore') is not True or type(origin.get('roomAfter')) is not bool
+            or origin.get('capacityAfter') != (origin['capacityBefore'] if unavailable else 0)
+            or not unavailable and origin.get('roomAfter') is not False):
+        errors.append('Independent authority origin intervention identity/capacity/availability differs')
+    replica = ev.get('originReplica')
+    if kind == 'mp' and not unavailable:
+        if (type(replica) is not dict or replica.get('source') != 'authority-confirmed-capacity'
+                or replica.get('case') != case or not number(replica.get('at')) or not control['at'] <= replica['at'] <= tail['startedAt']
+                or replica.get('authorityAt') != origin['at'] or replica.get('requestedAt') != control['requestedAt']
+                or replica.get('bagId') != ids['bag']['id'] or replica.get('itemId') != ids['items']['razor']['id']
+                or not number(replica.get('capacityBefore')) or replica['capacityBefore'] <= 0 or replica.get('roomBefore') is not True
+                or replica.get('capacityAfter') != 0 or replica.get('roomAfter') is not False
+                or action_key(replica.get('trimRef')) != action_key(trim['actionRef']) or replica.get('trimNative') != trim['nativeRef']
+                or not number(replica.get('trimDelta')) or not 0 < replica['trimDelta'] < 1
+                or replica.get('before') != control['before'] or replica.get('after') != control['before'] or replica.get('unchanged') is not True):
+            errors.append('Host origin capacity replica lacks exact authority-confirmed active trim/unchanged physical state')
+    elif replica is not None:
+        errors.append('Unrequested origin capacity replica intervention')
+    blocked = ev.get('blocked', {}); debts = blocked.get('debts')
+    debt_errors = blocked_debt_errors(debts, ids)
+    if debt_errors: return errors + debt_errors
+    if (not number(blocked.get('at')) or not control['at'] <= blocked['at']
+            or blocked.get('tailRef') != tail['actionRef'] or type(blocked.get('tailStarted')) is not bool
+            or type(blocked.get('tailProgress')) is not bool):
+        errors.append('Exact blocked debt observation/independent tail identity missing')
+    ui = blocked.get('ui', {})
+    if (ui.get('source') != 'ActionQueuePanel.KeepReturn' or ui.get('visible') is not True
+            or ui.get('id') != debts[0]['id'] or ui.get('itemId') != ids['items']['razor']['id']):
+        errors.append('Real footer does not display the exact blocked razor debt')
+    if unavailable and 'returnAttempt' in blocked:
+        errors.append('Unavailable origin unexpectedly constructed a native return')
+    errors.extend(reader_snapshot_errors(blocked.get('snapshot', {}), ids))
+    if case != 'keep-return':
+        if ev.get('debts') != debts or 'keep' in ev:
+            errors.append('Unpaid origin failure debt was silently retired')
+    else:
+        keep = ev.get('keep', {})
+        if (keep.get('source') != 'ActionQueuePanel.KeepReturn' or keep.get('input') != 'programmatic-press-callback'
+                or not number(keep.get('at')) or not blocked['at'] <= keep['at']
+                or keep.get('id') != debts[0]['id'] or keep.get('itemId') != ids['items']['razor']['id']
+                or keep.get('tailRef') != tail['actionRef'] or ev.get('debts') != []
+                or keep.get('before') != keep.get('after')
+                or any(keep.get(key) is not True for key in ('visible', 'tailStarted', 'tailProgress', 'queueActive',
+                                                           'pressCaptured', 'cleared', 'sameSnapshot', 'accepted'))):
+            errors.append('Real footer Keep lacks exact debt/active reader or changed physical state')
+        errors.extend(reader_snapshot_errors(keep.get('before', {}), ids))
+    return errors
+
+
+def cancellation_errors(control, trim, restore, ids):
+    stop = control.get('nativeStop', {}); before, after = stop.get('before', {}), stop.get('after', {})
+    errors = []
+    for member, present in ((before, True), (after, False)):
+        if (not number(member.get('at')) or action_key(member.get('actionRef')) != action_key(trim['actionRef'])
+                or member.get('nativeRef') != trim['nativeRef'] or member.get('member') is not present
+                or member.get('current') is not present or member.get('beard') != ids['initialBeard']
+                or any(member.get(key) is not True for key in ('actionSame', 'nativeSame', 'actorSame', 'queueSame', 'rootSame'))):
+            errors.append('Canceled trim lacks exact native episode membership transition')
+    if (not number(before.get('at')) or not number(after.get('at'))
+            or not trim['startedAt'] <= before['at'] <= control['at'] <= after['at'] <= restore['admittedAt']
+            or after.get('boundary') not in ('after-release', 'poll', 'before-next-admission')
+            or after.get('snapshot') != control['before']):
+        errors.append('Canceled native trim disappeared outside exact UI stop/cleanup boundary or changed appearance')
+    return errors
+
+
+def denied_duration(value, reason, kind):
+    # A zero-capacity SP native constructor computes NaN before admission.
+    # Preserve the JSON diagnostic; it grants neither progress nor completion.
+    if kind == 'sp' and reason == 'admission' and value == {'__queueNonfiniteNumber': 'nan'}:
+        return True
+    return number(value) and (value == -1 if kind == 'mp' else value > 1)
+
+
+def denied_return_errors(action, ev, ids, kind):
+    attempt = ev.get('blocked', {}).get('returnAttempt', {}); errors = []
+    physical = attempt.get('physical', {}); reason = attempt.get('reason')
+    allowed = ('admission', 'server') if kind == 'mp' else ('admission', 'unmoved')
+    if (action.get('itemId') != ids['items']['razor']['id'] or attempt.get('itemId') != ids['items']['razor']['id']
+            or attempt.get('actionRef') != action['actionRef'] or not number(attempt.get('at'))
+            or attempt.get('allocated') is not True or type(attempt.get('nativeRef')) is not str
+            or attempt.get('nativeRef') in ('', 'nil') or attempt.get('queued') is not False
+            or reason not in allowed or reason != ev['blocked']['debts'][0]['reason']
+            or action.get('ack') != [] or not isinstance(action.get('operationRef'), str)
+            or 'nativeRef' in action and action['nativeRef'] != attempt.get('nativeRef')):
+        errors.append('Native return denial lacks exact allocated attempt/debt')
+    errors.extend(physical_transfer_errors(physical, ids, 'returned', kind == 'sp'))
+    if physical.get('sourceCount') != 1 or physical.get('destinationCount') != 0:
+        errors.append('Denied native return changed physical inventory')
+    if reason == 'admission':
+        if (attempt.get('started') is not False or attempt.get('progress') is not False
+                or action.get('started') is not False or action.get('progress') is not False
+                or action.get('events') != [] or any(key in action for key in ('startedAt',))
+                or 'effectiveDuration' in action and not number(action['effectiveDuration'])):
+            errors.append('Unstarted admission denial invented native progress/completion')
+        samples = action.get('transfers')
+        if type(samples) is not list:
+            return errors + ['Unstarted native admission observations malformed']
+        for sample in samples:
+            current = sample.get('physical', {})
+            errors.extend(physical_transfer_errors(current, ids, 'returned', kind == 'sp'))
+            if (sample.get('boundary') != 'poll' or sample.get('transaction') != 0
+                    or sample.get('done') is not False or sample.get('rejected') is not False or sample.get('duration') is not False
+                    or sample.get('nativeRef') != attempt.get('nativeRef') or not number(sample.get('at'))
+                    or sample['at'] > attempt['at'] or current.get('sourceCount') != 1 or current.get('destinationCount') != 0
+                    or sample.get('itemState') not in ('original', 'canonical-replica')
+                    or operation_key(sample.get('operationRef')) != operation_key(action.get('operationRef'))
+                    or any(sample.get(key) is not True for key in ('itemExact', 'nativeSame', 'actorSame', 'operationSame',
+                                                                 'sourceSame', 'destinationSame', 'queueSame', 'rootSame'))):
+                errors.append('Unstarted native return observation invented transaction/progress or changed identity')
+        return errors
+    events = action.get('events', [])
+    phases = ('stop',) if reason == 'server' else ('perform', 'complete')
+    if ([(event.get('boundary'), event.get('phase')) for event in events]
+            != [(boundary, phase) for phase in phases for boundary in ('begin', 'finish')]
+            or any(not number(event.get('at')) or event.get('nativeRef') != attempt.get('nativeRef')
+                   or event.get('boundary') == 'finish' and event.get('succeeded') is not True for event in events)):
+        errors.append('Denied return exact native terminal lifecycle differs')
+    samples = action.get('transfers', []); transactions = set(); rejected = False
+    if type(samples) is not list or not samples:
+        return errors + ['Denied started return lacks exact native inventory observations']
+    for sample in samples:
+        current = sample.get('physical', {}); tx = sample.get('transaction')
+        errors.extend(physical_transfer_errors(current, ids, 'returned', kind == 'sp'))
+        if (current.get('sourceCount') != 1 or current.get('destinationCount') != 0
+                or sample.get('nativeRef') != attempt.get('nativeRef')
+                or operation_key(sample.get('operationRef')) != operation_key(action.get('operationRef'))
+                or sample.get('boundary') not in ('poll', *('begin-' + phase for phase in phases), *('finish-' + phase for phase in phases))
+                or not number(sample.get('at')) or sample.get('itemExact') is not True
+                or sample.get('itemState') not in ('original', 'canonical-replica')
+                or any(sample.get(key) is not True for key in ('nativeSame', 'actorSame', 'operationSame', 'sourceSame', 'destinationSame', 'queueSame', 'rootSame'))
+                or type(tx) is not int or reason == 'server' and sample.get('done') is True):
+            errors.append('Denied native inventory transaction identity/effect differs')
+        if type(tx) is int and tx != 0: transactions.add(tx)
+        rejected = rejected or type(tx) is int and tx != 0 and sample.get('rejected') is True
+    if reason == 'server' and (len(transactions) != 1 or not rejected):
+        errors.append('Host return lacks single exact rejected inventory transaction')
+    return errors
+
+
+def lifecycle_errors(action, kind, canceled=False):
+    role = action['role']; events = action.get('events', []); errors = []
+    # Grooming uses its unchanged native stop directly, outside runStop observers.
+    phases = () if canceled else ('perform', 'complete') if kind == 'sp' else ('perform',)
+    expected_events = [(boundary, phase) for phase in phases for boundary in ('begin', 'finish')]
+    if ([(event.get('boundary'), event.get('phase')) for event in events] != expected_events
+            or any(not number(event.get('at')) or event.get('nativeRef') != action['nativeRef']
+                   or event['boundary'] == 'finish' and event.get('succeeded') is not True for event in events)
+            or [event['at'] for event in events] != sorted(event['at'] for event in events)):
+        errors.append('Unchanged native completion lifecycle differs: ' + role)
+    if kind == 'mp' and role not in ('pickup', 'returned'):
+        terminal = [ack for ack in action.get('ack', []) if ack.get('state') in ('completed', 'canceled', 'rejected')]
+        if (len(terminal) != 1 or terminal[0]['state'] != ('canceled' if canceled else 'completed')
+                or terminal[0].get('kind') != action['type'] or type(terminal[0].get('transaction')) is not int
+                or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', str(terminal[0].get('token')))
+                or any(terminal[0].get(key) is not True for key in ('nativeSame', 'actorSame', 'queueSame', 'rootSame', 'itemSame', 'operationSame'))
+                or terminal[0].get('nativeRef') != action['nativeRef']
+                or operation_key(terminal[0].get('operationRef')) != operation_key(action['operationRef'])):
+            errors.append('Host exact native terminal ACK differs: ' + role)
+    return errors
+
+
 def check_case(row, selection, prepared, verified):
     errors = []
     try:
-        case = row['id']; ids = row['ids']; ev = row['evidence']; success = case == 'restore-success'
+        case = row['id']; ids = row['ids']; ev = row['evidence']; returned_case = case in RETURNED_CASES
+        intent_case = case == 'new-primary-intent'; canceled = case == 'cancel-active'
         if (ids != prepared or ids['case'] != case or row.get('status') != 'passed' or row.get('actor') != 'client1'
                 or row.get('kind') != selection['kind'] or row.get('mode') != 'toolkit'):
             raise ValueError('exact native case/process identity differs')
@@ -181,15 +426,18 @@ def check_case(row, selection, prepared, verified):
                 or ev.get('before') != ids['baseline']):
             errors.append('Independent authority/client exact inventory, hands, appearance or reader effects differ')
         if any(ev.get(key) != value for key, value in {'producer': 'ISCharacterScreen.onTrimBeard', 'target': 'Moustache',
-                'installed': True, 'explicitRequested': not success, 'nativeCallbacksUntouched': True, 'queueIdle': True}.items()):
+                'installed': True, 'explicitRequested': intent_case, 'nativeCallbacksUntouched': True, 'queueIdle': True}.items()):
             errors.append('Real install/menu producer or native callback integrity differs')
         actions = ev['actions']; roles = {}
         for action in actions:
             roles.setdefault(action['role'], []).append(action)
-        required = {'pickup', 'preparationEquip', 'trim', 'tail', 'command', *({'restore', 'returned'} if success else {'explicitEquip'})}
+        required = {'pickup', 'preparationEquip', 'trim', 'tail', 'command'}
+        required.update({'explicitEquip'} if intent_case else {'restore'})
+        if case in RETURNED_CASES or case in ('full-origin', 'keep-return'): required.add('returned')
         if 'approach' in roles: required.add('approach')
-        if set(roles) != required or any(len(values) != (2 if success else 1) if role == 'command' else len(values) != 1
-                                       for role, values in roles.items()):
+        command_count = len(roles.get('command', []))
+        if (set(roles) != required or command_count != (1 if intent_case else 2)
+                or any(len(values) != 1 for role, values in roles.items() if role != 'command')):
             raise ValueError('Native producer/cleanup action topology differs')
         refs = [action['actionRef'] for action in actions]
         if any(type(ref) is not str or not ref for ref in refs) or len(set(refs)) != len(refs):
@@ -205,6 +453,12 @@ def check_case(row, selection, prepared, verified):
                     raise ValueError('Action native class differs: ' + role)
                 if role in ('command', 'approach'):
                     continue
+                if role == 'returned' and case in ('full-origin', 'keep-return'):
+                    errors.extend(denied_return_errors(action, ev, ids, selection['kind']))
+                    duration = action.get('constructorDuration')
+                    if not denied_duration(duration, ev['blocked']['returnAttempt']['reason'], selection['kind']):
+                        errors.append('Denied return original native constructor duration differs')
+                    continue
                 item = 'previous' if role == 'restore' else 'replacement' if role == 'explicitEquip' else 'tail' if role == 'tail' else 'razor'
                 if (action.get('itemId') != ids['items'][item]['id'] or any(action.get(key) is not True for key in ('allocated', 'started', 'progress'))
                         or not number(action.get('startedAt')) or not number(action.get('effectiveDuration')) or action['effectiveDuration'] <= 1
@@ -213,23 +467,9 @@ def check_case(row, selection, prepared, verified):
                 duration = action.get('constructorDuration')
                 if not number(duration) or (duration != -1 if selection['kind'] == 'mp' and role in ('pickup', 'returned') else duration <= 1):
                     errors.append('Original native constructor duration differs: ' + role)
-                events = action.get('events', [])
-                expected_events = [(boundary, phase) for phase in (('perform', 'complete') if selection['kind'] == 'sp' else ('perform',)) for boundary in ('begin', 'finish')]
-                if ([(event.get('boundary'), event.get('phase')) for event in events] != expected_events
-                        or any(not number(event.get('at')) or event.get('nativeRef') != action['nativeRef']
-                               or event['boundary'] == 'finish' and event.get('succeeded') is not True for event in events)):
-                    errors.append('Unchanged native completion lifecycle differs: ' + role)
+                errors.extend(lifecycle_errors(action, selection['kind'], case == 'cancel-active' and role == 'trim'))
                 if role in ('pickup', 'returned'):
                     errors.extend(transfer_errors(action, ids, selection['kind']))
-                elif selection['kind'] == 'mp':
-                    terminal = [ack for ack in action.get('ack', []) if ack.get('state') in ('completed', 'canceled', 'rejected')]
-                    if (len(terminal) != 1 or terminal[0]['state'] != 'completed' or terminal[0].get('kind') != action['type']
-                            or type(terminal[0].get('transaction')) is not int
-                            or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', str(terminal[0].get('token')))
-                            or any(terminal[0].get(key) is not True for key in ('nativeSame', 'actorSame', 'queueSame', 'rootSame', 'itemSame', 'operationSame'))
-                            or terminal[0].get('nativeRef') != action['nativeRef']
-                            or operation_key(terminal[0].get('operationRef')) != operation_key(action['operationRef'])):
-                        errors.append('Host exact native completed ACK differs: ' + role)
         get = lambda name: roles[name][0]
         pickup, equip, trim, tail = (get(name) for name in ('pickup', 'preparationEquip', 'trim', 'tail'))
         if not pickup['startedAt'] <= equip['startedAt'] <= trim['startedAt'] <= tail['startedAt']:
@@ -238,19 +478,36 @@ def check_case(row, selection, prepared, verified):
         if (any(operation_key(get(name)['operationRef']) != token for name in ('pickup', 'preparationEquip'))
                 or operation_key(tail['operationRef']) == token):
             errors.append('Native borrowing chain or independent operation ownership differs')
+        transitions = [action for action in actions if 'operationTransition' in action or 'originalOperationRef' in action]
+        if canceled:
+            command = get('command'); transition = command.get('operationTransition', {})
+            cleanup = operation_key(get('restore')['operationRef'])
+            if (transitions != [command] or operation_key(command.get('originalOperationRef')) != token
+                    or operation_key(command['operationRef']) != cleanup or cleanup in (token, operation_key(tail['operationRef']))
+                    or not number(transition.get('at')) or not ev['control']['at'] <= transition['at'] <= get('restore')['startedAt']
+                    or operation_key(transition.get('from')) != token or operation_key(transition.get('to')) != operation_key(command['operationRef'])
+                    or transition.get('preallocation') is not True or transition.get('sameAction') is not True
+                    or any(operation_key(action['operationRef']) != cleanup for action in roles['command'])):
+                errors.append('Canceled producer cleanup lacks exact single preallocation transition to fresh cleanup token')
+        elif transitions:
+            errors.append('Unrequested action operation ownership transition')
         debts = ev.get('debts')
-        if success:
+        errors.extend(control_errors(ev, roles, ids, selection['kind']))
+        if selection['kind'] == 'mp' and (canceled or case in ORIGIN_CASES):
+            start = [ack for ack in trim['ack'] if ack['state'] == 'started']
+            if len(start) != 1 or start[0]['at'] > ev['control']['at']:
+                errors.append('Host control preceded native grooming admission')
+        if returned_case:
             restore, returned = get('restore'), get('returned')
             if (not trim['startedAt'] <= restore['startedAt'] <= returned['startedAt'] <= tail['startedAt']
-                    or any(operation_key(action['operationRef']) != token for action in (restore, returned))
+                    or canceled and (operation_key(restore['operationRef']) == token or operation_key(returned['operationRef']) != operation_key(restore['operationRef']))
+                    or not canceled and any(operation_key(action['operationRef']) != token for action in (restore, returned))
                     or debts != [] or 'intent' in ev):
                 errors.append('Ordinary native restore/return effects or debt differ')
-        else:
+        elif intent_case:
             intent = ev.get('intent', {}); explicit = get('explicitEquip')
             snapshot = intent.get('snapshot', {})
-            during = copy.deepcopy(ids['baseline']); during['primary'] = ids['items']['razor']['id']
-            for item in during['items']:
-                if item['id'] == ids['items']['razor']['id']: item['container'] = 'root'
+            during = borrowed_snapshot(ids)
             if (not number(intent.get('at')) or not trim['startedAt'] <= intent['at'] <= tail['startedAt'] <= explicit['startedAt']
                     or not number(intent.get('trimDelta')) or not 0 < intent['trimDelta'] < 1
                     or type(intent.get('before')) is not int or type(intent.get('after')) is not int or intent['after'] <= intent['before']
@@ -264,12 +521,18 @@ def check_case(row, selection, prepared, verified):
                     or debts[0].get('itemType') != 'Base.Razor' or debts[0].get('state') != 'blocked'
                     or debts[0].get('reason') != 'cleanup-unresolved'):
                 errors.append('Superseded auto restore lost its exact unpaid razor debt')
+        elif case in ORIGIN_CASES:
+            restore = get('restore')
+            if (not trim['startedAt'] <= restore['startedAt'] <= tail['startedAt']
+                    or operation_key(restore['operationRef']) != token
+                    or case != 'unavailable-origin' and operation_key(get('returned')['operationRef']) != token or 'intent' in ev):
+                errors.append('Origin failure hand restoration operation/order differs')
         boundary = ev.get('tailBoundary', {})
         at_tail = expected(ids, selection['kind'] == 'sp'); at_tail.pop('authority')
         at_tail['tail']['pages'] = at_tail['tail']['characterPages'] = ids['items']['tail']['initial']
-        if not success: at_tail['primary'] = ids['items']['razor']['id']
+        if intent_case: at_tail['primary'] = ids['items']['razor']['id']
         if (not number(boundary.get('at')) or boundary['at'] > tail['startedAt']
-                or boundary.get('snapshot') != at_tail or boundary.get('debts') != debts):
+                or boundary.get('snapshot') != at_tail or boundary.get('debts') != (ev['blocked']['debts'] if case == 'keep-return' else debts)):
             errors.append('Independent native reader admission inventory, hands or debt differ')
     except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
         errors.append('Malformed razor native evidence: ' + str(error))
@@ -307,6 +570,45 @@ def verify(root, selection, catalog):
             issues.append('Raw exact native action records differ from published case actions')
         if [value for _, value in intent_rows] != [dict(case=row['id'], observation=row['evidence']['intent']) for _, row in rows if 'intent' in row['evidence']]:
             issues.append('Raw accepted primary intent records differ')
+        for marker, field in (('CONTROL', 'control'), ('BLOCKED', 'blocked'), ('KEEP', 'keep'), ('ORIGIN_REPLICA', 'originReplica')):
+            values = records(client, PREFIX + marker + ' ')
+            observations = [(row['id'], row['evidence'][field]) for _, row in rows if field in row['evidence']]
+            if marker == 'ORIGIN_REPLICA':
+                wanted = [observation for _, observation in observations]
+            else:
+                wanted = [dict(case=case, observation=observation) for case, observation in observations]
+            if [value for _, value in values] != wanted:
+                issues.append('Raw exact live ' + field + ' observations differ from published case evidence')
+            for position, value in values:
+                index = cases.index(value['case'])
+                if not placements[index][0] < position < rows[index][0]:
+                    issues.append('Raw live control escaped its exact case publication boundaries')
+        native_cancels = records(client, PREFIX + 'CANCEL_NATIVE ')
+        wanted_cancels = [dict(case=row['id'], observation=row['evidence']['control']['nativeStop'])
+                          for _, row in rows if row['id'] == 'cancel-active']
+        if [value for _, value in native_cancels] != wanted_cancels:
+            issues.append('Raw exact native canceled trim observation differs from published evidence')
+        retokens = records(client, PREFIX + 'RETOKEN ')
+        wanted_retokens = [dict(case=row['id'], actionRef=action['actionRef'], observation=action['operationTransition'])
+                           for _, row in rows for action in row['evidence']['actions'] if 'operationTransition' in action]
+        if [value for _, value in retokens] != wanted_retokens:
+            issues.append('Raw exact canceled cleanup retoken differs from published action transition')
+        for position, value in retokens:
+            index = cases.index(value['case'])
+            if not placements[index][0] < position < rows[index][0]:
+                issues.append('Canceled cleanup transition escaped exact case boundaries')
+        origins = records(authority, PREFIX + 'ORIGIN ')
+        client_origins = records(client, PREFIX + 'ORIGIN_CLIENT ')
+        wanted_origins = [row['evidence']['origin'] for _, row in rows if 'origin' in row['evidence']]
+        if [value for _, value in origins] != wanted_origins or [value for _, value in client_origins] != wanted_origins:
+            issues.append('Independent raw authority/client origin intervention observations differ')
+        if selection['kind'] == 'mp' and (records(client, PREFIX + 'ORIGIN ') or records(authority, PREFIX + 'ORIGIN_CLIENT ')
+                or any(records(authority, PREFIX + marker + ' ') for marker in ('CONTROL', 'BLOCKED', 'KEEP', 'RETOKEN', 'CANCEL_NATIVE', 'ORIGIN_REPLICA'))):
+            issues.append('Live razor control/origin evidence emitted by wrong process')
+        for position, value in origins:
+            index = cases.index(value['case'])
+            if not prepared[index][0] < position < verified[index][0]:
+                issues.append('Authority origin intervention escaped prepared/verified boundaries')
         expected_ack = {(row['id'], action['actionRef']): action.get('ack', []) for _, row in rows for action in row['evidence']['actions']}
         actual_ack = {key: [] for key in expected_ack}
         for _, value in ack_rows:

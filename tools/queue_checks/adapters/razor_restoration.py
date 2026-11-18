@@ -5,7 +5,7 @@ import zipfile
 
 from .tv_controls import MODS as SELECTED_MODS
 
-CASES = ('restore-success', 'new-primary-intent')
+CASES = ('restore-success', 'new-primary-intent', 'cancel-active', 'full-origin', 'unavailable-origin', 'keep-return')
 MODS = [identifier for identifier in SELECTED_MODS if identifier != 'P4TidyUpMeister']
 PREFIX = '[RAZOR_RESTORATION] '
 

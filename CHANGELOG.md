@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.10
+
+- **Fix:** In the opt-in tool restoration, a full bag after restoring the previous hand item could clear unrelated queued actions. The blocked tool now stays in inventory with an explicit Keep option.
+
 ### 0.2.9
 
 - **Internal:** Added an opt-in native beard-trimming integration for testing automatic razor returns and later primary-hand equipment choices.
