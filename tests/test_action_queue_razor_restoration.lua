@@ -10,12 +10,12 @@ local function prepared(editorEnabled,kind)
  local e,q,t=f.env,f.queue,f.env.PZSurvivorToolkit
  local previous,secondary
  if kind.empty then secondary=f.tool(810,'Base.Pen',f.inventory)
- elseif kind.both then
+ elseif kind.axeGrip then
   previous=f.tool(810,'Base.Axe',f.inventory)
   previous.class='HandWeapon'
   previous.getSwingAnim=function()return 'Heavy'end
   previous.isTwoHandWeapon=function()return true end
-  secondary=previous
+  secondary=kind.axeGrip=='both' and previous or f.tool(814,'Base.Pen',f.inventory)
  else previous=f.tool(810,'Base.Pen',f.inventory) end
  f.player.secondary=secondary
  local razor=f.tool(811,kind.tool)
@@ -46,7 +46,8 @@ local function prepared(editorEnabled,kind)
  return f,previous,razor,body,cleanup,secondary
 end
 for _,kind in ipairs({
- {tool='Base.Razor',body='ISTrimBeard',style='Moustache',both=true},
+ {tool='Base.Razor',body='ISTrimBeard',style='Moustache',axeGrip='both'},
+ {tool='Base.Scissors',body='ISCutHair',style='Fabian',axeGrip='primary'},
  {tool='Base.Razor',body='ISTrimBeard',style='Moustache'},
  {tool='Base.Scissors',body='ISTrimBeard',style='Moustache'},
  {tool='Base.Scissors',body='ISCutHair',style='Bald',empty=true},
@@ -119,7 +120,7 @@ print('PASS native razor/scissors beard and scissors haircut borrowing, exact ha
 
 -- A secondary-only request is still pending when the older cleanup runs.
 -- Restoring a shared grip would overwrite that later choice.
-local h,axe,razor,body,cleanup=prepared(true,{tool='Base.Razor',body='ISTrimBeard',style='Moustache',both=true})
+local h,axe,razor,body,cleanup=prepared(true,{tool='Base.Razor',body='ISTrimBeard',style='Moustache',axeGrip='both'})
 local pen=h.tool(813,'Base.Pen',h.inventory)
 local requests=h.env.PZSurvivorToolkit.ActionQueueTidyIntent
 local primaryRevision=requests.primaryRequestRevision(h.player)

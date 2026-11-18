@@ -96,8 +96,8 @@ local function track(action)
  local name=role(action);assert(name~='unknown','unexpected native producer action '..tostring(action.Type))
  if name~='command'then assert(not actions[name]or actions[name]==action,'duplicate exact native action '..name);actions[name]=action end
  local row={role=name,type=action.Type,actionRef=tostring(action),operationRef=tostring(action.toolkitQueueOperation),itemId=action.item and action.item:getID()or false,
-  equipPrimary=action.Type=='ISEquipWeaponAction'and action.primary or nil,equipTwoHands=action.Type=='ISEquipWeaponAction'and action.twoHands or nil,
   constructorDuration=action.maxTime,hairStyle=action.Type=='ISCutHair'and action.hairStyle or nil,sourceRef=action.srcContainer and tostring(action.srcContainer)or false,allocated=false,started=false,progress=false,events={},ack={},transfers={}}
+ if action.Type=='ISEquipWeaponAction'then row.equipPrimary=action.primary==true;row.equipTwoHands=action.twoHands==true end
  row.actor,row.queue,row.root,row.item,row.operation=action.character,q(),action.character:getInventory(),action.item,action.toolkitQueueOperation
  row.source,row.destination=action.srcContainer,action.destContainer
  tracks[action]=row;order[#order+1]=row
@@ -167,11 +167,11 @@ assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
   if phase~='running'or action.character~=getPlayer()then return end
   if observeCancelStop then observeCancelStop('before-next-admission',action)end
   local row=track(action)
-  if(ids.case=='empty-primary'or ids.case=='two-handed-axe')and row.role=='returned'then
+  if F.restoreBoundaryCase(ids.case)and row.role=='returned'then
    local restore=assert(actions.restore);acknowledge(restore,assert(tracks[restore]))
   end
   row.admittedAt=getTimestampMs();observeEditor('native-admission',action)
-  if(ids.case=='empty-primary'or ids.case=='two-handed-axe')and row.role=='returned'then
+  if F.restoreBoundaryCase(ids.case)and row.role=='returned'then
    local restore=assert(actions.restore);local restored=assert(tracks[restore])
    evidence.restoreBoundary={at=getTimestampMs(),actionRef=restored.actionRef,nativeRef=tostring(restore.action),
     returnRef=row.actionRef,snapshot=F.snapshot(state)}
@@ -232,8 +232,9 @@ local function produce()
   handWeapon=instanceof(previous,'HandWeapon'),supportsTwo=instanceof(previous,'HandWeapon')and previous:isTwoHandWeapon()or false,
   ordinary=hands~=nil and hands.primary~=nil and hands.primary.item==previous}
   if F.axeCase(ids.case)then
-   evidence.handSeed.secondary=previous:getID()
-   evidence.handSeed.ordinary=evidence.handSeed.ordinary and hands.secondary and hands.secondary.item==previous
+   local secondary=assert(F.find(getPlayer(),(ids.items.secondary or ids.items.previous).id))
+   evidence.handSeed.secondary=secondary:getID()
+   evidence.handSeed.ordinary=evidence.handSeed.ordinary and hands.secondary and hands.secondary.item==secondary
   end
  end
  assert(evidence.handSeed.ordinary and not evidence.handSeed.requiresBoth and evidence.handSeed.supportsTwo==F.axeCase(ids.case),
@@ -386,6 +387,12 @@ local function observe()
  -- Use the same current Started receipt required by the grooming cancel policy.
  if row.progress and q().current==trim and (not isClient() or row.receipt
   and T.ActionQueueAcknowledgements.state(trim,row.receipt)=='started') then
+  if F.oneHandedCase(ids.case)and not evidence.preparationBoundary then
+   local prepared=assert(actions.preparationEquip);local equipped=assert(tracks[prepared])
+   evidence.preparationBoundary={at=getTimestampMs(),actionRef=equipped.actionRef,nativeRef=tostring(prepared.action),
+    groomingRef=row.actionRef,groomingNative=tostring(trim.action),groomingDelta=trim:getJobDelta(),snapshot=F.snapshot(state)}
+   raw('PREPARATION_BOUNDARY',{case=ids.case,observation=evidence.preparationBoundary})
+  end
   if ids.case=='cancel-active'and not evidence.control then cancelActive(trim,row)end
   if originCase()and not originRequestedAt then
    originRequestedAt=getTimestampMs()

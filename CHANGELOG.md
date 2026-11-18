@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.17
+
+- Opt-in grooming restoration now returns an axe or another optional two-handed weapon to its original one-handed grip. An item held in the other hand stays there.
+
 ### 0.2.16
 
 - Opt-in grooming restoration returns an axe held in both hands to the same grip after shaving or cutting hair, then returns the borrowed tool to its bag. Choosing another item for either hand takes precedence.
