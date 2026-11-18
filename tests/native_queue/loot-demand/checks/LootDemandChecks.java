@@ -88,6 +88,64 @@ public final class LootDemandChecks {
         check(defer.csv().contains(",2,100,300,demand,50,0,1,0,0\n"),"candidate demand measures first native call and suppressed recursion");
         check(defer.status().contains("active=0\n"),"suppressed candidate recursion cannot leak ledger depth");
     }
+    private static void threadedCensusChecks() throws Exception {
+        DemandCensus<Object> census=new DemandCensus<>("defer",2);
+        Object original=new Object(),replacement=new Object();
+        census.automatic(original,"bin",1,2,0,3,"sprite",100);
+        check(census.witness(original).contains("identity=1\norigin=automatic-visit\n"),"original exact identity has a stable witness");
+        check(census.witness(replacement).contains("known=false\nidentity=0\n"),"same-location replacement cannot inherit original identity");
+        census.nativeEnter(replacement,false);census.nativeExit(replacement,false);
+        check(census.csv().contains(",100,0,none,-1,"),"untracked replacement fill never changes original meter");
+        var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        var error=new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        Thread packet=new Thread(()->{try{
+            census.nativeEnter(original,false);entered.countDown();
+            if(!release.await(5,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("concurrent meter release timeout");
+            census.nativeExit(original,false);
+        }catch(Throwable failure){error.set(failure);entered.countDown();}},"native-packet-test");
+        packet.start();check(entered.await(5,java.util.concurrent.TimeUnit.SECONDS),"foreign native fill entered");
+        try {
+            String witness=census.witness(original);
+            check(witness.contains("first_fill_thread=\"native-packet-test\"\nfirst_fill_authority_thread=false\n"),"foreign native thread captured without claiming authority");
+            check(witness.contains("active_depth=1\n"),"concurrent snapshot sees coherent active native call");
+            // Observation does not authorize the separate gameplay state machine.
+            Access denied=new Access();denied.authority=false;Box box=new Box();DemandState<Box> policy=new DemandState<>(denied);
+            eq(DemandState.PASS,policy.enter(box),"foreign packet retains native gameplay path");
+            check(!box.explored && denied.overlayCalls==0 && policy.counts()[0]==0,"foreign observation cannot mark explored or refresh overlay");
+            census.nativeEnter(original,true);census.nativeExit(original,false);
+            check(census.witness(original).contains("concurrent_fills=1\n"),"overlapping native calls are distinguished from recursion");
+        } finally { release.countDown();packet.join(6000); }
+        check(!packet.isAlive() && error.get()==null,"foreign native completion succeeds");
+        String witness=census.witness(original);
+        check(!witness.contains("fill_ns=-1\n") && witness.contains("active_depth=0\n"),"foreign fill completes timer and releases depth");
+        check(census.watch(replacement,"bin",1,2,0,3,"sprite"),"explicit pristine replacement can have separate watch");
+        census.nativeEnter(replacement,false);census.nativeExit(replacement,false);
+        check(census.witness(replacement).contains("identity=0\norigin=selected-watch\nauto_visits=0\n"),"selected watch never borrows original automatic visit evidence");
+        check(census.status().contains("objects=1\n") && census.status().contains("watched=1\n"),"watch remains separate from original CSV population");
+        check(!census.watch(original,"bin",1,2,0,3,"sprite"),"another known identity cannot replace selected watch");
+        DemandCensus<Object> promoted=new DemandCensus<>("defer",2);
+        check(promoted.watch(replacement,"bin",1,2,0,3,"selected-sprite"),"selected identity can be watched before an automatic visit");
+        promoted.enter(replacement,300);
+        promoted.automatic(replacement,"dumpster",4,5,1,6,"automatic-sprite",350);
+        String promotedWitness=promoted.witness(replacement);
+        check(promotedWitness.contains("identity=1\norigin=automatic-visit\nauto_visits=1\nselected_watch=true\n"),"real automatic visit promotes the same selected identity with distinct selection metadata");
+        check(promotedWitness.contains("first_fill_ns=300\nfill_ns=-1\n") && promotedWitness.contains("active_depth=1\n"),"promotion preserves the in-flight first interval");
+        check(promoted.status().contains("objects=1\noverflow=0\nactive=1\nwatched=1\n"),"selected automatic identity is counted only once while active");
+        check(!promoted.watch(original,"bin",1,2,0,3,"sprite"),"promotion cannot free the selected identity slot");
+        promoted.exit(replacement,400,false);
+        check(promoted.csv().contains("\"dumpster\",4,5,1,6,\"automatic-sprite\",1,350,300,demand,100,0,0,0,0\n"),"CSV uses actual automatic metadata and retains completed watched timing");
+        check(promoted.csv().lines().count()==2 && promoted.status().contains("active=0\n"),"promotion exports one automatic row and releases its sole active count");
+        DemandCensus<Object> selectedKnown=new DemandCensus<>("defer",2);
+        selectedKnown.automatic(original,"bin",1,2,0,3,"sprite",100);
+        check(selectedKnown.watch(original,"bin",1,2,0,3,"sprite"),"an already known identity can be selected");
+        check(!selectedKnown.watch(replacement,"bin",1,2,0,3,"sprite"),"selecting a known identity consumes the sole selection slot");
+        DemandCensus<Object> observe=new DemandCensus<>("observe",1);
+        observe.automatic(original,"bin",1,2,0,3,"sprite",100);
+        Thread unrelated=new Thread(()->{observe.nativeEnter(replacement,false);observe.nativeExit(replacement,false);});unrelated.start();unrelated.join();
+        observe.enter(original,110);observe.exit(original,120,false);
+        check(observe.csv().contains(",automatic,10,"),"foreign unrelated fill cannot consume authority automatic adjacency");
+        check(!observe.watch(replacement,"bin",1,2,0,3,"sprite"),"observe cannot arm a selected candidate watch");
+    }
     private static void eventFilterChecks() {
         se.krka.kahlua.vm.KahluaTable table=new se.krka.kahlua.j2se.KahluaTableImpl(new java.util.HashMap<>());
         Object[] valid={"object","emptyTrash",null,table};
@@ -237,7 +295,7 @@ public final class LootDemandChecks {
         if(args.length>0 && args[0].equals("--partial-install")){installChecks(nativeBytes(),true);System.out.println("LootDemandChecks PARTIAL_INSTALL_PASS ("+checks+")");return;}
         if(args.length>0 && args[0].equals("--install")){installChecks(nativeBytes(),false);System.out.println("LootDemandChecks EVENT_ACTIVATION_GUARD_PASS ("+checks+")");return;}
         System.clearProperty(LootDemand.PROPERTY);check(!LootDemand.install(null),"default disabled even without instrumentation");check(!LootDemand.installed(),"default behavior inactive");
-        stateChecks();censusChecks();eventFilterChecks();activeBridgeChecks();Map<String,byte[]> input=nativeBytes();Map<String,byte[]> output=transformChecks(input);dumpLoopChecks(output.get(DemandTransform.CONTAINER));
+        stateChecks();censusChecks();threadedCensusChecks();eventFilterChecks();activeBridgeChecks();Map<String,byte[]> input=nativeBytes();Map<String,byte[]> output=transformChecks(input);dumpLoopChecks(output.get(DemandTransform.CONTAINER));
         if(args.length==2 && args[0].equals("--official"))try(ZipFile zip=new ZipFile(Path.of(args[1]).toFile())){
             for(String name:DemandTransform.TARGETS) {
                 var entry=zip.getEntry(name+".class");

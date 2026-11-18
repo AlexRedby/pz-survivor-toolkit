@@ -38,6 +38,14 @@ public final class LootDemand {
     }
     public static String census() { return census.csv(); }
     public static String censusStatus() { return census.status(); }
+    public static String censusWitness(ItemContainer c) { return census.witness(c); }
+    /** Explicit optional observation only; never fills or changes a container. */
+    public static boolean watch(ItemContainer c) {
+        if (!installed || !census.capturing() || census.observing() || !authorityThread() || !pending(c)
+                || c.getParent().isMovedThumpable() || c.getParent().hasModData() || c.isHasBeenLooted() || !c.isEmpty()) return false;
+        IsoObject parent=c.getParent();var square=parent.getSquare();
+        return census.watch(c,c.getType(),square.x,square.y,square.z,parent.getObjectIndex(),parent.getSprite().getName());
+    }
     public static long clock() { return System.nanoTime(); }
     private static final String EVENT="zombie/Lua/Event", EVENT_HASH="cf4b0ba953b8f965fbcacb73ebb5d1a173dc3ed140656e15b90ad932eff0e952";
     private static final DemandState<ItemContainer> state=new DemandState<>(new DemandState.Access<>() {
@@ -88,14 +96,16 @@ public final class LootDemand {
     }
     public static int enterFill(ItemContainer c) {
         int token=census.observing()?DemandState.PASS:state.enter(c);
-        if (installed && authorityThread() && census.capturing()) {
+        // Observing an already-known native identity does not grant gameplay authority.
+        // The DemandState policy above keeps its original strict authority-thread gate.
+        if (installed && census.capturing() && !GameClient.client) {
             if (token==DemandState.REENTRANT) census.suppressedReentry(c);
-            else census.enter(c,System.nanoTime());
+            else census.nativeEnter(c,authorityThread());
         }
         return token;
     }
     public static void exitFill(ItemContainer c,int token,boolean failed) {
-        if (installed && authorityThread() && census.capturing()) census.exit(c,System.nanoTime(),failed);
+        if (installed && census.capturing() && !GameClient.client) census.nativeExit(c,failed);
         if (!census.observing()) state.exit(c,token,failed);
     }
     /** Client demand requests native authority; it never marks local explored or creates items. */

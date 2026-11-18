@@ -88,6 +88,16 @@ local function selectedRow()
  end
  error('selected census identity disappeared')
 end
+local function witness(container,phase)
+ local fields={}
+ for line in lootDemandCensusWitness(container):gmatch('[^\r\n]+') do
+  local key,value=line:match('^([^=]+)=(.*)$')
+  assert(key and fields[key]==nil,'invalid target witness')
+  fields[key]=tonumber(value) or value
+  emit('WITNESS','phase='..phase..' '..line)
+ end
+ return fields
+end
 local function report()
  local row=run.target.row
  local object,container=objectAt(row)
@@ -103,18 +113,29 @@ local function report()
  end
  if not close then return end
  if not container:isExplored() then return end
- row=selectedRow()
- if row.fill_ns<0 then return end
- assert(row.fill_failed==0 and row.active_depth==0,'first native fill failed or still active')
- assert(row.repeat_fills==0 and row.reentries==0,'unexpected repeat/reentrant native target fills')
- assert(row.fill_kind==(arm=='defer' and 'demand' or 'automatic'),'unexpected first native fill origin')
- if arm=='defer' then assert(row.first_fill_ns>=run.approachClock,'target filled before approach was armed') end
+ local fill=witness(container,'opened')
+ local kind,elapsed='unobserved',-1
+ if fill.known=='true' then
+  -- Native requests can publish explored before their fill returns. The outer
+  -- approach timeout still bounds this wait; only completed contents are reported.
+  assert(fill.concurrent_fills==0 and fill.fill_failed==0,'overlapping or failed target fill')
+  if fill.active_depth>0 then return end
+  assert(fill.active_depth==0,'invalid target fill depth')
+  assert(fill.repeat_fills==0 and fill.reentries==0,'unexpected repeat/reentrant target fills')
+  if fill.fill_ns>=0 then
+   assert(fill.fill_kind==(arm=='defer' and 'demand' or 'automatic'),'unexpected first native fill origin')
+   if arm=='defer' then assert(fill.first_fill_ns>=run.approachClock,'target filled before approach was armed') end
+   kind,elapsed=fill.fill_kind,fill.fill_ns
+  else
+   assert(fill.fill_kind=='none' and fill.first_fill_ns==0,'invalid missing native fill interval')
+  end
+ end
  run.reported=true
  local now=dump('after')
  local count=container:getItems():size()
- emit('RESULT','phase=authority x='..row.x..' y='..row.y..' z='..row.z..' index='..row.object_index..' items='..count..' fill_kind='..row.fill_kind..' fill_ns='..tostring(row.fill_ns)..' clock_ns='..tostring(now))
+ emit('RESULT','phase=authority x='..row.x..' y='..row.y..' z='..row.z..' index='..row.object_index..' items='..count..' timing_source='..fill.origin..' fill_kind='..kind..' fill_ns='..tostring(elapsed)..' clock_ns='..tostring(now))
  sendServerCommand(run.player,'LootNatural','Authority',{x=row.x,y=row.y,z=row.z,index=row.object_index,sprite=row.sprite,kind=row.type,
-  count=count,fingerprint=lootDemandFingerprint(container),fill_kind=row.fill_kind,fill_ns=row.fill_ns,clock_ns=now})
+  count=count,fingerprint=lootDemandFingerprint(container),fill_kind=kind,fill_ns=elapsed,clock_ns=now})
 end
 Events.OnClientCommand.Add(function(module,command,player,args)
  if module~='LootNatural' then return end
@@ -151,6 +172,11 @@ Events.OnTick.Add(function()
   if not run.target and getTimestampMs()-run.begin>=(tonumber(options.loot_demand_settle_ms) or 5000) then
    run.beforeClock=dump('before');run.target=choose(run.player)
    local row=run.target.row
+   local initial=witness(run.target.container,'selected')
+   if arm=='defer' and initial.known=='false' then
+    assert(lootDemandWatch(run.target.container),'could not observe selected pristine target')
+    witness(run.target.container,'armed')
+   end
    emit('READY','phase=target x='..row.x..' y='..row.y..' z='..row.z..' index='..row.object_index..' sprite='..row.sprite..' type='..row.type..' outdoor='..tostring(run.target.outdoor)..' auto_visits='..row.auto_visits)
    sendServerCommand(run.player,'LootNatural','Target',{x=row.x,y=row.y,z=row.z,index=row.object_index,sprite=row.sprite,kind=row.type,outdoor=run.target.outdoor})
   elseif run.started and not run.reported then

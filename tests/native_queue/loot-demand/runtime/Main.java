@@ -57,6 +57,10 @@ public final class Main {
     public static String census() { gate();return LootDemand.census(); }
     @LuaMethod(name="lootDemandCensusStatus",global=true)
     public static String censusStatus() { gate();return LootDemand.censusStatus(); }
+    @LuaMethod(name="lootDemandCensusWitness",global=true)
+    public static String censusWitness(ItemContainer container) { gate();return LootDemand.censusWitness(container); }
+    @LuaMethod(name="lootDemandWatch",global=true)
+    public static boolean watch(ItemContainer container) { gate();return LootDemand.watch(container); }
     @LuaMethod(name="lootDemandClock",global=true)
     public static long clock() { gate();return LootDemand.clock(); }
     @LuaMethod(name="lootDemandPending",global=true)

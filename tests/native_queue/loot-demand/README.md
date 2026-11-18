@@ -123,12 +123,26 @@ SHA, with IDs/nesting unchanged. The final Host reload and independent native
 pallet control passed. Failed original reports remain failed; they are retained
 with the causal explanation.
 
-SP lifecycle assertions passed, but the run failed the optimizer telemetry's
-world-name guard. Clean SP, native furniture moves, multiplayer contention, broader
-item state and representative driving/first-access performance remain open. The
-subsequent main rebase includes newer inventory/Java code; earlier game results do
-not qualify those combined bytes. This fixture is still test-only and is not a
-Windows package improvement or a proven FPS gain.
+The current Build 42.22.2 macOS full-pack comparison on a shared driving
+save found 89 matched bins and dumpsters. Ordinary loading spent 285.6 ms
+filling them, including 30.4 ms inside one 56.0 ms game interval. With
+deferral, those bins had zero native fills during the measured drive. Client
+buffer-swap p99 was 33.85 ms ordinarily and 28.73 ms with deferral in this
+single pair. Traffic and traversal time differed.
+
+On the same runtime a menu Host player walked to a real street bin. Both runs
+matched recursive client and server contents. Deferred first fill took
+8.36 ms on the server. From listing to complete inventory the client observed
+27 ms ordinarily and 32 ms with deferral in these local runs. A map-location
+row can represent a different Java identity from the opened container.
+A separate witness times the selected live object without importing the prior
+automatic visit. The server reports missing timing separately from actual
+inventory delivery.
+
+The earlier SP lifecycle run passed functional assertions and failed its
+telemetry world-name guard. Current-runtime persistence, native furniture
+moves, simultaneous players and broader item state remain open. The loot hook
+stays in the test fixture.
 
 The actual dynamic-JAR activation checker also preserves regressions for helper
 self-loading recursion and Buddy registered-JAR discovery. Startup-classpath tests

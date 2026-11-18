@@ -158,7 +158,8 @@ def verify(root, selection, catalog):
             issues.append('Natural approach fixture reported failure')
         return {'issues': issues, 'outcomes': [dict(actor='client1', case=case,
             status='failed' if issues else 'passed', reason='; '.join(issues))],
-            'evidence': {'limits': ['Natural menu Host map load and on-foot approach. No driving FPS inference.']}}
+            'evidence': {'first_fill_timed': bool(re.search(r'\[LOOT_NATURAL\] RESULT role=server [^\n]* fill_kind=(?:demand|automatic) fill_ns=\d+', authority)),
+                         'limits': ['Natural menu Host map load and on-foot approach. A missing fill duration is unavailable; inventory delivery is checked independently. No driving FPS inference.']}}
     expected = [] if case == 'persist-reload' else ['bin', 'dumpster', 'existing-items', 'destroy-fill', 'empty-trash']
     if case != 'lifecycle':
         expected.append(case)
