@@ -149,7 +149,14 @@ save found 89 matched bins and dumpsters. Ordinary loading spent 285.6 ms
 filling them, including 30.4 ms inside one 56.0 ms game interval. With
 deferral, those bins had zero native fills during the measured drive. Client
 buffer-swap p99 was 33.85 ms ordinarily and 28.73 ms with deferral in this
-single pair. Traffic and traversal time differed.
+first pair. A repetition from the same sealed save found 89 common bins
+and dumpsters, with 417.4 ms in native fills under ordinary loading and
+zero during the measured drive under deferral. Client buffer-swap p99 was
+64.32 ms ordinarily and 42.23 ms with deferral. Traffic, speed and traversal
+time differed between arms. Both repetition captures passed independent
+reanalysis with the current `watched=0` census field. The original reports
+retain the earlier classifier failure for that field. Both driving pairs used
+Toolkit 0.2.9 on macOS.
 
 On the same runtime a menu Host player walked to a real street bin. Both runs
 matched recursive client and server contents. Deferred first fill took
