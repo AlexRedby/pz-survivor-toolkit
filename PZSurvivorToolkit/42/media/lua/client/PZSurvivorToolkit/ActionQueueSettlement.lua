@@ -160,7 +160,10 @@ function Settlement.resetCancellation(queue) cancellations[queue] = nil end
 function Settlement.completeCancellation(queue, action)
     local state = cancellation(queue)
     if not state then return end
-    if state.members[action] then state.members[action] = nil end
+    local member = state.members[action]
+    -- Keep the generation bridge until the ended expansion publishes its debt.
+    if member and member.returnOwner and member.returnOwner.reservation then return end
+    if member then state.members[action] = nil end
     for _ in pairs(state.members) do return end
     cancellations[queue] = nil
 end
@@ -667,6 +670,7 @@ local function insert(queue, action, index)
         if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
     end
     table.insert(queue.queue, index, action)
+    return step
 end
 
 -- A local effect is not an authoritative outcome. Marked client actions need
@@ -3282,6 +3286,47 @@ function Settlement.observeCleanupTransfer(action, parent)
     return true
 end
 
+local function returnProvider()
+    local getter = getActivatedMods
+    return function()
+        if type(getter) ~= "function" or P4TidyUpMeister ~= nil or getActivatedMods ~= getter then return false end
+        local ok, mods = pcall(getter)
+        if not ok or not mods or type(mods.contains) ~= "function" then return false end
+        local checked, selected = pcall(mods.contains, mods, "P4TidyUpMeister")
+        return checked and selected == false and getActivatedMods == getter and P4TidyUpMeister == nil
+    end
+end
+
+-- A pending claim changes no queue or item. Cancellation can hand off this
+-- exact paid pickup only if its original command actually survives the edit.
+function Settlement.claimBorrowedReturn(action, handle)
+    local loan = stepProof(handle)
+    local record = loan and loan.operation
+    local owner = record and record.actions[action]
+    local binding = loan and loan.borrowing
+    if not binding or binding.candidate.step ~= loan or not owner or record.actions[loan.action] ~= loan
+        or owner.phase ~= "cleanup" or owner.kind ~= "ISQueueActionsAction"
+        or not owner.prerequisites or #owner.prerequisites ~= 1 or owner.prerequisites[1] ~= loan
+        or owner.returnClaim or binding.candidate.returnClaim then return false end
+    local ops, provider = Toolkit.ActionQueueOperations, returnProvider()
+    local matches = ops and ops.isCommand
+    if not executionProof.closure(matches, "ActionQueueOperations.lua") or not provider()
+        or not operationLive(record) or not matches(action) then return false end
+    local watch = executionProof.captureBindings({
+        {owner=action, keys={"character","Type","toolkitQueueCommand","addActionsFunction","args","start","waitToStart",
+            "stop","perform","complete","onStartFunc","onCompleteFunc","onCancelFunc"}},
+        {owner=action.toolkitQueueCommand, exact=true}, {owner=action.args, exact=true},
+        {owner=Toolkit, keys={"ActionQueueOperations"}}, {owner=ops, keys={"isCommand"}},
+    })
+    if not watch or Toolkit.ActionQueueOperations ~= ops or ops.isCommand ~= matches or not matches(action)
+        or not watch() or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
+        or owner.started or action.started or action.action or record.settlement
+        or owner.returnClaim or binding.candidate.returnClaim then return false end
+    local claim = {loan=loan, provider=provider, source=function() return matches(action) and watch() end}
+    owner.returnClaim, binding.candidate.returnClaim = claim, claim
+    return true
+end
+
 -- Enroll only inside the actual, already-owned cleanup expansion. A retained
 -- cancellation command gets a fresh operation; old sibling effect handles must
 -- never be migrated into this one. This association grants no hand admission,
@@ -3305,7 +3350,11 @@ function Settlement.requireBorrowedReturnSuccess(...)
     local step = stepProof(handle)
     local binding = step and step.borrowing
     local candidate, scope = binding and binding.candidate, binding and binding.scope
-    if not candidate or candidate.returnSuccess then return false end
+    if not candidate then return false end
+    local reservation = candidate.returnSuccess
+    if reservation and (not reservation.expansion or reservation.state ~= "reserved"
+        or reservation.expansion ~= scope.queue.current or reservation.failure
+        or not reservation.claim.source()) then return false end
     candidate.returnSuccess = returnSuccessEnrolling
     local ok, accepted = pcall(function()
         if not operationLive(step.operation) or not borrowingLive(scope) or candidate.phase ~= "active" or candidate.ambiguous
@@ -3314,20 +3363,14 @@ function Settlement.requireBorrowedReturnSuccess(...)
         local parent = queue and queue.current
         local record = parent and operation(actor, parent.toolkitQueueOperation)
         local owner = record and record.actions[parent]
+        if reservation and (reservation.record ~= record or reservation.expansion ~= parent
+            or not owner or owner.reservation ~= reservation or not reservation.claim.source()) then return false end
         if not owner or queue.queue[1] ~= parent or parent.character ~= actor
             or parent.Type ~= "ISQueueActionsAction" or not requiredCleanup(parent, true) then return false end
         local authorized = false
         for _, prerequisite in ipairs(owner.prerequisites or {}) do if prerequisite == step then authorized = true end end
         if not authorized then return false end
-        local getter = getActivatedMods
-        if type(getter) ~= "function" then return false end
-        local function provider()
-            if P4TidyUpMeister ~= nil or getActivatedMods ~= getter then return false end
-            local ok, mods = pcall(getter)
-            if not ok or not mods or type(mods.contains) ~= "function" then return false end
-            local checked, selected = pcall(mods.contains, mods, "P4TidyUpMeister")
-            return checked and selected == false and getActivatedMods == getter and P4TidyUpMeister == nil
-        end
+        local provider = reservation and reservation.provider or returnProvider()
         for _, prerequisite in ipairs(previous) do
             if prerequisite == owner or prerequisite.operation ~= record or prerequisite.phase ~= "cleanup"
                 or not prerequisite.preparation or not prerequisite.preparation.requireEffect
@@ -3370,6 +3413,7 @@ function Settlement.requireBorrowedReturnSuccess(...)
         if not provider() or queue.current ~= parent or queue.queue[1] ~= parent
             or operation(actor, parent.toolkitQueueOperation) ~= record or not operationLive(step.operation)
             or not borrowingLive(scope) or candidate.returnSuccess ~= returnSuccessEnrolling then return false end
+        if reservation and (not reservation.claim.source() or owner.reservation ~= reservation) then return false end
         if not watch() or queue.current ~= parent or queue.queue[1] ~= parent
             or candidate.returnSuccess ~= returnSuccessEnrolling or candidate.phase ~= "active"
             or candidate.ambiguous or candidate.returning or candidate.plannedReturn then return false end
@@ -3401,6 +3445,7 @@ function Settlement.requireBorrowedReturnSuccess(...)
             cleanupContinuationsIssued = true
         end
         candidate.returnSuccess = plan
+        if reservation then owner.reservation = nil end
         for _, prerequisite in ipairs(previous) do
             prerequisite.returnSuccessPlans = prerequisite.returnSuccessPlans or {}
             prerequisite.returnSuccessPlans[#prerequisite.returnSuccessPlans + 1] = plan
@@ -3411,7 +3456,7 @@ function Settlement.requireBorrowedReturnSuccess(...)
         end
         return true
     end)
-    if candidate.returnSuccess == returnSuccessEnrolling then candidate.returnSuccess = nil end
+    if candidate.returnSuccess == returnSuccessEnrolling then candidate.returnSuccess = reservation end
     return ok and accepted == true
 end
 returnSuccessBlocked = function(plan, reason)
@@ -3448,7 +3493,7 @@ returnSuccessBlocked = function(plan, reason)
     return true
 end
 local function inspectReturnSuccess(plan)
-    if plan.state == "blocked" or plan.state == "retired" then return "blocked" end
+    if plan.expansion or plan.state == "blocked" or plan.state == "retired" then return "blocked" end
     local function current()
         return plan.candidate.returnSuccess == plan and ISTimedActionQueue.queues[plan.actor] == plan.queue
             and plan.queue.character == plan.actor and plan.queue.queue == plan.list
@@ -3551,6 +3596,20 @@ end
 function Settlement.advanceCleanupReturns(queue, current)
     if not cleanupContinuationsIssued then return true end
     if not queue or queue.current ~= current or queue.queue[1] ~= current then return false end
+    if current and retainedBindingSource.raw(current, cleanupWatchMarker) == true then
+        local record = operation(current.character, current.toolkitQueueOperation)
+        local owner = record and record.actions[current]
+        local reservation = owner and owner.reservation
+        if reservation then
+            if reservation.candidate.returnSuccess ~= reservation then return false end
+            if reservation.state ~= "retired" and not returnSuccessBlocked(reservation, "cleanup-unresolved") then
+                owner.heldCleanupAdvance = true
+                return false
+            end
+            owner.reservation = nil
+            Settlement.completeCancellation(queue, current)
+        end
+    end
     for _ = 1, MAX_EXECUTION_MEMBERS do
         local action = queue.queue[2]
         local entry = cleanupContinuation(action)
@@ -3906,7 +3965,30 @@ function Settlement.finish(queue, request, discard)
     local index = 2
     state.phase, record.phase = "cleanup", "cleanup"
     for _, obligation in ipairs(cleanup) do
-        insert(queue, obligation.action, index)
+        local member = obligation.action
+        local original = record.actions[member]
+        local claim = original and original.returnClaim
+        local fresh = insert(queue, member, index)
+        if fresh and claim and obligation.provider == "operation-effect" then
+            local binding = claim.loan.borrowing
+            local candidate = binding.candidate
+            local expected = returns[candidate.id]
+            if expected and not expected.ambiguous and expected.borrowed == candidate
+                and claim.provider() and claim.source() and candidate.returnClaim == claim and not candidate.returnSuccess
+                and candidate.phase == "active" and not candidate.ambiguous and not candidate.returning and not candidate.plannedReturn
+                and claim.loan.state == "earned" and not member.action and not member.started and not fresh.started and fresh.operation.token == member.toolkitQueueOperation
+                and ISTimedActionQueue.queues[record.character] == queue and queue.queue[index] == member
+                and queue.current == current and queue.queue[1] == current then
+                local reservation = {candidate=candidate, scope=binding.scope, loan=claim.loan, record=fresh.operation,
+                    actor=queue.character, queue=queue, list=queue.queue, generation=queue.toolkitOperationGeneration or 0,
+                    provider=claim.provider, expansion=member, claim=claim, state="reserved"}
+                fresh.reservation, candidate.returnSuccess = reservation, reservation
+                local drain = cancellation(queue)
+                if drain and drain.members[member] then drain.members[member].returnOwner = fresh end
+                member[cleanupWatchMarker], cleanupContinuationsIssued = true, true
+                returns[candidate.id] = nil
+            end
+        end
         state.obligations[#state.obligations + 1] = obligation
         index = index + 1
     end

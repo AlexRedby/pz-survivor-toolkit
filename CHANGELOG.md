@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.7
+
+- **Internal:** A retained cleanup command can take responsibility for returning a borrowed item when its group is canceled. This prevents an early duplicate transfer and records an unresolved return when the command finishes without scheduling its cleanup.
+
 ### 0.2.6
 
 - **Internal:** Source-qualified cleanup can preserve independent queued work after a confirmed native failure or stop, retaining the exact unpaid loan and skipping its unissued return continuation. Unknown Host authority and full debt notices hold the ended head without replay; Keep waives location debt without earning hand restoration. Existing unqualified failures retain native handling. No additional automatic tool-restoration producer is enabled.

@@ -60,7 +60,8 @@ local function fixture(client,options,reused,episode)
         matches=function(action) return owned[action]~=nil and t.ActionQueueOperations.isCommand(action) end,
         inspect=function(action)
             assert(owned[action] and action.addActionsFunction==owned[action])
-            return {knownInputs=true,items={},targets={[f.player]=true},hands=f.player,equipment=f.player}
+            return {knownInputs=true,items={},targets={[f.player]=true},hands=f.player,equipment=f.player,
+                deferred=options.cancelBeforeExpansion or nil,cancelWaiting=options.cancelBeforeExpansion or nil}
         end,
     });f.cleanupCommands=owned end
     local function command(callback)
@@ -86,9 +87,11 @@ local function fixture(client,options,reused,episode)
     local expansion
     expansion=command(function()
         assert(q.current==expansion and expansion._isAddingActions,'cleanup did not use its actual expansion boundary')
+        if options.abandonExpansion then f.abandoned=true;return end
         local restore=e.ISEquipWeaponAction:new(f.player,f.previous,50,true,false)
         t.ActionQueueOperations.adopt(restore,expansion.toolkitQueueOperation)
-        assert(settlement.cleanup(restore,f.loan))
+        assert(options.cancelBeforeExpansion and settlement.inheritCleanup(restore,expansion)
+            or not options.cancelBeforeExpansion and settlement.cleanup(restore,f.loan))
         local specification={
             guard=function(action) return action==restore and action.item==f.previous and action.character==f.player end,
             capture=function()
@@ -110,7 +113,8 @@ local function fixture(client,options,reused,episode)
             f.returned=settlement.enqueueBorrowedReturn(f.loan)
         end)
         t.ActionQueueOperations.adopt(continuation,expansion.toolkitQueueOperation)
-        assert(settlement.cleanup(continuation,f.loan))
+        assert(options.cancelBeforeExpansion and settlement.inheritCleanup(continuation,expansion)
+            or not options.cancelBeforeExpansion and settlement.cleanup(continuation,f.loan))
         f.continuation=continuation
         if options.enrolled~=false then
             assert(settlement.requireBorrowedReturnSuccess(f.loan,{f.restoreHandle},continuation))
@@ -121,6 +125,9 @@ local function fixture(client,options,reused,episode)
     end)
     t.ActionQueueOperations.adopt(expansion,reading.toolkitQueueOperation)
     assert(settlement.cleanup(expansion,f.loan))
+    if options.cancelBeforeExpansion and not options.unclaimed then
+        assert(settlement.claimBorrowedReturn(expansion,f.loan))
+    end
     t.ActionQueueOperations.runWith(reading.toolkitQueueOperation,function() e.ISTimedActionQueue.add(expansion) end)
     f.expansion=expansion
     e.ISInventoryPaneContextMenu.readItem(f.book(8103+offset,f.inventory),0)
@@ -128,10 +135,24 @@ local function fixture(client,options,reused,episode)
     assert(f.tail.Type=='ISReadABook' and f.tail.toolkitQueueOperation~=reading.toolkitQueueOperation)
     f.start(approach);f.dispatch(approach,'perform')
     assert(q.current==pickup and allocations(f,pickup)==1)
-    f.start(pickup);f.deliver(pickup);f.dispatch(pickup,'perform')
+    f.start(pickup);f.deliver(pickup)
+    if options.cancelBeforeExpansion then
+        -- This genuine equip precedes the body that will be canceled, so the
+        -- retained cleanup must still restore an actual different hand item.
+        local equip=e.ISEquipWeaponAction:new(f.player,f.borrowed,50,true,false)
+        t.ActionQueueOperations.adopt(equip,reading.toolkitQueueOperation)
+        e.ISTimedActionQueue.addAfter(pickup,equip)
+        f.preparationEquip=equip
+    end
+    f.dispatch(pickup,'perform')
+    if options.cancelBeforeExpansion then
+        assert(q.current==f.preparationEquip)
+        finish(f,f.preparationEquip)
+        assert(f.player:getPrimaryHandItem()==f.borrowed)
+    end
     assert(q.current==reading and settlement.earned(f.loan) and loanState(f)=='active'
         and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1,'genuine native fetch did not earn its exact loan')
-    if not options.alreadyHeld then
+    if not options.alreadyHeld and not options.cancelBeforeExpansion then
         -- A genuine native preparation equip, not a test hand write, establishes
         -- the different current primary that the cleanup is meant to restore.
         local equip=e.ISEquipWeaponAction:new(f.player,f.borrowed,50,true,false)
@@ -139,14 +160,36 @@ local function fixture(client,options,reused,episode)
         e.ISTimedActionQueue.addAfter(reading,equip)
         f.preparationEquip=equip
     end
-    f.start(reading);f.dispatch(reading,'perform')
-    if f.preparationEquip then
+    f.start(reading)
+    if options.cancelBeforeExpansion then
+        local originalToken=reading.toolkitQueueOperation
+        local accepted,reason=t.ActionQueue.cancelOperation(q,reading)
+        assert(accepted,'earned reading cancellation was rejected: '..tostring(reason))
+        assert(reading.action.stopped and q.current==reading and not f.restore and not f.continuation,
+            'cancellation expanded cleanup before native stop/removal')
+        f.stop(reading,true)
+        local expectedRows=options.unclaimed and 3 or 2
+        assert(q.current==expansion and #q.queue==expectedRows and q.queue[expectedRows]==f.tail
+            and expansion.toolkitQueueOperation~=originalToken
+            and settlement.requiredStep(expansion) and settlement.isCleanup(expansion)
+            and not f.tail.toolkitQueueOperation.toolkitCancelled
+            and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1,
+            'future return owner lost retained cleanup or synthesized an eager return')
+        f.canceledToken=originalToken
+        if options.unclaimed then
+            f.eagerReturn=q.queue[2]
+            assert(f.eagerReturn.Type=='ISInventoryTransferAction' and f.eagerReturn.item==f.borrowed
+                and f.eagerReturn.srcContainer==f.inventory and f.eagerReturn.destContainer==f.source)
+        end
+    else f.dispatch(reading,'perform') end
+    if f.preparationEquip and not options.cancelBeforeExpansion then
         assert(q.current==f.preparationEquip)
         finish(f,f.preparationEquip)
         assert(f.player:getPrimaryHandItem()==f.borrowed,'native preparation equip did not change the real hand')
     end
     assert(q.current==expansion)
     f.start(expansion);f.dispatch(expansion,'perform')
+    if options.abandonExpansion then return f end
     assert(q.current==f.restore and allocations(f,f.restore)==1 and allocations(f,f.continuation)==0)
     return f
 end
@@ -179,6 +222,85 @@ for _,client in ipairs({false,true}) do
         and f.player:getPrimaryHandItem()==f.previous,'successful cleanup/return did not retain real native effects')
     f.start(f.tail);f.dispatch(f.tail,'perform')
     assert(#f.queue.queue==0)
+end
+-- A future return owner is declared before canceling its native body. The
+-- retained expansion receives a fresh operation and enrolls fresh children only
+-- when its real callback runs; cancellation must not race it with a transfer.
+for _,client in ipairs({false,true}) do
+    local f=fixture(client,{cancelBeforeExpansion=true})
+    local settlement,q=f.t.ActionQueueSettlement,f.queue
+    local token=f.expansion.toolkitQueueOperation
+    assert(f.restore.toolkitQueueOperation==token and f.continuation.toolkitQueueOperation==token
+        and token~=f.canceledToken and #q.queue==3 and q.queue[2]==f.continuation and q.queue[3]==f.tail
+        and settlement.requiredStep(f.restore) and settlement.requiredStep(f.continuation)
+        and allocations(f,f.originalReturn)==0 and f.returnCalls==nil,
+        'retained expansion reused canceled siblings or admitted an eager duplicate return')
+    finish(f,f.restore)
+    assert(q.current==f.continuation and settlement.earned(f.restoreHandle))
+    f.start(f.continuation);f.dispatch(f.continuation,'perform')
+    assert(f.returnCalls==1 and f.returned and q.current==f.returned
+        and #q.queue==2 and q.queue[2]==f.tail and allocations(f,f.returned)==1
+        and f.borrowed:getContainer()==f.inventory,
+        'fresh cleanup did not issue exactly its own borrowed return before the independent tail')
+    f.start(f.returned);f.deliver(f.returned);f.dispatch(f.returned,'perform')
+    assert(q.current==f.tail and #q.queue==1 and not f.tail.toolkitQueueOperation.toolkitCancelled
+        and f.player:getPrimaryHandItem()==f.previous and f.borrowed:getContainer()==f.source
+        and #f.effects==f.initialEffects+2 and loanState(f)=='completed'
+        and #settlement.blockedReturns(f.player)==0,
+        'retained native cleanup lost effects, paid the loan twice or blocked independent work')
+    f.start(f.tail);f.dispatch(f.tail,'perform')
+    assert(#q.queue==0 and f.returnCalls==1 and #f.effects==f.initialEffects+2
+        and allocations(f,f.originalReturn)==0)
+end
+-- Cancellation retention does not turn fresh enrollment into successful
+-- restoration: a native stop must leave visible debt and release the tail.
+for _,client in ipairs({false,true}) do
+    local f=fixture(client,{cancelBeforeExpansion=true})
+    local settlement,q=f.t.ActionQueueSettlement,f.queue
+    assert(f.restore.toolkitQueueOperation==f.expansion.toolkitQueueOperation
+        and f.restore.toolkitQueueOperation~=f.canceledToken)
+    f.start(f.restore);f.restore:forceStop();f.stop(f.restore,true)
+    if client then
+        assert(q.current==f.restore and allocations(f,f.continuation)==0 and allocations(f,f.tail)==0,
+            'retained cleanup advanced before its exact Host canceled terminal')
+        f.acknowledge(f.restore,'canceled');q:tick()
+    end
+    debt(f)
+    assert(f.player:getPrimaryHandItem()==f.borrowed and not settlement.earned(f.restoreHandle),
+        'stopped retained cleanup manufactured a successful native hand restoration')
+    tail(f)
+end
+-- Existing callers without a declared future owner retain ordinary eager
+-- cancellation return synthesis; only an explicit claim can defer that debt.
+for _,client in ipairs({false,true}) do
+    local f=fixture(client,{cancelBeforeExpansion=true,abandonExpansion=true,unclaimed=true})
+    local q=f.queue
+    assert(f.abandoned and q.current==f.eagerReturn and #q.queue==2 and q.queue[2]==f.tail
+        and f.returnCalls==nil and allocations(f,f.eagerReturn)==1
+        and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1)
+    f.start(f.eagerReturn);f.deliver(f.eagerReturn);f.dispatch(f.eagerReturn,'perform')
+    assert(q.current==f.tail and f.borrowed:getContainer()==f.source
+        and #f.effects==f.initialEffects+2 and loanState(f)=='completed')
+    f.start(f.tail);f.dispatch(f.tail,'perform')
+    assert(#q.queue==0 and #f.effects==f.initialEffects+2)
+end
+-- A claimed expansion that never enrolls its children cannot silently lose
+-- the borrowed-location debt or fall back to an immediate native transfer.
+for _,client in ipairs({false,true}) do
+    local f=fixture(client,{cancelBeforeExpansion=true,abandonExpansion=true})
+    local settlement,q=f.t.ActionQueueSettlement,f.queue
+    local notices=settlement.blockedReturns(f.player)
+    assert(f.abandoned and not f.restore and not f.continuation and f.returnCalls==nil
+        and q.current==f.tail and #q.queue==1 and not f.tail.toolkitQueueOperation.toolkitCancelled
+        and #notices==1 and notices[1].itemId==f.borrowed:getID()
+        and notices[1].itemType==f.borrowed:getFullType()
+        and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1
+        and loanState(f)=='active' and allocations(f,f.originalReturn)==0,
+        'abandoned future return owner lost its exact debt, synthesized a transfer or blocked the tail')
+    f.start(f.tail);f.dispatch(f.tail,'perform')
+    local after=settlement.blockedReturns(f.player)
+    assert(#q.queue==0 and #after==1 and after[1].id==notices[1].id
+        and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1)
 end
 for _,client in ipairs({false,true}) do
     local f=fixture(client,{alreadyHeld=true})
