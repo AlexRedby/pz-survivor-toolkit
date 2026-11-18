@@ -1,2 +1,7 @@
-Target: Project Zomboid 42.22.2, game revision 3d39148846.
-Both trial arms use the same Toolkit, Java Patches and selected mod list. The client-only experimental upstream changes are listed in current-trial-manifest.json. The launcher checks native resources and the official archive before staging. TrialProbe observes the initial definitions handed to the JVM after the optional optimizer and before ZombieBuddy. A run without the requested arm's effective-byte and pack readiness evidence is incomplete.
+Project Zomboid 42.22.2, game revision 3d39148846, xD3I release fad57862.
+
+Both arms contain the project's selected mods. Control loads the native VBORenderer. Optimized uses the official agent to load VBORenderer and its two nested classes. vboFastQuads is enabled, and the batch size stays at 4 KiB. The launcher checks the original classes and release archive. An independent agent observes the class bytes after the optimizer and before ZombieBuddy. The game also has to report activation of the expected mods.
+
+On macOS, the real game JAR produced identical vertex and index buffer contents, positions and vertex counts across the checked formats, initial offsets and triangle/quad modes. Starting Optimized with its agent missing failed the effective-class check. The regression is tests.test_trial_vbo_native and takes PZ_GAME, PZ_JDK, PZ_TRIAL_PACKAGE and PZ_OPTIMIZER_ZIP.
+
+Isolated macOS game clients reached a live world in SP and menu Host with the same renderer and diagnostic bridge. The Host client flushed its samples at disconnect and its owned native server saved and exited. The native runner adds ActionQueueTest, which the package's exact selection check correctly rejected. The SP fixture also uses a different save name to the Windows driving starter. These runs qualify class loading and the tested lifecycle events. Windows capture and driving frame times were not measured here.

@@ -120,6 +120,99 @@ $receipt=Start-TrialFrameCapture $client $process '/owned/java' $expectedStart $
 $receipt | ConvertTo-Json -Compress
 """, port=self.port)
 
+    def host_fixture(self):
+        return r'''
+$script:disposed=0; $script:cimChecks=0
+$script:child=[pscustomobject]@{Id=5151;Handle=1;HasExited=$false;StartTime=$expectedStart.AddSeconds(1);Path='/owned/java'}
+$script:child | Add-Member ScriptMethod Refresh {}
+$script:child | Add-Member ScriptMethod Dispose { $script:disposed++ }
+$script:javaProcesses=@($process,$script:child)
+$script:hostCommand='"/owned/java" -Xms512m -Xmx512m "-Djava.library.path=/game/win64" "-Djava.class.path=/game/projectzomboid.jar;/path with spaces" -Duser.dir=/game -Duser.home=/profile -Dzomboid.steam=1 -Djava.awt.headless=true -XX:-OmitStackTraceInFastThrow zombie.network.GameServer -coop -servername "Test Host" -adminusername admin -adminpassword "fixture only" -cachedir=/profile -useTimeStampedLogFileNames=1 -debugLogFile=coop-console.txt'
+$script:hostMetadata=[pscustomobject]@{ProcessId=5151;ParentProcessId=4242;ExecutablePath='/owned/java';CommandLine=$script:hostCommand}
+function Get-CimInstance { param($ClassName,$Filter,$OperationTimeoutSec,$ErrorAction)
+ if($ClassName -cne 'Win32_Process' -or $Filter -cne 'ProcessId = 5151' -or $OperationTimeoutSec -ne 5) {throw 'unexpected CIM query'}
+ $script:cimChecks++
+ return $script:hostMetadata
+}
+'''
+
+    def test_multiplayer_allows_only_verified_native_headless_child(self):
+        with api_fixture() as (port, calls):
+            result = self.invoke(self.host_fixture() + """
+$receipt=Start-TrialFrameCapture $client $process '/owned/java' $expectedStart $env:PZ_CX_DIR 10 'fixture-token' -SessionType Multiplayer
+@{Receipt=$receipt;Disposed=$script:disposed;CimChecks=$script:cimChecks;IdentityChecks=$script:identityChecks} | ConvertTo-Json -Depth 5 -Compress
+""", port)
+            self.assertEqual(result['Receipt']['targetPid'], 4242)
+            self.assertEqual(result['Disposed'], 2)
+            self.assertEqual(result['CimChecks'], 2)
+            self.assertEqual(result['IdentityChecks'], 2)
+            self.assertEqual([call[:2] for call in calls], [('GET', '/api/processes'), ('POST', '/api/capture')])
+
+    def test_host_allowance_never_applies_to_single_player_or_other_java(self):
+        changes = {
+            'default-single-player': ('', ''),
+            'wrong-parent': ('$script:hostMetadata.ParentProcessId=9999', '-SessionType Multiplayer'),
+            'wrong-executable': ("$script:child.Path='/other/java'", '-SessionType Multiplayer'),
+            'metadata-image-mismatch': ("$script:hostMetadata.ExecutablePath='/other/java'", '-SessionType Multiplayer'),
+            'preexisting-process': ('$script:child.StartTime=$expectedStart.AddSeconds(-1)', '-SessionType Multiplayer'),
+            'third-java': ('$script:javaProcesses+=,[pscustomobject]@{Id=6161}', '-SessionType Multiplayer'),
+            'not-headless': ("$script:hostMetadata.CommandLine=$script:hostCommand.Replace('-Djava.awt.headless=true','-Djava.awt.headless=false')", '-SessionType Multiplayer'),
+            'another-main': ("$script:hostMetadata.CommandLine=$script:hostCommand.Replace('zombie.network.GameServer','other.GameServer')", '-SessionType Multiplayer'),
+            'another-app-argument': ("$script:hostMetadata.CommandLine+=' -another'", '-SessionType Multiplayer'),
+        }
+        for name, (change, scope) in changes.items():
+            with self.subTest(name=name), api_fixture() as (port, calls):
+                result = self.invoke(self.host_fixture() + change + "\n" + f"""
+$rejected=$false
+try {{ Start-TrialFrameCapture $client $process '/owned/java' $expectedStart $env:PZ_CX_DIR 10 'fixture-token' {scope} | Out-Null }} catch {{ $rejected=$true }}
+@{{Rejected=$rejected;Disposed=$script:disposed;DirectoryExists=(Test-Path -LiteralPath $env:PZ_CX_DIR)}} | ConvertTo-Json -Compress
+""", port)
+                self.assertTrue(result['Rejected'])
+                self.assertEqual(result['Disposed'], 1)
+                self.assertFalse(result['DirectoryExists'])
+                self.assertEqual(calls, [])
+
+    def test_host_rechecked_after_http_and_disposed_on_metadata_failure(self):
+        result = self.invoke(self.host_fixture() + r'''
+$script:posts=0
+function Invoke-TrialFrameRequest { param($Client,$Method,$Path,$Body)
+ if($Method -eq 'POST') { $script:posts++; throw 'unexpected POST' }
+ $script:hostMetadata.ParentProcessId=9999
+ return @('java')
+}
+$rejected=$false
+try { Start-TrialFrameCapture $client $process '/owned/java' $expectedStart $env:PZ_CX_DIR 10 'fixture-token' -SessionType Multiplayer | Out-Null } catch {$rejected=$true}
+@{Rejected=$rejected;Posts=$script:posts;Disposed=$script:disposed;CimChecks=$script:cimChecks} | ConvertTo-Json -Compress
+''')
+        self.assertTrue(result['Rejected'])
+        self.assertEqual(result['Posts'], 0)
+        self.assertEqual(result['Disposed'], 2)
+        self.assertEqual(result['CimChecks'], 2)
+        result = self.invoke(self.host_fixture() + r'''
+function Get-CimInstance { throw 'unavailable process metadata' }
+$rejected=$false
+try { Assert-TrialJavaCaptureInventory $process '/owned/java' $expectedStart -SessionType Multiplayer } catch {$rejected=$true}
+@{Rejected=$rejected;Disposed=$script:disposed} | ConvertTo-Json -Compress
+''')
+        self.assertTrue(result['Rejected'])
+        self.assertEqual(result['Disposed'], 1)
+
+    def test_host_exit_during_metadata_and_windows_argv_suffix_are_checked(self):
+        result = self.invoke(self.host_fixture() + r'''
+function Get-CimInstance { $script:child.HasExited=$true; return $script:hostMetadata }
+$rejected=$false
+try { Assert-TrialJavaCaptureInventory $process '/owned/java' $expectedStart -SessionType Multiplayer } catch {$rejected=$true}
+$argv=@(Split-TrialWindowsCommandLine '"C:\Program Files\Java\bin\java" "space path\\" "inside\"quote" ""')
+$suffix=Test-TrialNativeHostArguments ($script:hostCommand.Replace('/owned/java','/owned/java.exe')) '/owned/java.exe'
+$noSuffix=Test-TrialNativeHostArguments $script:hostCommand '/owned/java.exe'
+@{Rejected=$rejected;Disposed=$script:disposed;Argv=$argv;Suffix=$suffix;NoSuffix=$noSuffix} | ConvertTo-Json -Compress
+''')
+        self.assertTrue(result['Rejected'])
+        self.assertEqual(result['Disposed'], 1)
+        self.assertEqual(result['Argv'], [r'C:\Program Files\Java\bin\java', 'space path\\', 'inside"quote', ''])
+        self.assertTrue(result['Suffix'])
+        self.assertTrue(result['NoSuffix'])
+
     def outputs(self, token='fixture-token', process='java.exe', frames=None, pids=None, application='java.exe'):
         self.directory.mkdir(exist_ok=True)
         frames = [1000] * 10 if frames is None else frames

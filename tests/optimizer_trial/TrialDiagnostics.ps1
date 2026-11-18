@@ -150,6 +150,7 @@ function Send-TrialCaptureSignal([string]$Stage) {
 function Invoke-TrialDiagnostics($Process, $Plan, $Tools, [int]$DurationSeconds = 120, [int]$DelaySeconds = 1,
                                  $FrameClient = $null, [int]$FrameSeconds = 90, [switch]$SkipWpr) {
     $root=$Plan.Logs.Directory
+    $sessionType=[string](Get-TrialFrameProperty $Plan 'Session' 'SinglePlayer')
     $statusPath=Join-Path $root 'diagnostics.json'
     Assert-NoReparsePoint $root
     if (Test-Path -LiteralPath $statusPath) { throw 'This run already has diagnostics; do not overwrite an earlier capture.' }
@@ -192,7 +193,7 @@ function Invoke-TrialDiagnostics($Process, $Plan, $Tools, [int]$DurationSeconds 
         $readiness=Get-TrialCaptureReadiness $FrameClient $options
         Write-TrialCaptureReadiness $readiness
         Write-TrialDiagnosticJson (Join-Path $root 'capture-readiness-before.json') $readiness
-        Assert-TrialCapFrameXTarget $FrameClient $Process $Plan.Java $identityUtc | Out-Null
+        Assert-TrialCapFrameXTarget $FrameClient $Process $Plan.Java $identityUtc -SessionType $sessionType | Out-Null
         $status.status='WaitingForHotkey'
         Write-TrialDiagnosticJson $statusPath $status
         Write-Host ''
@@ -224,7 +225,7 @@ function Invoke-TrialDiagnostics($Process, $Plan, $Tools, [int]$DurationSeconds 
         }
         $frameStatus.request=[ordered]@{directory=(Join-Path $root 'CapFrameX');token=$name;targetPid=$Process.Id;processName='java';seconds=$FrameSeconds;preparedUtc=[DateTime]::UtcNow.ToString('o')}
         Write-TrialDiagnosticJson $frameStatusPath $frameStatus
-        $frameStatus.request=Start-TrialFrameCapture $FrameClient $Process $Plan.Java $identityUtc (Join-Path $root 'CapFrameX') $FrameSeconds $name
+        $frameStatus.request=Start-TrialFrameCapture $FrameClient $Process $Plan.Java $identityUtc (Join-Path $root 'CapFrameX') $FrameSeconds $name -SessionType $sessionType
         $frameStatus.status='Started'
         Write-TrialDiagnosticJson $frameStatusPath $frameStatus
         if ([DateTime]::Parse($frameStatus.request.acknowledgedUtc).ToUniversalTime().AddSeconds($FrameSeconds) -gt $capture.EarliestEnd) {

@@ -72,6 +72,42 @@ function Start-Sleep {}
                 self.assertTrue(status['error'])
                 self.assertTrue((root/'run/hardware.json').is_file())
 
+    def test_plan_session_reaches_preflight_and_final_frame_start(self):
+        for session in (None, 'Multiplayer'):
+            with self.subTest(session=session), tempfile.TemporaryDirectory() as t:
+                root = Path(t).resolve()
+                body = self.fixture(root)
+                if session:
+                    body += "$plan | Add-Member -NotePropertyName Session -NotePropertyValue 'Multiplayer'\n"
+                body += r'''
+$script:preflightSession=$null; $script:frameSession=$null
+function Assert-TrialCapFrameXTarget {
+ param($Client,$Process,$Executable,$Started,$SessionType)
+ $script:preflightSession=$SessionType
+}
+$originalFrameStart=${function:Start-TrialFrameCapture}
+function Start-TrialFrameCapture {
+ param($Client,$Process,$Executable,$Started,$Directory,$Seconds,$Token,$SessionType)
+ $script:frameSession=$SessionType
+ return & $originalFrameStart $Client $Process $Executable $Started $Directory $Seconds $Token
+}
+function Get-TrialCaptureReadiness { return @{} }
+function Write-TrialCaptureReadiness {}
+function Start-Sleep {}
+function Start-JfrDrivingCapture {
+ param($Jcmd,$Id,$Directory,$Name,$Seconds,$Delay,$TargetProcess,$ExpectedExecutablePath,$ExpectedStartUtc)
+ [IO.Directory]::CreateDirectory($Directory)|Out-Null
+ $path=Join-Path $Directory 'drive.jfr';[IO.File]::WriteAllText($path,'fixture recording')
+ return [pscustomobject]@{File=$path;ExpectedEnd=[DateTime]::UtcNow.AddSeconds(-1);EarliestEnd=[DateTime]::UtcNow.AddSeconds(120)}
+}
+function Invoke-JfrTool { return [pscustomobject]@{Code=0;Output='fixture summary'} }
+$result=Invoke-TrialDiagnostics $process $plan $tools 15 1 -FrameClient $frameClient -FrameSeconds 1 -SkipWpr
+'''
+                body += "[IO.File]::WriteAllText(" + ps(root / 'scope.json') + ",(@{Status=$result.status;Preflight=$script:preflightSession;FrameStart=$script:frameSession}|ConvertTo-Json))\n"
+                self.invoke(root, body)
+                scope = json.loads((root / 'scope.json').read_text())
+                self.assertEqual(scope, {'Status': 'Complete', 'Preflight': session or 'SinglePlayer', 'FrameStart': session or 'SinglePlayer'})
+
     def test_target_revalidated_after_last_sample(self):
         with tempfile.TemporaryDirectory() as t:
             root=Path(t).resolve();body=self.fixture(root)+"""

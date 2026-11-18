@@ -1,7 +1,9 @@
 # CapFrameX CXRemote, verified against 1.9.1.5 (also available since 1.5.6).
 # Source: https://github.com/CXWorld/CapFrameX/tree/9f488ea6c39e33ec25c6ebfae1c4a1c4063c3026
 # CaptureController selects an OS process BY NAME, not PID. Keep the unique-name
-# gate immediately before POST. No synthetic input, settings changes or retries.
+# gate immediately before POST, allowing only a verified native headless Host child
+# in Multiplayer. Every exported frame must still belong to the owned client PID.
+# No synthetic input, settings changes or retries.
 # Dot-source after Record-JFR.ps1; importing this file has no side effects.
 function Get-TrialFrameProperty($Object, [string]$Name, $Default = $null) {
     if ($null -eq $Object) { return $Default }
@@ -196,32 +198,143 @@ function Get-TrialCapFrameX([ValidateRange(0, 65535)][int]$Port = 0, [string]$Di
     return $client
 }
 
-function Assert-TrialCapFrameXTarget($Client, $Process, [string]$ExpectedExecutablePath, [DateTime]$ExpectedStartUtc) {
-    $identity = Assert-JfrTargetProcess $Process $ExpectedExecutablePath $ExpectedStartUtc
-    $javaProcesses = @(Get-Process -Name java -ErrorAction SilentlyContinue)
-    if ($javaProcesses.Count -ne 1 -or $javaProcesses[0].Id -ne $Process.Id) {
-        throw 'CapFrameX captures by name: exactly one java process must exist, and it must be the owned trial client.'
+function Split-TrialWindowsCommandLine([string]$Text) {
+    # Windows argv quoting, including escaped quotes/backslashes and empty values.
+    # Parse locally: the native Host command contains credentials; never log it.
+    if (-not $Text -or $Text.Contains([char]0) -or $Text.Contains("`r") -or $Text.Contains("`n")) { throw 'Unavailable Host command line.' }
+    $parts = New-Object 'Collections.Generic.List[string]'
+    $token = New-Object Text.StringBuilder
+    $quoted = $false; $started = $false; $index = 0
+    while ($index -lt $Text.Length) {
+        $character = $Text[$index]
+        if (($character -eq ' ' -or $character -eq [char]9) -and -not $quoted) {
+            if ($started) { $parts.Add($token.ToString()); [void]$token.Clear(); $started = $false }
+            $index++; continue
+        }
+        $started = $true
+        if ($character -eq '\') {
+            $slashes = 0
+            while ($index -lt $Text.Length -and $Text[$index] -eq '\') { $slashes++; $index++ }
+            if ($index -lt $Text.Length -and $Text[$index] -eq '"') {
+                [void]$token.Append(('\' * [int][Math]::Floor($slashes / 2)))
+                if ($slashes % 2) { [void]$token.Append('"'); $index++; continue }
+            } else { [void]$token.Append(('\' * $slashes)); continue }
+        }
+        if ($Text[$index] -eq '"') {
+            if ($quoted -and $index + 1 -lt $Text.Length -and $Text[$index + 1] -eq '"') {
+                [void]$token.Append('"'); $index += 2; continue
+            }
+            $quoted = -not $quoted; $index++; continue
+        }
+        [void]$token.Append($Text[$index]); $index++
     }
+    if ($quoted) { throw 'Malformed Host command line.' }
+    if ($started) { $parts.Add($token.ToString()) }
+    return $parts.ToArray()
+}
+
+function Test-TrialNativeHostArguments([string]$CommandLine, [string]$ExpectedExecutablePath) {
+    $arguments = @(Split-TrialWindowsCommandLine $CommandLine)
+    if ($arguments.Count -lt 20) { return $false }
+    # CoopMaster uses java.home/bin/java; CreateProcess resolves its .exe suffix.
+    $expected = [IO.Path]::GetFullPath($ExpectedExecutablePath)
+    $image = [IO.Path]::GetFullPath($arguments[0])
+    if ($image -ine $expected -and ($image + '.exe') -ine $expected) { return $false }
+    $patterns = @('^-Xms([1-9][0-9]*)m$', '^-Xmx([1-9][0-9]*)m$', '^-Djava\.library\.path=.+$',
+        '^-Djava\.class\.path=.+$', '^-Duser\.dir=.+$', '^-Duser\.home=.+$',
+        '^-Dzomboid\.steam=[01]$', '^-Djava\.awt\.headless=true$', '^-XX:-OmitStackTraceInFastThrow$')
+    $index = 1
+    foreach ($pattern in $patterns) {
+        if ($arguments[$index] -cnotmatch $pattern) { return $false }
+        $index++
+    }
+    if ($arguments[1].Substring(4) -cne $arguments[2].Substring(4)) { return $false }
+    if ($arguments[$index] -cin @('-XX:+UseZGC', '-XX:+UseG1GC')) { $index++ }
+    if ($arguments[$index] -ceq '-Dsoftreset') { $index++ }
+    if ($arguments[$index] -ceq '-Ddebug') { $index++ }
+    if ($arguments[$index].StartsWith('-javaagent:', [StringComparison]::Ordinal)) {
+        $loader = $arguments[$index].Substring(11).Split('=')[0]
+        $game = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($expected)))
+        if ([IO.Path]::GetFullPath($loader) -ine (Join-Path $game 'ZombieBuddy.jar')) { return $false }
+        $index++
+    }
+    if ($arguments[$index] -cne 'zombie.network.GameServer' -or $arguments[$index + 1] -cne '-coop') { return $false }
+    $index += 2
+    if ($arguments[$index] -ceq '-anti-cheats') { $index++ }
+    foreach ($flag in @('-servername', '-adminusername', '-adminpassword')) {
+        if ($index + 1 -ge $arguments.Count -or $arguments[$index] -cne $flag) { return $false }
+        $index += 2
+    }
+    if ($index + 3 -ne $arguments.Count) { return $false }
+    return $arguments[$index] -cmatch '^-cachedir=.+$' -and
+        $arguments[$index + 1] -cmatch '^-useTimeStampedLogFileNames=[01]$' -and
+        $arguments[$index + 2] -cmatch '^-debugLogFile=.*$'
+}
+
+function Assert-TrialJavaCaptureInventory($Process, [string]$ExpectedExecutablePath, [DateTime]$ExpectedStartUtc,
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$SessionType = 'SinglePlayer') {
+    $javaProcesses = @(Get-Process -Name java -ErrorAction SilentlyContinue)
+    $metadata = @()
+    try {
+        $owned = @($javaProcesses | Where-Object { $_.Id -eq $Process.Id })
+        if ($owned.Count -ne 1) { throw 'CapFrameX requires the owned trial client in the java process inventory.' }
+        if ($javaProcesses.Count -eq 1) { return }
+        if ($SessionType -ne 'Multiplayer' -or $javaProcesses.Count -ne 2) {
+            throw 'CapFrameX captures by name: exactly one java process must exist, apart from a verified native Host child in Multiplayer.'
+        }
+        $child = @($javaProcesses | Where-Object { $_.Id -ne $Process.Id })[0]
+        # Retain a process handle through CIM verification; an exited PID cannot be
+        # reused while this handle exists. Dispose inventory handles in every outcome.
+        $null = $child.Handle
+        $child.Refresh()
+        $started = $child.StartTime.ToUniversalTime()
+        if ($child.HasExited -or $started -le $ExpectedStartUtc.ToUniversalTime()) { throw 'Unverified java process beside the trial client.' }
+        $image = Get-TrialCapFrameXExecutable $child
+        $metadata = @(Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = ' + [int]$child.Id) -OperationTimeoutSec 5 -ErrorAction Stop)
+        if ($metadata.Count -ne 1 -or [int]$metadata[0].ProcessId -ne $child.Id -or
+            [int]$metadata[0].ParentProcessId -ne $Process.Id -or -not $image -or
+            [IO.Path]::GetFullPath($image) -ine [IO.Path]::GetFullPath($ExpectedExecutablePath) -or
+            -not $metadata[0].ExecutablePath -or
+            [IO.Path]::GetFullPath($metadata[0].ExecutablePath) -ine [IO.Path]::GetFullPath($ExpectedExecutablePath) -or
+            -not (Test-TrialNativeHostArguments $metadata[0].CommandLine $ExpectedExecutablePath)) {
+            throw 'An additional java process is not the verified native headless Host child.'
+        }
+        $child.Refresh()
+        if ($child.HasExited -or $child.StartTime.ToUniversalTime() -ne $started) { throw 'Host child identity changed during capture preflight.' }
+    } finally {
+        foreach ($entry in $metadata) {
+            if ($entry -is [IDisposable]) { try { $entry.Dispose() } catch { } }
+        }
+        foreach ($item in $javaProcesses) {
+            if (-not [Object]::ReferenceEquals($item, $Process) -and $item.PSObject.Methods['Dispose']) {
+                try { $item.Dispose() } catch { }
+            }
+        }
+    }
+}
+
+function Assert-TrialCapFrameXTarget($Client, $Process, [string]$ExpectedExecutablePath, [DateTime]$ExpectedStartUtc,
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$SessionType = 'SinglePlayer') {
+    $identity = Assert-JfrTargetProcess $Process $ExpectedExecutablePath $ExpectedStartUtc
+    Assert-TrialJavaCaptureInventory $Process $ExpectedExecutablePath $ExpectedStartUtc -SessionType $SessionType
     $eligible = @(Invoke-TrialFrameRequest $Client 'GET' '/api/processes')
     if (-not ($eligible -ccontains 'java')) { throw 'The owned java process is not capture-eligible in CapFrameX yet.' }
     # Recheck identity and uniqueness after the HTTP read, immediately before POST.
     $null = Assert-JfrTargetProcess $Process $ExpectedExecutablePath $ExpectedStartUtc
-    $javaProcesses = @(Get-Process -Name java -ErrorAction SilentlyContinue)
-    if ($javaProcesses.Count -ne 1 -or $javaProcesses[0].Id -ne $Process.Id) {
-        throw 'The java process identity became ambiguous before CapFrameX capture.'
-    }
+    Assert-TrialJavaCaptureInventory $Process $ExpectedExecutablePath $ExpectedStartUtc -SessionType $SessionType
     return $identity
 }
 
 function Start-TrialFrameCapture($Client, $Process, [string]$ExpectedExecutablePath, [DateTime]$ExpectedStartUtc,
-    [string]$Directory, [ValidateRange(1, 300)][int]$Seconds, [string]$Token) {
+    [string]$Directory, [ValidateRange(1, 300)][int]$Seconds, [string]$Token,
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$SessionType = 'SinglePlayer') {
     if ([string]::IsNullOrWhiteSpace($Token) -or [string]::IsNullOrWhiteSpace($Directory)) {
         throw 'A unique capture token and new capture directory are required.'
     }
     $directoryPath = [IO.Path]::GetFullPath($Directory)
     Assert-TrialFramePath $directoryPath
     if (Test-Path -LiteralPath $directoryPath) { throw 'CapFrameX capture directory must be new; existing captures are preserved.' }
-    $null = Assert-TrialCapFrameXTarget $Client $Process $ExpectedExecutablePath $ExpectedStartUtc
+    $null = Assert-TrialCapFrameXTarget $Client $Process $ExpectedExecutablePath $ExpectedStartUtc -SessionType $SessionType
     $null = New-Item -ItemType Directory -Path $directoryPath -ErrorAction Stop
     # REST builds new CaptureOptions: CaptureDelay defaults to zero. GUI delay
     # settings are not copied. JsonCsv is the enum NAME, not the UI's JSON + CSV.
