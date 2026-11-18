@@ -67,6 +67,36 @@ in the mixed layout for both variants. The experiment did not justify changing
 the gameplay code. Navigation, collision, vision and pathfinding updates stay
 on their original engine paths.
 
+## Vegetation on first arrival in 42.22.2
+
+An instrumented, full-pack macOS SP drive on the same fresh Muldraugh route
+recorded 3,757 tree and bush removals. Of 3,756 consecutive transitions,
+1,543 touched a common square and 750 recalculated a common pair of squares.
+The latter account for 3,323 of 42,747 pair calls. Keys include the world
+coordinates and object identity hashes of both endpoints. Matching geometry
+does not establish interchangeable inputs after the next object removal.
+
+In each removal the game updated collision data and dispatched removal events
+before it returned. When the native pathfinding bit was set, 39 removals
+also synchronously prepared navigation updates for their own squares.
+On a synthetic tree, delaying the property refresh changed the observed
+native navigation cost from 0 to 5 until the refresh ran. The same check
+on a bush saw the updated live object list immediately. Broad deferral
+would need to preserve these intermediate reads.
+
+In the ten longest complete game intervals in this drive, neighbor
+recalculation occupied 5.99 ms of 477.07 ms. In the longest interval it
+occupied 0.47 ms of 56.33 ms. These inclusive wall durations come from
+one instrumented JVM. They cannot establish a Windows or Host FPS change.
+At 40 recorded removal centers found in the same drive's saved ground-square
+sample, the saved erosion category matched. Reloading the sampled vegetation
+skipped first-time validation and still scheduled growth when due.
+
+A separate native replay refreshed the center's blocked navigation pointers
+once at the end of the central neighbor loop, preserving the other pair
+updates. Alternating JVMs on restored dense and mixed layouts showed no
+consistent speedup. The current gameplay profile retains native behavior.
+
 ## Checking the profiler locally
 
 ```sh
