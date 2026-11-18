@@ -133,6 +133,18 @@ exclusive durations or presentation-frame boundaries. The old ETL reports
 event loss. The source, game version and workloads differ from the current
 macOS route.
 
+A separate full-pack macOS SP drive disabled the per-listener recorder.
+The frame, stage, and current main-thread CPU clocks shared precise frame
+endpoints. The ten longest complete game intervals occupied 378.73 ms wall
+and 356.07 ms of main-thread CPU. Simulation logic occupied 256.86 ms wall,
+including 143.42 ms in chunk admission. Container fill calls occupied
+25.68 ms. Main-thread render preparation occupied 78.66 ms, including
+46.59 ms in the world-cell renderer. Nested durations must not be added.
+In the single longest interval, fill accounted for 6.79 ms and the cell
+renderer for 4.48 ms of 46.39 ms. These are measurements of existing work,
+not a change in FPS. The admitted drive had one contact and passed its
+speed gate. A separate sustained-crawl failure is excluded.
+
 ## Checking the profiler locally
 
 ```sh
