@@ -64,13 +64,19 @@ end
 -- as begin/tick, so the first native begin cannot invalidate their own receipt.
 Queue.updateOperationState = updateOperationState
 
+local completed = ISTimedActionQueue.onCompleted
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)
     if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.started(action) end
     -- Initialize disabled-mode bookkeeping before native allocation/receipts.
     -- Its first tick must not revoke a freshly captured media transaction.
     updateOperationState(ISTimedActionQueue.queues[action.character])
-    local managed, canBegin
+    local managed, canBegin, declined
+    if Settlement.beginCleanupEffect then managed, canBegin, declined = Settlement.beginCleanupEffect(action) end
+    if managed and canBegin ~= true then
+        if declined then completed(ISTimedActionQueue.queues[action.character], action) end
+        return
+    end
     if Settlement.beginCleanupContinuation then managed, canBegin = Settlement.beginCleanupContinuation(action) end
     if managed and canBegin ~= true then return end
     local targets = Toolkit.ActionQueueDeviceTargets
@@ -195,7 +201,6 @@ local function finishGroup(queue, request)
     end)
 end
 
-local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
     if Settlement.deferCleanupCompletion and Settlement.deferCleanupCompletion(queue, action) then return end
     -- Enabled queue callbacks belong to their old episode, never a replacement
@@ -595,6 +600,13 @@ ISTimedActionQueue.tick = function(queue)
         return
     end
     if holdsOptionalReturn and holdsOptionalReturn(queue, current) then return end
+    if current and not current.action and Settlement.beginCleanupEffect then
+        local managed, allowed, declined = Settlement.beginCleanupEffect(current)
+        if managed and allowed ~= true then
+            if declined then completed(queue, current) end
+            return
+        end
+    end
     if Settlement.holdsCleanupContinuation and Settlement.holdsCleanupContinuation(queue, current) then return end
     local approach=Toolkit.ActionQueueApproach
     if approach and approach.skipUnavailable and approach.skipUnavailable(queue,current)then return end

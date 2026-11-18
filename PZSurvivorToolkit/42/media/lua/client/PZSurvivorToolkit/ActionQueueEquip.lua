@@ -63,7 +63,7 @@ adoptBase=function(name,previous,replacement)
   or base[name]~=replacement or baseMethods[name]~=nil and baseMethods[name]~=previous
   or inherited[name]~=nil and inherited[name]~=previous
   or not closure(previous,'ISBaseTimedAction.lua')or not closure(replacement,'ActionQueue.lua')then return false end
- if queueSource==nil then queueSource=matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',3049581907,'PZSurvivorToolkit',true)end
+ if queueSource==nil then queueSource=matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',3587091554,'PZSurvivorToolkit',true)end
  if not queueSource then return false end
  if baseMethods[name]~=nil then baseMethods[name]=replacement end
  if inherited[name]~=nil then inherited[name]=replacement end
@@ -91,12 +91,12 @@ local function source(action)
  for name,value in each(class)do if kind(value)=='function'and methods[name]~=value then return false end end
  for name,value in each(baseMethods)do
   if base[name]~=value or not(closure(value,'ISBaseTimedAction.lua')and line(value)==baseRoles[name]
-   or name=='stop'and closure(value,'ActionQueue.lua')and line(value)==352)then return false end
+   or name=='stop'and closure(value,'ActionQueue.lua')and line(value)==357)then return false end
  end
  for name,value in each(inherited)do
   if (action[name]or false)~=value then return false end
   if value~=false and not(closure(value,'ISBaseTimedAction.lua')and line(value)==baseRoles[name]
-   or name=='begin'and closure(value,'ActionQueue.lua')and line(value)==69)then return false end
+   or name=='begin'and closure(value,'ActionQueue.lua')and line(value)==70)then return false end
  end
  for _,slot in array(enums)do if slot.value==nil or slot.owner[slot.name]~=slot.value then return false end end
  if #enums~=4 then return false end
@@ -278,6 +278,30 @@ inspectSchedule=function(...)
   if not source(action)or not pending(action)then return end
   return inspectNativeSchedule(action,container,true)
  end)
+ if ok then return value end
+end
+-- Exact current ordinary hand state at a native tool boundary. A held item
+-- must still be the same root inventory object; equipment with extra native
+-- side effects is outside the automatic primary-hand restoration contract.
+function Equip.restorationHands(actor, incoming)
+ local function read()
+  if not actor or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead() or actor:isAsleep() then return end
+  local root,back=actor:getInventory(),actor:getClothingItem_Back()
+  if back and back:hasTag(ItemTag.REPLACE_PRIMARY) then return end
+  local function ordinary(item)
+   if not item then return false end
+   local valid,both,weapon,handgun=itemFacts(actor,root,item)
+   if not valid or both or handgun or weapon and item:isTwoHandWeapon() then return end
+   return {item=item,requiresBoth=both,handWeapon=weapon,handgun=handgun}
+  end
+  local primary,secondary=actor:getPrimaryHandItem(),actor:getSecondaryHandItem()
+  local left,right=ordinary(primary),ordinary(secondary)
+  if incoming and not ordinary(incoming) or left==nil or right==nil or primary and primary==secondary
+   or actor:getInventory()~=root or actor:getClothingItem_Back()~=back
+   or actor:getPrimaryHandItem()~=primary or actor:getSecondaryHandItem()~=secondary then return end
+  return {primary=left,secondary=right}
+ end
+ local ok,value=call(read)
  if ok then return value end
 end
 Equip.inspect,Equip.inspectSchedule,Equip.bindingsTrusted,Equip.adoptBase=inspect,inspectSchedule,bindingsTrusted,adoptBase

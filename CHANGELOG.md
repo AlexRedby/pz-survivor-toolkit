@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.9
+
+- **Internal:** Added an opt-in native beard-trimming integration for testing automatic razor returns and later primary-hand equipment choices.
+
 ### 0.2.8
 
 - **Fix:** When Host confirms that an interrupted restoration failed, the queue updates the existing item-return notice with the confirmed outcome.

@@ -87,6 +87,15 @@ local function fixture(client,options,reused,episode)
     local expansion
     expansion=command(function()
         assert(q.current==expansion and expansion._isAddingActions,'cleanup did not use its actual expansion boundary')
+        if options.reserveDenied then
+            assert(not settlement.reserveClaimedReturn(expansion,f.loan),'unclaimed expansion acquired fallback debt ownership')
+        end
+        if options.reserve then
+            assert(not settlement.reserveClaimedReturn(expansion,{}),'copied loan acquired fallback debt ownership')
+            assert(not settlement.reserveClaimedReturn(f.tail,f.loan),'unrelated command acquired claimed loan')
+            assert(settlement.reserveClaimedReturn(expansion,f.loan),'actual claimed expansion could not reserve its exact loan')
+            assert(settlement.reserveClaimedReturn(expansion,f.loan),'same claimed expansion did not preserve its reservation')
+        end
         if options.abandonExpansion then f.abandoned=true;return end
         local restore=e.ISEquipWeaponAction:new(f.player,f.previous,50,true,false)
         t.ActionQueueOperations.adopt(restore,expansion.toolkitQueueOperation)
@@ -105,6 +114,10 @@ local function fixture(client,options,reused,episode)
             end,
         }
         if options.sourceGuard~=false then specification.sourceGuard=nativeSource end
+        if options.admit then specification.admit=function(action)
+            f.admitCalls=(f.admitCalls or 0)+1
+            return options.admit(f,action)
+        end end
         f.restoreHandle=assert(settlement.observeCleanupEffect(restore,specification))
         f.restore=restore
         local continuation
@@ -125,7 +138,7 @@ local function fixture(client,options,reused,episode)
     end)
     t.ActionQueueOperations.adopt(expansion,reading.toolkitQueueOperation)
     assert(settlement.cleanup(expansion,f.loan))
-    if options.cancelBeforeExpansion and not options.unclaimed then
+    if (options.cancelBeforeExpansion or options.claim) and not options.unclaimed then
         assert(settlement.claimBorrowedReturn(expansion,f.loan))
     end
     t.ActionQueueOperations.runWith(reading.toolkitQueueOperation,function() e.ISTimedActionQueue.add(expansion) end)
@@ -188,9 +201,17 @@ local function fixture(client,options,reused,episode)
         assert(f.player:getPrimaryHandItem()==f.borrowed,'native preparation equip did not change the real hand')
     end
     assert(q.current==expansion)
+    if options.reserve then
+        assert(not settlement.reserveClaimedReturn(expansion,f.loan),'claim was reserved outside its actual expansion')
+    end
     f.start(expansion);f.dispatch(expansion,'perform')
     if options.abandonExpansion then return f end
-    assert(q.current==f.restore and allocations(f,f.restore)==1 and allocations(f,f.continuation)==0)
+    if options.heldVeto then
+        assert(q.current==f.restore and allocations(f,f.restore)==0 and allocations(f,f.continuation)==0)
+    elseif options.veto then
+        assert(q.current==f.tail and allocations(f,f.restore)==0 and allocations(f,f.continuation)==0,
+            'declined cleanup allocated native work or failed to release the independent tail')
+    else assert(q.current==f.restore and allocations(f,f.restore)==1 and allocations(f,f.continuation)==0) end
     return f
 end
 local function debt(f)
@@ -209,6 +230,35 @@ local function tail(f)
     assert(allocations(f,f.tail)==1)
     f.start(f.tail);f.dispatch(f.tail,'perform')
     assert(#q.queue==0 and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1)
+end
+
+-- A private opt-in gate runs before Java can allocate the cleanup. Refusal
+-- and unavailable observations retain the exact debt without any deferred equip.
+for _,client in ipairs({false,true}) do
+    for _,result in ipairs({'declined','unknown','error'}) do
+        local f=fixture(client,{veto=true,admit=function(_,action)
+            assert(not action.action and not action.started,'cleanup admission ran after native allocation')
+            if result=='error' then error('admission unavailable') end
+            if result=='declined' then return false end
+        end})
+        debt(f)
+        assert(f.admitCalls==1 and not f.t.ActionQueueSettlement.earned(f.restoreHandle)
+            and f.player:getPrimaryHandItem()==f.borrowed and not f.restore.action,
+            'declined admission restored a hand, earned an effect or retried its callback')
+        -- A late begin on the retired Lua object must not turn a sticky veto
+        -- into native execution after the independent tail already owns begin.
+        f.restore:begin();f.queue:tick()
+        assert(f.admitCalls==1 and allocations(f,f.restore)==0 and f.returnCalls==nil)
+        tail(f)
+    end
+    local f=fixture(client,{admit=function()return true end})
+    assert(f.admitCalls==1)
+    finish(f,f.restore)
+    assert(f.queue.current==f.continuation and f.t.ActionQueueSettlement.earned(f.restoreHandle),
+        'accepted opt-in cleanup lost its ordinary native effect gate')
+    local unrelated=fixture(client,{enrolled=false,admit=function()error('unenrolled action called admission')end})
+    assert(not unrelated.admitCalls and allocations(unrelated,unrelated.restore)==1,
+        'an observer without private dependency enrollment acquired admission authority')
 end
 
 for _,client in ipairs({false,true}) do
@@ -284,6 +334,37 @@ for _,client in ipairs({false,true}) do
     f.start(f.tail);f.dispatch(f.tail,'perform')
     assert(#q.queue==0 and #f.effects==f.initialEffects+2)
 end
+-- Normal completion and cancellation share the same fallback reservation.
+-- Abandoning a claimed expansion before child construction publishes its exact
+-- unpaid loan and releases independent work without synthesizing a return.
+for _,client in ipairs({false,true}) do
+    for _,canceled in ipairs({false,true}) do
+        local f=fixture(client,{claim=true,reserve=true,abandonExpansion=true,cancelBeforeExpansion=canceled})
+        local settlement,q=f.t.ActionQueueSettlement,f.queue
+        local notices=settlement.blockedReturns(f.player)
+        assert(f.abandoned and not f.restore and not f.continuation and f.returnCalls==nil
+            and q.current==f.tail and #q.queue==1 and allocations(f,f.originalReturn)==0
+            and #notices==1 and notices[1].itemId==f.borrowed:getID()
+            and f.borrowed:getContainer()==f.inventory and loanState(f)=='active',
+            'claimed early exit lost normal-path fallback debt or blocked the independent tail')
+        assert(not settlement.reserveClaimedReturn(f.expansion,f.loan),
+            'retired claimed expansion reacquired fallback debt ownership')
+        f.start(f.tail);f.dispatch(f.tail,'perform')
+        local after=settlement.blockedReturns(f.player)
+        assert(#q.queue==0 and #after==1 and after[1].id==notices[1].id and #f.effects==f.initialEffects+1)
+    end
+    local unclaimed=fixture(client,{reserveDenied=true})
+    assert(unclaimed.queue.current==unclaimed.restore and allocations(unclaimed,unclaimed.restore)==1)
+    local f=fixture(client,{claim=true,reserve=true})
+    finish(f,f.restore)
+    f.start(f.continuation);f.dispatch(f.continuation,'perform')
+    assert(f.returnCalls==1 and f.returned and f.queue.current==f.returned)
+    f.start(f.returned);f.deliver(f.returned);f.dispatch(f.returned,'perform')
+    assert(f.queue.current==f.tail and loanState(f)=='completed'
+        and #f.t.ActionQueueSettlement.blockedReturns(f.player)==0,
+        'normal child enrollment did not replace its fallback reservation')
+end
+
 -- A claimed expansion that never enrolls its children cannot silently lose
 -- the borrowed-location debt or fall back to an immediate native transfer.
 for _,client in ipairs({false,true}) do
@@ -540,7 +621,7 @@ for _,mutation in ipairs({'callback','registry','head'}) do
 end
 -- Fill the real bounded notice ledger through distinct genuine native fetch
 -- and failed cleanup episodes, not copied diagnostics or private state writes.
-local function saturation(client,withSourceGuard)
+local function saturation(client,withSourceGuard,admission)
     local f,firstNotice
     local retired={}
     local function reject(value)
@@ -560,8 +641,14 @@ local function saturation(client,withSourceGuard)
         retired[#retired+1]=f.continuation
         tail(f)
     end
-    f=fixture(client,{alreadyHeld=true,sourceGuard=withSourceGuard},f,33)
-    reject(f);f.queue:tick()
+    local lastOptions={alreadyHeld=true,sourceGuard=withSourceGuard}
+    if admission then
+        lastOptions.heldVeto=true
+        lastOptions.admit=function(value)return value.admitCalls>1 end
+    end
+    f=fixture(client,lastOptions,f,33)
+    if not admission then reject(f) end
+    f.queue:tick()
     local notices=f.t.ActionQueueSettlement.blockedReturns(f.player)
     assert(#notices==32 and notices[1].id==firstNotice.id and loanState(f)=='active'
         and f.queue.current==f.restore and f.queue:indexOf(f.tail)>1
@@ -576,9 +663,14 @@ local function saturation(client,withSourceGuard)
     assert(#notices==32 and current and f.queue.current==f.tail and loanState(f)=='active'
         and allocations(f,f.continuation)==0 and #f.effects==f.initialEffects+1,
         'freeing one notice slot replayed cleanup or failed to publish the held unpaid loan')
+    if admission then
+        assert(f.admitCalls==1 and allocations(f,f.restore)==0,
+            'freeing debt capacity retried a declined admission or allocated stale cleanup')
+    end
     tail(f)
     return f,retired
 end
+saturation(false,true,true)
 local saturated,retired=saturation(false,true)
 -- A normal, ready-but-unearned Host rejection uses only the exact continuation
 -- gate. No sourceGuard/bound failure episode was issued anywhere in this VM.

@@ -90,6 +90,7 @@ local captureOptionalEquipment
 local MAX_RETURN_FAILURES = 32
 local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
 local cleanupMarker = {}
+local cleanupAdmissionMarker = {}
 
 local operationMarker, stepMarker = {}, {}
 -- An accepted cancellation owns only its current native episode and earned
@@ -1997,8 +1998,9 @@ function Settlement.observeCleanupEffect(action, specification)
     if type(action) ~= "table" or type(specification) ~= "table" or getmetatable(specification) ~= nil
         or type(specification.guard) ~= "function" or type(specification.capture) ~= "function"
         or type(specification.observed) ~= "function"
-        or specification.sourceGuard ~= nil and type(specification.sourceGuard) ~= "function" then return end
-    local guard, capture, observed, sourceGuard = specification.guard, specification.capture, specification.observed, specification.sourceGuard
+        or specification.sourceGuard ~= nil and type(specification.sourceGuard) ~= "function"
+        or specification.admit ~= nil and type(specification.admit) ~= "function" then return end
+    local guard, capture, observed, sourceGuard, admit = specification.guard, specification.capture, specification.observed, specification.sourceGuard, specification.admit
     local record = operation(action.character, action.toolkitQueueOperation)
     local step = record and record.actions[action]
     local function pendingCleanup()
@@ -2011,8 +2013,8 @@ function Settlement.observeCleanupEffect(action, specification)
         or not Settlement.preparationAvailable() or not pendingCleanup()
         or not requiredCleanup(action, false) or not pendingCleanup() or getmetatable(specification) ~= nil
         or specification.guard ~= guard or specification.capture ~= capture or specification.observed ~= observed
-        or specification.sourceGuard ~= sourceGuard then return end
-    step.preparation = {guard = guard, capture = capture, observed = observed, sourceGuard = sourceGuard, requireEffect = true}
+        or specification.sourceGuard ~= sourceGuard or specification.admit ~= admit then return end
+    step.preparation = {guard = guard, capture = capture, observed = observed, sourceGuard = sourceGuard, admit = admit, requireEffect = true}
     return step.handle
 end
 
@@ -3327,6 +3329,59 @@ function Settlement.claimBorrowedReturn(action, handle)
     return true
 end
 
+local function reserveReturn(owner, claim, scope, candidate, expansion)
+    local record, queue = owner.operation, owner.operation.queue
+    local reservation = {candidate=candidate, scope=scope, loan=claim.loan, record=record,
+        actor=record.character, queue=queue, list=queue.queue, generation=queue.toolkitOperationGeneration or 0,
+        provider=claim.provider, expansion=expansion, claim=claim, state="reserved"}
+    owner.reservation, candidate.returnSuccess = reservation, reservation
+    expansion[cleanupWatchMarker], cleanupContinuationsIssued = true, true
+    return reservation
+end
+
+-- A prior command claim becomes fallback debt ownership only inside its actual
+-- earned cleanup expansion. Enrollment replaces this reservation; an empty or
+-- unavailable expansion leaves it for the existing completion/debt gate.
+function Settlement.reserveClaimedReturn(expansion, handle)
+    local loan = stepProof(handle)
+    local binding = loan and loan.borrowing
+    local candidate, scope = binding and binding.candidate, binding and binding.scope
+    local record = expansion and operation(expansion.character, expansion.toolkitQueueOperation)
+    local owner = record and record.actions[expansion]
+    local queue = record and record.queue
+    local reservation = owner and owner.reservation
+    local claim = reservation and reservation.claim or owner and owner.returnClaim
+    if not candidate or not owner or not claim or claim.loan ~= loan or candidate.returnClaim ~= claim then return false end
+    local function current()
+        return record.actions[expansion] == owner and expansion.character == record.character
+            and expansion.toolkitQueueOperation == record.token and owner.phase == "cleanup"
+            and owner.kind == "ISQueueActionsAction" and owner.started and expansion._isAddingActions == true
+            and expansion.action ~= nil and expansion.action:getTable() == expansion
+            and ISTimedActionQueue.queues[record.character] == queue and queue.character == record.character
+            and queue.current == expansion and queue.queue[1] == expansion
+            and loan.state == "earned" and candidate.step == loan and loan.borrowing == binding
+            and candidate.returnClaim == claim and candidate.phase == "active" and not candidate.ambiguous
+            and not candidate.returning and not candidate.plannedReturn
+    end
+    if not current() then return false end
+    if reservation then
+        if candidate.returnSuccess ~= reservation or reservation.state ~= "reserved" or reservation.failure
+            or reservation.loan ~= loan or reservation.scope ~= scope or reservation.candidate ~= candidate
+            or reservation.record ~= record or reservation.expansion ~= expansion
+            or reservation.queue ~= queue or reservation.list ~= queue.queue
+            or reservation.generation ~= (queue.toolkitOperationGeneration or 0) then return false end
+    elseif owner.returnClaim ~= claim or candidate.returnSuccess ~= nil
+        or loan.operation ~= record or record.actions[loan.action] ~= loan then return false end
+    local list, generation = queue.queue, queue.toolkitOperationGeneration or 0
+    local unchanged = executionProof.captureBindings({{owner=expansion, exact=true}})
+    if not unchanged or not operationLive(record) or not operationLive(loan.operation) or not borrowingLive(scope)
+        or not requiredCleanup(expansion, true) or not claim.provider() or not claim.source()
+        or not current() or queue.queue ~= list or (queue.toolkitOperationGeneration or 0) ~= generation
+        or owner.reservation ~= reservation or candidate.returnSuccess ~= reservation or not unchanged() then return false end
+    if not reservation then reserveReturn(owner, claim, scope, candidate, expansion) end
+    return true
+end
+
 -- Enroll only inside the actual, already-owned cleanup expansion. A retained
 -- cancellation command gets a fresh operation; old sibling effect handles must
 -- never be migrated into this one. This association grants no hand admission,
@@ -3451,6 +3506,13 @@ function Settlement.requireBorrowedReturnSuccess(...)
             prerequisite.returnSuccessPlans[#prerequisite.returnSuccessPlans + 1] = plan
             if prerequisite.preparation.sourceGuard then
                 prerequisite.action[cleanupWatchMarker] = true
+                if prerequisite.preparation.admit and not rawget(prerequisite.action, cleanupAdmissionMarker) then
+                    local capsule = {}
+                    capsule[cleanupAdmissionMarker] = function(challenge)
+                        if challenge == cleanupAdmissionMarker then return prerequisite end
+                    end
+                    prerequisite.action[cleanupAdmissionMarker] = capsule
+                end
                 cleanupFailureIssued = true
             end
         end
@@ -3680,6 +3742,63 @@ function Settlement.beginCleanupContinuation(action)
         return true, false
     end
     return true, continuationSource(entry) and entry.queue.current == action and entry.list[1] == action
+end
+-- Only dependency enrollment issues this private pre-allocation veto. A stale
+-- capsule must still suppress begin; it cannot fall through as ordinary work.
+function Settlement.beginCleanupEffect(action)
+    if not cleanupFailureIssued then return false end
+    local capsule = type(action) == "table" and retainedBindingSource.raw(action, cleanupAdmissionMarker)
+    if capsule == nil then return false end
+    if type(capsule) ~= "table" or getmetatable(capsule) ~= nil then return true, false end
+    local seal = rawget(capsule, cleanupAdmissionMarker)
+    if not settlementSealTrusted(capsule, cleanupAdmissionMarker, seal) then return true, false end
+    local opened, step = pcall(seal, cleanupAdmissionMarker)
+    if not opened or type(step) ~= "table" or step.action ~= action then return true, false end
+    local record, watch = step.operation, step.preparation
+    local queue, actor = record.queue, record.character
+    local list, generation = queue.queue, queue.toolkitOperationGeneration or 0
+    local function current()
+        return rawget(action, cleanupAdmissionMarker) == capsule and record.actions[action] == step
+            and step.preparation == watch and step.phase == "cleanup" and step.returnSuccessPlans
+            and watch.sourceGuard and watch.admit and not step.started and not watch.started
+            and not action.started and not action.action and action.character == actor
+            and action.toolkitQueueOperation == record.token and not record.token.toolkitCancelled and action.Type == step.kind
+            and ISTimedActionQueue.queues[actor] == queue and queue.character == actor
+            and queue.current == action and queue.queue == list and list[1] == action
+            and (queue.toolkitOperationGeneration or 0) == generation and generation == record.generation
+    end
+    if not watch or watch.admitting or not current() then return true, false end
+    local declined = watch.declined
+    watch.admitting, watch.declined, watch.failed = true, true, true
+    local ok, allowed = pcall(function()
+        local unchanged = executionProof.captureBindings({{owner=action, exact=true}})
+        if not unchanged or not operationLive(record) or watch.sourceGuard(action) ~= true
+            or not current() or not unchanged() then return false end
+        if not declined then
+            local admitted, result = pcall(watch.admit, action)
+            if not operationLive(record) or getSpecificPlayer(actor:getPlayerNum()) ~= actor
+                or watch.sourceGuard(action) ~= true or not current() or not unchanged() then return false end
+            if admitted and result == true then return true end
+        end
+        -- This unissued action has no native success or terminal receipt. Keep
+        -- the exact unpaid loan visible before retiring its continuation.
+        for _, plan in ipairs(step.returnSuccessPlans) do
+            if plan.record ~= record or plan.actor ~= actor or plan.queue ~= queue
+                or plan.list ~= list or plan.generation ~= generation
+                or plan.candidate.returnSuccess ~= plan then return false end
+            if not returnSuccessBlocked(plan, "cleanup-unresolved") or not current() or not unchanged() then return false end
+        end
+        return false
+    end)
+    watch.admitting = nil
+    if not ok or not current() then return true, false end
+    if allowed == true then
+        watch.declined, watch.failed = nil, nil
+        return true, true
+    end
+    for _, plan in ipairs(step.returnSuccessPlans) do if not plan.failure then return true, false end end
+    if Settlement.advanceCleanupReturns(queue, action) ~= true or not current() then return true, false end
+    return true, false, true
 end
 function Settlement.holdsCleanupContinuation(queue, action)
     local entry = cleanupContinuation(action)
@@ -4004,13 +4123,9 @@ function Settlement.finish(queue, request, discard)
                 and claim.loan.state == "earned" and not member.action and not member.started and not fresh.started and fresh.operation.token == member.toolkitQueueOperation
                 and ISTimedActionQueue.queues[record.character] == queue and queue.queue[index] == member
                 and queue.current == current and queue.queue[1] == current then
-                local reservation = {candidate=candidate, scope=binding.scope, loan=claim.loan, record=fresh.operation,
-                    actor=queue.character, queue=queue, list=queue.queue, generation=queue.toolkitOperationGeneration or 0,
-                    provider=claim.provider, expansion=member, claim=claim, state="reserved"}
-                fresh.reservation, candidate.returnSuccess = reservation, reservation
+                reserveReturn(fresh, claim, binding.scope, candidate, member)
                 local drain = cancellation(queue)
                 if drain and drain.members[member] then drain.members[member].returnOwner = fresh end
-                member[cleanupWatchMarker], cleanupContinuationsIssued = true, true
                 returns[candidate.id] = nil
             end
         end
@@ -5082,7 +5197,7 @@ function Settlement.discardUnstartedPickups(queue,token,members)
     return true
 end
 
-local explicitEquipmentRole={adler=442162072,line=176}
+local explicitEquipmentRole={adler=716420265,line=176}
 local explicitEquipmentMatches=executionProof and executionProof.matches
 local retainingExplicitEquipment=false
 local function explicitPickupCapture(candidate,capture)

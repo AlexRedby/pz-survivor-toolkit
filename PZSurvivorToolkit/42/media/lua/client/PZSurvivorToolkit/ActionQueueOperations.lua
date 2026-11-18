@@ -9,6 +9,8 @@ require "ISUI/ISInventoryPaneContextMenu"
 require "ISUI/ISInventoryPane"
 require "RadioCom/RadioWindowModules/RWMVolume"
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
+local RazorScope, RazorObserve
+local razorInstalled
 
 local Operations = {}
 PZSurvivorToolkit.ActionQueueOperations = Operations
@@ -411,6 +413,9 @@ local function stamp(action, token)
     end
     local settlement = PZSurvivorToolkit.ActionQueueSettlement
     if settlement then settlement.track(action, "body") end
+    if producerScope and producerScope == RazorScope then
+        RazorObserve(action)
+    end
     local restoration = PZSurvivorToolkit.ActionQueueRestoration
     if restoration and restoration.observeNative then restoration.observeNative(action) end
     local execution = PZSurvivorToolkit.ActionQueueExecution
@@ -620,6 +625,51 @@ local function wrap(class, method, fresh, eligible)
         return run(fresh and {} or scope or {}, (not eligible or eligible(...)) and producer or nil, callback, ...)
     end
     producer.wrapper, class[method] = wrapper, wrapper
+end
+
+-- Explicit qualification only: normal provider-owned games do not load, hash
+-- or wrap the character menu. Keep the source-bound dispatch private to this owner.
+local function installRazorProducer()
+    if P4TidyUpMeister ~= nil or type(getActivatedMods) ~= "function" then return false end
+    local mods = getActivatedMods()
+    if not mods or type(mods.contains) ~= "function" or mods:contains("P4TidyUpMeister") ~= false then return false end
+    if razorInstalled then return razorInstalled() end
+    require "XpSystem/ISUI/ISCharacterScreen"
+    local source = require "PZSurvivorToolkit/SourceProof"
+    local producer = require "PZSurvivorToolkit/ActionQueueRazorProducer"
+    local menu = ISCharacterScreen
+    if type(menu) ~= "table" or type(producer) ~= "table" or type(producer.bind) ~= "function"
+        or type(producer.observe) ~= "function" or type(source) ~= "table" then return false end
+    local callback = source.own(menu, "onTrimBeard")
+    if not source.closure(callback, "ISCharacterScreen.lua") or getFirstLineOfClosure(callback) ~= 538
+        or not source.matches("media/lua/client/XpSystem/ISUI/ISCharacterScreen.lua", 4277275709, nil, true) then return false end
+    local watch = source.captureBindings({
+        {owner = _G, keys = {"PZSurvivorToolkit", "ISCharacterScreen", "getActivatedMods", "getFirstLineOfClosure"}},
+        {owner = PZSurvivorToolkit, keys = {"ActionQueueOperations", "ActionQueueRazorProducer"}},
+        {owner = Operations, keys = {"installRazorProducer", "producer"}},
+        {owner = producer, keys = {"bind", "observe", "owns"}},
+        {owner = source, keys = {"own", "closure", "matches", "captureBindings"}},
+    })
+    if not watch or not watch() then return false end
+    local dispatcher = producer.bind(run)
+    if type(dispatcher) ~= "function" or not watch() or source.own(menu, "onTrimBeard") ~= callback then return false end
+    local receipt = {owner = menu, method = "onTrimBeard", callback = callback}
+    local wrapper = function(...) return dispatcher(run, {}, receipt, callback, ...) end
+    receipt.wrapper = wrapper
+    local function installed()
+        return watch() and source.own(menu, "onTrimBeard") == wrapper
+    end
+    menu.onTrimBeard = wrapper
+    if not installed() then
+        if source.own(menu, "onTrimBeard") == wrapper then menu.onTrimBeard = callback end
+        return false
+    end
+    RazorScope, RazorObserve, razorInstalled = receipt, producer.observe, installed
+    return true
+end
+function Operations.installRazorProducer()
+    local ok, installed = pcall(installRazorProducer)
+    return ok and installed == true
 end
 
 -- UI callbacks enqueue preparation, the operation and native returns synchronously.

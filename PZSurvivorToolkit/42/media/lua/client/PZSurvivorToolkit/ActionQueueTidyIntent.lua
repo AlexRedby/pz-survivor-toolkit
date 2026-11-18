@@ -10,7 +10,7 @@ local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mod
 local transfers=setmetatable({}, {__mode='k'})
 local scope, guard, wrappedUI, installed
 local serial=0
-local ownProvider=false
+local ownProvider, primaryRequests=false,{}
 local ownWaiting={}
 local ownPending={}
 local awaitOwn
@@ -554,6 +554,9 @@ local function wrap(owner,name,kind,hotbar)
             if result[1] and record.enqueued and (kind~='equip' or i==#current.records) then
                 local action=record.action;record.accepted=true
                 state(record.player,record).pending[action]=record
+                if ownProvider and kind=='equip' and (action.primary or action.twoHands) then
+                    primaryRequests[record.player:getPlayerNum()]={actor=record.player,serial=record.serial}
+                end
                 if record.finished then confirm(record) end
             else watching[record.action]=nil end
         end
@@ -796,4 +799,11 @@ function Intent.update(player,callback,...)
     return unpack(results,2,results.n)
 end
 registerTransferListener()
+-- A newer accepted primary-hand menu request supersedes an older automatic
+-- restore even if the physical hand has not changed yet on Host.
+function Intent.primaryRequestRevision(player)
+    if not ownProvider or not guard or not guard() then return end
+    local request=primaryRequests[player:getPlayerNum()]
+    return request and request.actor==player and request.serial or 0
+end
 return Intent

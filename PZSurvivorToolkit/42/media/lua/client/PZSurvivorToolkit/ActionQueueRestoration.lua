@@ -141,8 +141,8 @@ local function installOwnIntent(saved)
             and type(update)=='function'and origin(update,'ISInventoryPane.lua')and firstLine(update)==955
     end
     if not watch or not origin(install,"ActionQueueTidyIntent.lua") or not origin(poll,"ActionQueueTidyIntent.lua")
-        or firstLine(install) ~= 572 or firstLine(poll) ~= 444
-        or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua",442162072,"PZSurvivorToolkit",true)
+        or firstLine(install) ~= 575 or firstLine(poll) ~= 444
+        or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua",716420265,"PZSurvivorToolkit",true)
         or not selectorBinding()or not origin(actual,"ISInventoryPane.lua")or not selectedSelector()
         or not sourceMatches("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua",cleanContext and 1708080922 or 3980587789) then return end
     for name, entry in pairs(callbacks) do
@@ -225,6 +225,25 @@ local function nativeLease()
     end
     return watch, saved
 end
+local function selectMenuRoles(watch)
+    if nativeReadRole == nil then
+        local path = "media/lua/client/ISUI/ISInventoryPaneContextMenu.lua"
+        local role = false
+        if sourceMatches(path, 3980587789) then role, nativeWringRole = 2799, 2560
+        elseif sourceMatches(path, 1708080922) then role, nativeWringRole = 3229, 2959 end
+        if not watch() then return false end
+        nativeReadRole = role
+    end
+    return nativeReadRole and watch()
+end
+
+function Restoration.prepareOwnHandIntent()
+    local watch,saved=nativeLease()
+    if not watch or not selectMenuRoles(watch) then return false end
+    installOwnIntent(saved)
+    return ownIntentInstalled == true and watch()
+end
+
 observeNative = function(action)
     -- Existing P4 runs pay only this cheap check. Selection is checked separately
     -- below, so a selected mod with a delayed/missing global never enables us.
@@ -256,14 +275,7 @@ observeNative = function(action)
     if not selected or present ~= false or saved.enabled() ~= true or not watch() then return false end
     -- Cache immutable source qualification only, after the cheap provider and
     -- setting gates. Unsupported source is not reread for every book click.
-    if nativeReadRole == nil then
-        local path = "media/lua/client/ISUI/ISInventoryPaneContextMenu.lua"
-        local role = false
-        if sourceMatches(path, 3980587789) then role, nativeWringRole = 2799, 2560
-        elseif sourceMatches(path, 1708080922) then role, nativeWringRole = 3229, 2959 end
-        if not watch() then return false end
-        nativeReadRole = role
-    end
+    if not selectMenuRoles(watch) then return false end
     if line ~= (method == "readItem" and nativeReadRole or nativeWringRole) or not watch() then return false end
     installOwnIntent(saved)
     if method ~= "onWringClothing" or action.Type ~= "ISWringClothing" then remember(action, saved.inspect) end

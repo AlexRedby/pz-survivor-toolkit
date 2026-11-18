@@ -411,6 +411,25 @@ return function(client,options)
         -- Genuine same-file closure, incorrect public callback role.
         env.ISInventoryPaneContextMenu.OnPrimaryWeapon=env.ISInventoryPaneContextMenu.OnSecondWeapon
     end
+    if options.razor then
+        if bag then bag.isBroken=function()return false end;bag.hasTag=function()return false end;bag.getType=function()return 'Bag_Schoolbag'end end
+        native('client/ISUI/ISPanelJoypad.lua')
+        native('client/ISUI/ISUI3DModel.lua')
+        native('client/XpSystem/ISUI/ISCharacterScreen.lua')
+        native('shared/TimedActions/ISTrimBeard.lua')
+        nativeFunction('client/ISUI/ISWorldObjectContextMenu.lua','function ISWorldObjectContextMenu.transferIfNeeded(')
+        nativeFunction('client/ISUI/ISWorldObjectContextMenu.lua','ISWorldObjectContextMenu.equip = function(')
+        inventory.getFirstEvalRecurse=function(_,predicate)
+            for _,item in ipairs(allItems)do
+                if (item.container==inventory or options.carried and item.container==source)and predicate(item)then return item end
+            end
+        end
+        local visual={beard='LongScruffy'}
+        visual.setBeardModel=function(self,value)self.beard=value end
+        player.getHumanVisual=function()return visual end
+        player.resetModel=function()end;player.resetBeardGrowingTime=function()end
+        env.sendHumanVisual=function()end;env.triggerEvent=function()end
+    end
     if options.ackFirst then env.require('PZSurvivorToolkit/ActionQueueAcknowledgements')end
     env.require('PZSurvivorToolkit/ActionQueueOperations')
     env.require('PZSurvivorToolkit/ActionQueueDefinitions')
@@ -418,6 +437,11 @@ return function(client,options)
     env.require('PZSurvivorToolkit/ActionQueue')
     local compat=env.require('PZSurvivorToolkit/ActionQueueCompat')
     assert(compat.isInstalled('P4TidyUpMeister')==p4Enabled,'selected P4 provider differs from fixture: '..tostring(env.sourceFailure))
+    if options.razor then
+        env.require('PZSurvivorToolkit/ActionQueueTidyIntent')
+        local razor=env.require('PZSurvivorToolkit/ActionQueueRazorRestoration')
+        assert(razor.install(),'qualification razor installation failed')
+    end
     local queue=env.ISTimedActionQueue.getTimedActionQueue(player)
     local function phase(action,name)
         -- Model the Java LuaTimedActionNew lifecycle bridge, not its individual
@@ -496,7 +520,18 @@ return function(client,options)
         if client and not wait then acknowledge(action,'canceled')end
         queue:tick()
     end
-    return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,
+    local function tool(id,fullType,location)
+        local value=book(id,location)
+        value.class='ComboItem'
+        value.getFullType=function()return fullType end
+        value.getType=function()return fullType:match('[^.]+$')end
+        value.getCategory=function()return 'Item'end
+        value.isBroken=function()return false end
+        value.getStaticModel=function()return 'DisposableRazor'end
+        value.hasTag=function(_,tag)return fullType=='Base.Razor'and tag==env.ItemTag.RAZOR end
+        return value
+    end
+    return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,tool=tool,
         dispatch=dispatch,phase=phase,remove=remove,start=start,deliver=deliver,stop=stop,transactions=transactions,events=events,adjacent=adjacent,
         effects=effects,engineTrace=engineTrace,bag=bag,acknowledge=acknowledge,
         setQueueEnabled=function(value)options.queue=value end,
