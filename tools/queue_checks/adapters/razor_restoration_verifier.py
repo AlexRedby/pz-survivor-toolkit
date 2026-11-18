@@ -11,8 +11,17 @@ TYPES = {'razor': 'Base.Razor', 'previous': 'Base.Hammer', 'replacement': 'Base.
 ACTION_TYPES = {'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEquipWeaponAction', 'trim': 'ISTrimBeard',
                 'restore': 'ISEquipWeaponAction', 'returned': 'ISInventoryTransferAction', 'tail': 'ISReadABook',
                 'explicitEquip': 'ISEquipWeaponAction', 'command': 'ISQueueActionsAction', 'approach': 'ISQueueActionsAction'}
-ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration')
-RETURNED_CASES = {'restore-success', 'cancel-active'}
+ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle')
+RETURNED_CASES = {'restore-success', 'cancel-active', 'trim-scissors', 'cut-hair-scissors'}
+SCISSORS_CASES = {'trim-scissors', 'cut-hair-scissors'}
+
+
+def item_types(case):
+    return dict(TYPES, razor='Base.Scissors') if case in SCISSORS_CASES else TYPES
+
+
+def grooming(case):
+    return ('ISCharacterScreen.onCutHair', 'ISCutHair', 'Bald') if case == 'cut-hair-scissors' else ('ISCharacterScreen.onTrimBeard', 'ISTrimBeard', 'Moustache')
 ORIGIN_CASES = {'full-origin', 'unavailable-origin', 'keep-return'}
 
 
@@ -27,7 +36,10 @@ def action_key(value):
 
 def expected(ids, authority):
     row = copy.deepcopy(ids['baseline'])
-    row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
+    if ids['case'] == 'cut-hair-scissors':
+        row['appearance'].update(hair=ids['targetHair'], nonAttached=False)
+    else:
+        row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
     row['primary'] = ids['items']['replacement' if ids['case'] == 'new-primary-intent' else 'previous']['id']
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
     if ids['case'] not in RETURNED_CASES:
@@ -49,10 +61,13 @@ def validate_prepared(ids, selection):
             or ids.get('targetBeard') != 'Moustache' or set(ids.get('items', {})) != set(TYPES)):
         raise ValueError('prepared native beard/item topology differs')
     owned = ids['items']; baseline = ids['baseline']; bag = ids['bag']
+    if ids['case'] == 'cut-hair-scissors' and (ids.get('initialHair') != 'Fabian' or ids.get('targetHair') != 'Bald'
+            or baseline['appearance'].get('hair') != ids['initialHair'] or baseline['appearance'].get('nonAttached') is not False):
+        raise ValueError('prepared plain haircut differs')
     specs = [bag, *owned.values()]
     if (bag.get('type') != 'Base.Bag_Military' or len({item.get('id') for item in specs}) != len(specs)
             or any(type(item.get('id')) is not int or item['id'] < 0 for item in specs)
-            or any(owned[name].get('type') != kind for name, kind in TYPES.items())):
+            or any(owned[name].get('type') != kind for name, kind in item_types(ids['case']).items())):
         raise ValueError('prepared item identity/type differs')
     rows = baseline['items']; by_id = {item['id']: item for item in rows}
     if (len(by_id) != len(rows) or [item['id'] for item in rows] != sorted(by_id)
@@ -93,7 +108,7 @@ def physical_transfer_errors(sample, ids, role, authority):
     pickup = role == 'pickup'
     if (not isinstance(sample, dict) or sample.get('case') != ids['case'] or sample.get('role') != role
             or sample.get('authority') is not authority or not number(sample.get('at'))
-            or sample.get('itemId') != ids['items']['razor']['id'] or sample.get('itemType') != 'Base.Razor'
+            or sample.get('itemId') != ids['items']['razor']['id'] or sample.get('itemType') != ids['items']['razor']['type']
             or sample.get('source') != (ids['bag']['id'] if pickup else 'root')
             or sample.get('destination') != ('root' if pickup else ids['bag']['id'])
             or sample.get('canonical') is not True or sample.get('bagCanonical') is not True
@@ -467,7 +482,7 @@ def check_case(row, selection, prepared, verified):
                 or row.get('client') != expected(ids, selection['kind'] == 'sp') or ev.get('after') != row['client']
                 or ev.get('before') != ids['baseline']):
             errors.append('Independent authority/client exact inventory, hands, appearance or reader effects differ')
-        if any(ev.get(key) != value for key, value in {'producer': 'ISCharacterScreen.onTrimBeard', 'target': 'Moustache',
+        if any(ev.get(key) != value for key, value in {'producer': grooming(case)[0], 'target': grooming(case)[2],
                 'installed': True, 'explicitRequested': intent_case, 'nativeCallbacksUntouched': True, 'queueIdle': True}.items()):
             errors.append('Real install/menu producer or native callback integrity differs')
         errors.extend(editor_errors(ev, selection))
@@ -492,7 +507,7 @@ def check_case(row, selection, prepared, verified):
             errors.append('Initial primary lacks exact ordinary one-hand restoration proof')
         for role, values in roles.items():
             for action in values:
-                if action.get('type') != ACTION_TYPES[role]:
+                if action.get('type') != (grooming(case)[1] if role == 'trim' else ACTION_TYPES[role]):
                     raise ValueError('Action native class differs: ' + role)
                 if role in ('command', 'approach'):
                     continue
@@ -502,6 +517,8 @@ def check_case(row, selection, prepared, verified):
                     if not denied_duration(duration, ev['blocked']['returnAttempt']['reason'], selection['kind']):
                         errors.append('Denied return original native constructor duration differs')
                     continue
+                if role == 'trim' and case == 'cut-hair-scissors' and (action.get('hairStyle') != ids['targetHair'] or action.get('constructorDuration') != 300):
+                    errors.append('Native haircut hairStyle/ordinary duration differs')
                 item = 'previous' if role == 'restore' else 'replacement' if role == 'explicitEquip' else 'tail' if role == 'tail' else 'razor'
                 if (action.get('itemId') != ids['items'][item]['id'] or any(action.get(key) is not True for key in ('allocated', 'started', 'progress'))
                         or not number(action.get('startedAt')) or not number(action.get('effectiveDuration')) or action['effectiveDuration'] <= 1

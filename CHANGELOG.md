@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.12
+
+- Toolkit's opt-in grooming restoration now returns borrowed scissors after beard trimming and supports ordinary haircuts with a borrowed razor or scissors. The native haircut still applies its appearance changes before Toolkit restores the previous hand item and returns the tool.
+
 ### 0.2.11
 
 - With Toolkit razor restoration enabled and P4 absent, shaving can restore the previous hand item and return the borrowed razor to its bag while the queue editor is turned off.

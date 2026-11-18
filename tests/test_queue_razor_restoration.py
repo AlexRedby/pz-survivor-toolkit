@@ -2,6 +2,8 @@
 import copy
 from pathlib import Path
 import sys
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -20,13 +22,16 @@ def selection(kind='mp'):
 def control_observation(case):
     # Receipt sub-schemas only; these never constitute a passing native run.
     ids = dict(case=case, initialBeard='LongScruffy', targetBeard='Moustache', bag=dict(id=42, type='Base.Bag_Military'),
-               items={name: dict(id=index, type=kind) for index, (name, kind) in enumerate(v.TYPES.items(), 73)})
+               items={name: dict(id=index, type=kind) for index, (name, kind) in enumerate(v.item_types(case).items(), 73)})
     ids['items']['tail'].update(initial=8, total=10)
     ids['baseline'] = dict(case=case, appearance=dict(beard='LongScruffy'), primary=74, secondary=False,
         items=[dict(id=42, type='Base.Bag_Military', container='root'),
                *[dict(id=item['id'], type=item['type'], container=42 if name == 'razor' else 'root') for name, item in ids['items'].items()]],
         origin=dict(id=42, type='Base.Bag_Military', container='root', worn=True, sourceCount=1), worn=[dict(id=42, location='Back')],
         tail=dict(id=76, type='Base.BookCarpentry1', pages=8, characterPages=8, total=10))
+    if case == 'cut-hair-scissors':
+        ids.update(initialHair='Fabian', targetHair='Bald')
+        ids['baseline']['appearance'].update(hair='Fabian', nonAttached=False)
     roles = {'trim': [dict(actionRef='trim', nativeRef='native', operationRef='episode', startedAt=1)],
              'tail': [dict(actionRef='tail', operationRef='independent', startedAt=10)],
              'command': [dict(actionRef='command')], 'restore': [dict(admittedAt=9)]}
@@ -70,7 +75,7 @@ class RazorRestorationTests(unittest.TestCase):
 
     def test_ordered_subsets_preserve_old_and_individual_control_cases(self):
         self.assertEqual(a.CASES, ('restore-success', 'new-primary-intent', 'cancel-active',
-                                  'full-origin', 'unavailable-origin', 'keep-return'))
+                                  'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors'))
         for kind in ('sp', 'mp'):
             for cases in (list(a.CASES[:2]), *([case] for case in a.CASES), list(a.CASES[2:])):
                 value = selection(kind); value['cases'] = cases
@@ -80,12 +85,15 @@ class RazorRestorationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 a.validate(value)
 
-    def test_editor_off_reuses_only_existing_restore_success_in_sp_and_host(self):
+    def test_editor_off_reuses_ordinary_restore_cases_in_sp_and_host(self):
         for kind in ('sp', 'mp'):
             value = selection(kind)
             value['cases'] = ['restore-success']
             value['options']['queue_editor_enabled'] = False
-            a.validate(value)
+            for cases in (['restore-success'], ['trim-scissors'], ['cut-hair-scissors'],
+                          ['restore-success', 'trim-scissors', 'cut-hair-scissors']):
+                value['cases'] = cases
+                a.validate(value)
             for change in (lambda s: s.update(cases=['new-primary-intent']),
                            lambda s: s.update(cases=list(a.CASES)),
                            lambda s: s['mods'].append('P4TidyUpMeister')):
@@ -172,6 +180,101 @@ class RazorRestorationTests(unittest.TestCase):
         self.assertTrue(v.producer_errors(changed, roles, ids))
         changed = copy.deepcopy(roles); changed['pickup'][0]['operationRef'] = 'foreign'
         self.assertTrue(v.producer_errors(ev, changed, ids))
+
+    def test_scissors_cases_keep_exact_borrowed_return_and_independent_appearance(self):
+        for case in ('trim-scissors', 'cut-hair-scissors'):
+            ids, _, _ = control_observation(case)
+            ids['items']['razor']['type'] = 'Base.Scissors'
+            ids['baseline']['items'][1]['type'] = 'Base.Scissors'
+            ids['baseline']['appearance'].update(hair='Fabian', nonAttached=False)
+            if case == 'cut-hair-scissors':
+                ids.update(initialHair='Fabian', targetHair='Bald')
+            final = v.expected(ids, True)
+            self.assertEqual(final['primary'], ids['items']['previous']['id'])
+            self.assertEqual(final['items'], ids['baseline']['items'])
+            self.assertEqual(final['origin'], ids['baseline']['origin'])
+            self.assertEqual(final['tail']['pages'], ids['items']['tail']['total'])
+            appearance = copy.deepcopy(ids['baseline']['appearance'])
+            appearance['hair' if case == 'cut-hair-scissors' else 'beard'] = 'Bald' if case == 'cut-hair-scissors' else 'Moustache'
+            self.assertEqual(final['appearance'], appearance)
+            self.assertEqual(v.item_types(case)['razor'], 'Base.Scissors')
+            for role in ('pickup', 'returned'):
+                pickup = role == 'pickup'
+                physical = dict(case=case, role=role, at=10, authority=True, itemId=73, itemType='Base.Scissors',
+                    source=42 if pickup else 'root', destination='root' if pickup else 42,
+                    sourceCount=0, destinationCount=1, canonical=True, bagCanonical=True)
+                self.assertEqual(v.physical_transfer_errors(physical, ids, role, True), [])
+                for field, value in (('itemType', 'Base.Razor'), ('itemId', 99), ('bagCanonical', False)):
+                    changed = dict(physical, **{field: value})
+                    self.assertTrue(v.physical_transfer_errors(changed, ids, role, True))
+            receipts = [dict(case=case, role=role, at=10 + index, authority=True, itemId=73, itemType='Base.Scissors',
+                source=42 if role == 'pickup' else 'root', destination='root' if role == 'pickup' else 42,
+                sourceCount=0, destinationCount=1, canonical=True, bagCanonical=True)
+                for index, role in enumerate(('pickup', 'returned'))]
+            self.assertEqual(v.authority_transfer_errors(dict(transfers=receipts), ids), [])
+            self.assertTrue(v.authority_transfer_errors(dict(transfers=receipts[:1]), ids))
+
+    def test_prepared_scissors_exact_type_and_actual_hair_change_are_required(self):
+        for case in ('trim-scissors', 'cut-hair-scissors'):
+            ids, _, _ = control_observation(case)
+            baseline = ids['baseline']; baseline['male'] = True
+            for item in baseline['items']:
+                item.update(canonical=True, condition=10, favorite=True, count=1)
+            target = dict(x=10, y=10, z=0)
+            ids['placement'] = target
+            ids['placementProof'] = dict(mode='replica', target=target,
+                actual=dict(x=10.5, y=10.5, z=0, square=target, currentSquare=target),
+                teleports=0, stableMs=500, quietMs=0, elapsedMs=500, centered=True, centers=0)
+            v.validate_prepared(ids, selection())
+            for mutate in (lambda i: i['items']['razor'].update(type='Base.Razor'),
+                           lambda i: i['baseline']['items'][1].update(container='root')):
+                changed = copy.deepcopy(ids); mutate(changed)
+                with self.assertRaises(ValueError):
+                    v.validate_prepared(changed, selection())
+            if case == 'cut-hair-scissors':
+                for mutate in (lambda i: i.update(initialHair='Bald'), lambda i: i.update(targetHair='Fabian'),
+                               lambda i: i['baseline']['appearance'].update(nonAttached='PonyTail')):
+                    changed = copy.deepcopy(ids); mutate(changed)
+                    with self.assertRaises(ValueError):
+                        v.validate_prepared(changed, selection())
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_native_fixture_expected_scissors_return_and_distinct_grooming_effects(self):
+        # Test the shared fixture state model, not a synthetic native pass receipt.
+        script = r'''
+package.preload.QueueEnergyPlacement=function()return {}end
+local F=assert(loadfile(arg[1]))()
+for _,case in ipairs({'trim-scissors','cut-hair-scissors'})do
+ local ids={case=case,initialBeard='LongScruffy',targetBeard='Moustache',initialHair='Fabian',targetHair='Bald',
+  items={razor={id=73},previous={id=74},tail={total=10}},
+  baseline={appearance={beard='LongScruffy',hair='Fabian',nonAttached=false},primary=74,
+   tail={pages=8,characterPages=8},origin={sourceCount=1},items={{id=73,container=42}}}}
+ local final=F.expected(ids)
+ assert(F.returnedCase(case)and final.primary==74 and final.items[1].container==42 and final.origin.sourceCount==1)
+ assert(final.tail.pages==10 and final.tail.characterPages==10)
+ assert(final.appearance.beard==(case=='trim-scissors'and'Moustache'or'LongScruffy'))
+ assert(final.appearance.hair==(case=='cut-hair-scissors'and'Bald'or'Fabian'))
+ assert(ids.baseline.appearance.beard=='LongScruffy'and ids.baseline.appearance.hair=='Fabian')
+end
+'''
+        result = subprocess.run(['luajit', '-', str(PROJECT / 'tests/native_queue/razor-restoration/shared/QueueRazorRestoration.lua')],
+                                input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_haircut_host_completion_uses_native_cut_hair_ack(self):
+        action = dict(role='trim', type='ISCutHair', nativeRef='native', operationRef='episode',
+            events=[dict(boundary=boundary, phase='perform', at=10, nativeRef='native', succeeded=True)
+                    for boundary in ('begin', 'finish')],
+            ack=[dict(state='completed', kind='ISCutHair', transaction=7,
+                token='01234567-89ab-cdef-0123-456789abcdef', nativeRef='native', operationRef='episode',
+                **{key: True for key in ('nativeSame', 'actorSame', 'queueSame', 'rootSame', 'itemSame', 'operationSame')})])
+        self.assertEqual(v.grooming('cut-hair-scissors'), ('ISCharacterScreen.onCutHair', 'ISCutHair', 'Bald'))
+        self.assertEqual(v.lifecycle_errors(action, 'mp'), [])
+        for mutate in (lambda a: a['ack'][0].update(kind='ISTrimBeard'),
+                       lambda a: a['ack'][0].update(state='canceled'),
+                       lambda a: a['ack'][0].update(itemSame=False)):
+            changed = copy.deepcopy(action); mutate(changed)
+            self.assertTrue(v.lifecycle_errors(changed, 'mp'))
 
     def test_host_transfer_uses_inventory_transaction_and_canonical_identity(self):
         # Sub-schema observations only; these are not native run/pass receipts.

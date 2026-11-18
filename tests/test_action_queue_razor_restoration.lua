@@ -2,23 +2,27 @@
 -- the shared fixture. This does not establish live Host transport or rendering.
 if not NativeActionRoot then return end
 local create=assert(loadfile(ProjectRoot..'/tests/support/borrowing_composition.lua'))()
-local function prepared(editorEnabled)
+local originalContains=string.contains
+string.contains=originalContains or function(value,part)return value:find(part,1,true)~=nil end
+local function prepared(editorEnabled,kind)
+ kind=kind or {tool='Base.Razor',body='ISTrimBeard',style='Moustache'}
  local f=create(false,{p4=false,carried=true,razor=true,queue=editorEnabled})
  local e,q,t=f.env,f.queue,f.env.PZSurvivorToolkit
  local previous=f.tool(810,'Base.Pen',f.inventory)
- local razor=f.tool(811,'Base.Razor')
+ local razor=f.tool(811,kind.tool)
  f.player.primary=previous
- e.ISCharacterScreen.onTrimBeard(f.player,'Moustache')
+ if kind.body=='ISCutHair'then e.ISCharacterScreen.onCutHair(f.player,kind.style,300)
+ else e.ISCharacterScreen.onTrimBeard(f.player,kind.style)end
  local approach,pickup,equip,body,cleanup
  if editorEnabled == false then
-  assert(#q.queue==4,'editor-off native pickup/equip/trim/restore expected; got '..#q.queue)
+  assert(#q.queue==4,kind.tool..' '..kind.body..': editor-off pickup/equip/groom/restore expected; got '..#q.queue)
   pickup,equip,body,cleanup=unpack(q.queue)
  else
-  assert(#q.queue==5,'native razor chain must enqueue approach/pickup/equip/trim/owned restoration')
+  assert(#q.queue==5,kind.tool..' '..kind.body..': expected approach/pickup/equip/groom/owned restoration; got '..#q.queue)
   approach,pickup,equip,body,cleanup=unpack(q.queue)
   assert(t.ActionQueueApproach.isContainer(approach,f.source,f.player))
  end
- assert(pickup.Type=='ISInventoryTransferAction'and equip.Type=='ISEquipWeaponAction'and body.Type=='ISTrimBeard')
+ assert(pickup.Type=='ISInventoryTransferAction'and equip.Type=='ISEquipWeaponAction'and body.Type==kind.body and body.item==razor and body.maxTime==300)
  assert(pickup.toolkitQueueOperation==equip.toolkitQueueOperation and equip.toolkitQueueOperation==body.toolkitQueueOperation
   and body.toolkitQueueOperation==cleanup.toolkitQueueOperation,'native operation lost its single ownership token')
  local state=assert(t.ActionQueueSettlement.operationState(pickup))
@@ -26,17 +30,29 @@ local function prepared(editorEnabled)
  if approach then f.start(approach);f.dispatch(approach,'perform') end
  f.start(pickup);f.dispatch(pickup,'perform')
  f.start(equip);f.dispatch(equip,'perform')
- assert(f.player.primary==razor and razor.container==f.inventory,'native preparation did not put the razor in the primary hand')
+ assert(f.player.primary==razor and razor.container==f.inventory,'native preparation did not put the exact borrowed tool in the primary hand')
  state=assert(t.ActionQueueSettlement.operationState(body))
  assert(state.borrowings[1].state=='active','only actual native pickup may earn the carried tool loan')
  f.start(body)
  return f,previous,razor,body,cleanup
 end
+for _,kind in ipairs({
+ {tool='Base.Razor',body='ISTrimBeard',style='Moustache'},
+ {tool='Base.Scissors',body='ISTrimBeard',style='Moustache'},
+ {tool='Base.Scissors',body='ISCutHair',style='Bald'},
+ {tool='Base.Scissors',body='ISCutHair',style='Fabian'},
+})do
 for _, editorEnabled in ipairs({true, false}) do
- local f,previous,razor,body,cleanup=prepared(editorEnabled)
+ local f,previous,razor,body,cleanup=prepared(editorEnabled,kind)
  local q,t=f.queue,f.env.PZSurvivorToolkit
  f.dispatch(body,'perform')
- assert(f.player:getHumanVisual().beard=='Moustache'and q.current==cleanup,'native beard effect or owned cleanup order changed')
+ local visual=f.player:getHumanVisual()
+ assert((kind.body=='ISTrimBeard'and visual.beard==kind.style or kind.body=='ISCutHair'and visual.hair==kind.style)
+  and q.current==cleanup,'native grooming effect or owned cleanup order changed')
+ if kind.body=='ISCutHair'then
+  assert(f.player.hairGrowthResets==1 and visual.nonAttached==nil,'native haircut growth/model cleanup changed')
+  if kind.style=='Bald'then assert(visual.hairColor==visual.naturalHairColor,'native Bald natural hair color was not restored')end
+ end
  f.start(cleanup);f.dispatch(cleanup,'perform')
  local restored=q.current
  assert(#q.queue==2 and restored.Type=='ISEquipWeaponAction'and restored.item==previous,'owned cleanup must issue one native prior-primary restore')
@@ -50,7 +66,27 @@ for _, editorEnabled in ipairs({true, false}) do
  f.start(returned);f.dispatch(returned,'perform')
  local state=assert(t.ActionQueueSettlement.operationState(body))
  assert(#q.queue==0 and razor.container==f.source and f.player.primary==previous and #f.effects==2
-  and state.borrowings[1].state=='completed','native return failed to settle exactly one earned tool loan')
+  and #state.borrowings==1 and state.borrowings[1].state=='completed'
+  and f.effects[1].item==razor and f.effects[1].destination==f.inventory
+  and f.effects[2].item==razor and f.effects[2].destination==f.source,'native return failed to settle exactly one earned tool loan')
+end
+end
+
+-- The native Bald callback also permits a tool-less body. It must run without
+-- earning a hand intent, a physical loan, or an owned restoration command.
+for _,editorEnabled in ipairs({true,false})do
+ local f=create(false,{p4=false,carried=true,razor=true,queue=editorEnabled})
+ local previous=f.tool(810,'Base.Pen',f.inventory)
+ f.player.primary=previous
+ f.env.ISCharacterScreen.onCutHair(f.player,'Bald',300)
+ local body=f.queue.current
+ assert(#f.queue.queue==1 and body.Type=='ISCutHair'and body.item==nil and body.maxTime==300,
+  'tool-less native haircut acquired preparation or restoration work')
+ f.start(body);f.dispatch(body,'perform')
+ local state=f.env.PZSurvivorToolkit.ActionQueueSettlement.operationState(body)
+ assert(#f.queue.queue==0 and #f.effects==0 and f.player.primary==previous
+  and f.player:getHumanVisual().hair=='Bald'and(not state or #state.borrowings==0),
+  'tool-less native haircut earned a loan or modified the prior hand')
 end
 
 local g,old,borrowed,trim,parent=prepared()
@@ -67,7 +103,7 @@ g.start(chosen);g.dispatch(chosen,'perform')
 local remaining=assert(g.env.PZSurvivorToolkit.ActionQueueSettlement.operationState(trim))
 assert(g.player.primary==selected and borrowed.container==g.inventory and #g.effects==1 and #g.queue.queue==0
  and remaining.borrowings[1].state=='active','later explicit choice replayed restoration or silently paid the unreturned loan')
-print('PASS actual native razor pickup/equip/trim, owned hand restoration and return, and later explicit primary choice')
+print('PASS native razor/scissors beard and scissors haircut borrowing, exact hand restoration and return, tool-less isolation, and later primary choice')
 
 -- Cancel after the real pickup/equip, while the native trim is active.
 -- The retained command gets a fresh operation and owns the single return.
@@ -128,3 +164,5 @@ for _, obstacle in ipairs({'unavailable', 'full'}) do
     run.dispatch(tail, 'perform')
     assert(#queue.queue == 0 and #run.effects == 1 and tool.container == run.inventory)
 end
+
+string.contains=originalContains

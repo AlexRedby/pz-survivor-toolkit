@@ -417,6 +417,7 @@ return function(client,options)
         native('client/ISUI/ISUI3DModel.lua')
         native('client/XpSystem/ISUI/ISCharacterScreen.lua')
         native('shared/TimedActions/ISTrimBeard.lua')
+        native('shared/TimedActions/ISCutHair.lua')
         nativeFunction('client/ISUI/ISWorldObjectContextMenu.lua','function ISWorldObjectContextMenu.transferIfNeeded(')
         nativeFunction('client/ISUI/ISWorldObjectContextMenu.lua','ISWorldObjectContextMenu.equip = function(')
         inventory.getFirstEvalRecurse=function(_,predicate)
@@ -424,10 +425,25 @@ return function(client,options)
                 if (item.container==inventory or options.carried and item.container==source)and predicate(item)then return item end
             end
         end
-        local visual={beard='LongScruffy'}
+        -- Model Java appearance/style objects; keep both native producers and
+        -- complete callbacks unchanged, including Bald's natural-color reset.
+        local visual={beard='LongScruffy',hair='Long2',hairColor={},naturalHairColor={}}
         visual.setBeardModel=function(self,value)self.beard=value end
-        player.getHumanVisual=function()return visual end
+        visual.getHairModel=function(self)return self.hair end
+        visual.setHairModel=function(self,value)self.hair=value end
+        visual.getNonAttachedHair=function(self)return self.nonAttached end
+        visual.setNonAttachedHair=function(self,value)self.nonAttached=value end
+        visual.getNaturalHairColor=function(self)return self.naturalHairColor end
+        visual.setHairColor=function(self,value)self.hairColor=value end
+        player.getHumanVisual=function()return visual end;player.getVisual=player.getHumanVisual
+        player.isFemale=function()return false end;player.getClothingItem_Head=function()end
         player.resetModel=function()end;player.resetBeardGrowingTime=function()end
+        player.resetHairGrowingTime=function(self)self.hairGrowthResets=(self.hairGrowthResets or 0)+1 end
+        local styles={FindMaleStyle=function(_,name)
+            return {getName=function()return name end,isAttachedHair=function()return false end}
+        end}
+        styles.FindFemaleStyle=styles.FindMaleStyle
+        env.getHairStylesInstance=function()return styles end
         env.sendHumanVisual=function()end;env.triggerEvent=function()end
     end
     if options.ackFirst then env.require('PZSurvivorToolkit/ActionQueueAcknowledgements')end
@@ -528,7 +544,8 @@ return function(client,options)
         value.getCategory=function()return 'Item'end
         value.isBroken=function()return false end
         value.getStaticModel=function()return 'DisposableRazor'end
-        value.hasTag=function(_,tag)return fullType=='Base.Razor'and tag==env.ItemTag.RAZOR end
+        value.hasTag=function(_,tag)return fullType=='Base.Razor'and tag==env.ItemTag.RAZOR
+            or fullType=='Base.Scissors'and tag==env.ItemTag.SCISSORS end
         return value
     end
     return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,tool=tool,

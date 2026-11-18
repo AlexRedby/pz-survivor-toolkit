@@ -1,6 +1,7 @@
 -- Authority-only seeds/interventions; native queue work is never synthesized.
 local F={}
 local P=require 'QueueEnergyPlacement'
+function F.returnedCase(case)return case=='restore-success'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
 local function id(item)return item and item:getID()or false end
 function F.same(a,b)
  if type(a)~=type(b)then return false end
@@ -65,7 +66,7 @@ end
 function F.observeTransferAuthority(s)
  if not s or s.returnObserved then return end
  local role=s.pickupObserved and'returned'or'pickup'
- if role=='returned'and s.ids.case~='restore-success'and s.ids.case~='cancel-active'then return end
+ if role=='returned'and not F.returnedCase(s.ids.case)then return end
  local row=F.transferSnapshot(s,role)
  if row.sourceCount~=0 or row.destinationCount~=1 or not row.canonical or not row.bagCanonical then return end
  if role=='pickup'then s.pickupObserved=true else s.returnObserved=true end
@@ -86,14 +87,16 @@ end
 function F.prepare(player,case,target,proof,previous)
  assert(not isClient()and P.atCentered(player,target),'authority must be at the prepared square')
  assert(not player:isFemale(),'native male character creation required for beard trimming')
- assert(({['restore-success']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true})[case],'unknown razor case')
+ assert(({['restore-success']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case],'unknown razor case')
  if previous then F.dispose(previous)end
  assert(not player:getPrimaryHandItem()and not player:getSecondaryHandItem(),'authority seed requires empty initial hands')
  local root=player:getInventory();local bag=assert(root:AddItem('Base.Bag_Military'));local source=bag:getItemContainer();source:setExplored(true)
  assert(not player:getWornItem(bag:canBeEquipped()),'authority bag slot occupied')
  local ids={case=case,placement=P.target(target),placementProof=proof,bag={id=bag:getID(),type=bag:getFullType()},items={},initialBeard='LongScruffy',targetBeard='Moustache'}
+ local cut=case=='cut-hair-scissors'
+ if cut then ids.initialHair='Fabian';ids.targetHair='Bald' end
  local s={player=player,ids=ids,bag=bag}
- for name,kind in pairs({razor='Base.Razor',previous='Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'})do
+ for name,kind in pairs({razor=(case=='trim-scissors'or cut)and'Base.Scissors'or'Base.Razor',previous='Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'})do
   local item=assert((name=='razor'and source or root):AddItem(kind));item:setFavorite(true)
   ids.items[name]={id=item:getID(),type=kind}
  end
@@ -102,7 +105,17 @@ function F.prepare(player,case,target,proof,previous)
  tail:setAlreadyReadPages(pages-2);player:setAlreadyReadPages(tail:getFullType(),pages-2);player:setPerkLevelDebug(Perks.Woodwork,0)
  player:setWornItem(bag:canBeEquipped(),bag);player:setPrimaryHandItem(F.find(player,ids.items.previous.id))
  local visual=player:getHumanVisual();visual:setBeardModel(ids.initialBeard)
- visual:setHairColor(ImmutableColor.new(51/255,102/255,153/255,1));visual:setBeardColor(ImmutableColor.new(153/255,102/255,51/255,1));player:resetModel()
+ if cut then
+  -- Disposable fixture setup precedes the exact inventory/appearance baseline.
+  local head=player:getClothingItem_Head()
+  if head then
+   local worn=player:getWornItems();local slot
+   for i=0,worn:size()-1 do local row=worn:get(i);if row:getItem()==head then slot=row:getLocation();break end end
+   assert(slot,'starter headwear location unavailable');player:removeWornItem(head,false);if isServer()then sendClothing(player,slot,nil)end
+  end
+  visual:setHairModel(ids.initialHair);visual:setNonAttachedHair(nil)
+ end
+ visual:setHairColor(cut and visual:getNaturalHairColor()or ImmutableColor.new(51/255,102/255,153/255,1));visual:setBeardColor(ImmutableColor.new(153/255,102/255,51/255,1));player:resetModel()
  if isServer()then
   sendAddItemToContainer(root,bag)
   for name,spec in pairs(ids.items)do if name~='razor'then sendAddItemToContainer(root,F.find(player,spec.id))end end
@@ -128,10 +141,12 @@ function F.resolve(player,ids)
 end
 function F.expected(ids)
  local function clone(value)if type(value)~='table'then return value end;local copy={};for k,v in pairs(value)do copy[k]=clone(v)end;return copy end
- local row=clone(ids.baseline);row.appearance.beard=ids.case=='cancel-active'and ids.initialBeard or ids.targetBeard
+ local row=clone(ids.baseline)
+ if ids.case=='cut-hair-scissors'then row.appearance.hair=ids.targetHair;row.appearance.nonAttached=false
+ else row.appearance.beard=ids.case=='cancel-active'and ids.initialBeard or ids.targetBeard end
  row.primary=ids.items[ids.case=='new-primary-intent'and'replacement'or'previous'].id
  row.tail.pages=ids.items.tail.total;row.tail.characterPages=ids.items.tail.total
- if ids.case~='restore-success'and ids.case~='cancel-active'then
+ if not F.returnedCase(ids.case)then
   row.origin.sourceCount=0
   for _,item in ipairs(row.items)do if item.id==ids.items.razor.id then item.container='root'end end
  end

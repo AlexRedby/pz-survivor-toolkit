@@ -17,7 +17,17 @@ local function noProvider()
  local checked,selected=pcall(mods.contains,mods,'P4TidyUpMeister')
  return checked and selected==false and P4TidyUpMeister==nil
 end
-local function prepare(producer,callback,actor)
+local profiles = {
+ onTrimBeard = {line = 538, body = 'ISTrimBeard', styleField = 'beardStyle'},
+ onCutHair = {line = 547, body = 'ISCutHair', styleField = 'hairStyle'},
+}
+
+function Producer.supports(method, callback)
+ local profile = profiles[method]
+ return profile ~= nil and closure(callback, 'ISCharacterScreen.lua') and firstLine(callback) == profile.line
+end
+
+local function prepare(producer,callback,actor,style,duration)
  local consumer=Toolkit.ActionQueueRazorRestoration
  if type(consumer)~='table'or type(consumer.enabled)~='function'or consumer.enabled()~=true then return end
  if not producer or not noProvider()or type(actor)~='userdata'and type(actor)~='table'
@@ -25,8 +35,16 @@ local function prepare(producer,callback,actor)
   or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead()or actor:isAsleep()then return end
  local menu,world,utils,util=ISCharacterScreen,ISWorldObjectContextMenu,luautils,ISInventoryTransferUtil
  if type(menu)~='table'or type(world)~='table'or type(utils)~='table'or type(util)~='table'
-  or producer.owner~=menu or producer.method~='onTrimBeard'or producer.callback~=callback
-  or own(menu,'onTrimBeard')~=producer.wrapper then return end
+  or producer.owner~=menu or not profiles[producer.method] or producer.callback~=callback
+  or own(menu,producer.method)~=producer.wrapper then return end
+ local profile = profiles[producer.method]
+ if producer.method == 'onCutHair' then
+  local pending = Toolkit.ActionQueueGroomingPending
+  if duration ~= 300 or type(style) ~= 'string' or style == '' or actor:getClothingItem_Head()
+   or actor:getHumanVisual():getNonAttachedHair() or not pending
+   or not closure(pending.noStylingCost, 'ActionQueueGroomingPending.lua')
+   or not pending.noStylingCost(style) then return end
+ end
  local approach=Toolkit.ActionQueueApproach
  local wrappedWalk=own(utils,'walkToContainer')
  local walk=wrappedWalk
@@ -36,7 +54,7 @@ local function prepare(producer,callback,actor)
   walk=approach.nativeHelper(utils,'walkToContainer',wrappedWalk)
  end
  local source={
-  {callback,'ISCharacterScreen.lua',538},
+  {callback,'ISCharacterScreen.lua',profile.line},
   {own(world,'equip'),'ISWorldObjectContextMenu.lua',2595},
   {own(world,'transferIfNeeded'),'ISWorldObjectContextMenu.lua',2588},
   {own(utils,'haveToBeTransfered'),'luautils.lua',445},
@@ -54,7 +72,7 @@ local function prepare(producer,callback,actor)
   {owner=Producer,keys={'bind','observe','owns'}},
   {owner=boundOperations,keys={'producer'}},
   {owner=Proof,keys={'captureBindings','closure','matches','own'}},
-  {owner=menu,keys={'onTrimBeard'}}, {owner=world,keys={'equip','transferIfNeeded'}},
+  {owner=menu,keys={producer.method}}, {owner=world,keys={'equip','transferIfNeeded'}},
   {owner=utils,keys={'haveToBeTransfered','walkToContainer'}},
   {owner=util,keys={'newInventoryTransferAction','isPlayerCharacter','isCharacterGrabbingCorpseItem','isPlayerGrabbingCorpseItem'}},
  })
@@ -79,7 +97,8 @@ local function prepare(producer,callback,actor)
  if type(consumer.observe)~='function'or type(consumer.finish)~='function'then return end
  local consumerWatch=capture({{owner=consumer,keys={'observe','finish','enabled'}}})
  if not consumerWatch then return end
- local episode={actor=actor,consumer=consumer,stage=1,approachOwner=approach,seen={},nativeCallback=callback}
+ local episode={actor=actor,consumer=consumer,stage=1,approachOwner=approach,seen={},nativeCallback=callback,
+  method=producer.method,profile=profile,style=style or ''}
  local function sourceCheck()
   return PZSurvivorToolkit==Toolkit and Toolkit.ActionQueueRazorProducer==Producer
    and Producer.bind==bind and Producer.observe==observe and Producer.owns==owns
@@ -95,7 +114,7 @@ end
 owns=function(episode)
  if active~=episode or episode.invalid or episode.source()~=true then return false end
  local ok,callback,owner,method=pcall(boundQuery,episode.currentAction)
- return ok and callback==episode.nativeCallback and owner==ISCharacterScreen and method=='onTrimBeard'
+ return ok and callback==episode.nativeCallback and owner==ISCharacterScreen and method==episode.method
 end
 Producer.owns=owns
 local function observeAction(action)
@@ -124,8 +143,8 @@ local function observeAction(action)
    or action.twoHands~=nil and action.twoHands~=false or action.maxTime~=50 then episode.invalid=true;return end
   episode.equip=action
  elseif episode.stage==3 then
-  if action.Type~='ISTrimBeard'or action.item~=episode.tool or action.maxTime~=300
-   or action.beardStyle~=episode.beardStyle then episode.invalid=true;return end
+  if action.Type~=episode.profile.body or action.item~=episode.tool or action.maxTime~=300
+   or action[episode.profile.styleField]~=episode.style then episode.invalid=true;return end
   episode.body=action
  else episode.invalid=true;return end
  episode.stage=episode.stage+1
@@ -138,13 +157,12 @@ observe=function(action)
  if not ok and active then active.invalid=true end
 end
 Producer.observe=observe
-dispatch=function(token,producer,callback,actor,beardStyle,...)
- local prepared,episode=pcall(prepare,producer,callback,actor)
+dispatch=function(token,producer,callback,actor,style,...)
+ local prepared,episode=pcall(prepare,producer,callback,actor,style,...)
  if not prepared then episode=nil end
- if not episode then return callback(actor,beardStyle,...)end
+ if not episode then return callback(actor,style,...)end
  local previous=active
  active=episode
- episode.beardStyle=beardStyle or ''
  local function invoke(...)
   local results=pack(pcall(callback,...))
   if results[1]and not episode.invalid and episode.stage==4 and episode.source()then
@@ -154,7 +172,7 @@ dispatch=function(token,producer,callback,actor,beardStyle,...)
   if not results[1]then error(results[2],0)end
   return unpack(results,2,results.n)
  end
- local results=pack(pcall(boundRun,token,producer,invoke,actor,beardStyle,...))
+ local results=pack(pcall(boundRun,token,producer,invoke,actor,style,...))
  active=previous
  if not results[1]then error(results[2],0)end
  return unpack(results,2,results.n)
@@ -167,7 +185,7 @@ bind=function(run)
  if type(operations)~='table'or type(firstLine)~='function'
   or not closure(run,'ActionQueueOperations.lua')or firstLine(run)~=125
   or not closure(operations.producer,'ActionQueueOperations.lua')or firstLine(operations.producer)~=389
-  or not matches('media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua',1465183776,'PZSurvivorToolkit',true)then return end
+  or not matches('media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua',249283561,'PZSurvivorToolkit',true)then return end
  boundRun,boundQuery,boundOperations=run,operations.producer,operations
  return function(_,token,producer,callback,...)return dispatch(token,producer,callback,...)end
 end

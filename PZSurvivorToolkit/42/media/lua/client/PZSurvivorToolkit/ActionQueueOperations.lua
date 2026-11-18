@@ -9,7 +9,7 @@ require "ISUI/ISInventoryPaneContextMenu"
 require "ISUI/ISInventoryPane"
 require "RadioCom/RadioWindowModules/RWMVolume"
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
-local RazorScope, RazorObserve
+local groomingScopes, observeGrooming
 local razorInstalled
 
 local Operations = {}
@@ -413,8 +413,8 @@ local function stamp(action, token)
     end
     local settlement = PZSurvivorToolkit.ActionQueueSettlement
     if settlement then settlement.track(action, "body") end
-    if producerScope and producerScope == RazorScope then
-        RazorObserve(action)
+    if groomingScopes and producerScope and groomingScopes[producerScope] then
+        observeGrooming(action)
     end
     local restoration = PZSurvivorToolkit.ActionQueueRestoration
     if restoration and restoration.observeNative then restoration.observeNative(action) end
@@ -640,31 +640,48 @@ local function installRazorProducer()
     local menu = ISCharacterScreen
     if type(menu) ~= "table" or type(producer) ~= "table" or type(producer.bind) ~= "function"
         or type(producer.observe) ~= "function" or type(source) ~= "table" then return false end
-    local callback = source.own(menu, "onTrimBeard")
-    if not source.closure(callback, "ISCharacterScreen.lua") or getFirstLineOfClosure(callback) ~= 538
+    if not source.closure(producer.supports, "ActionQueueRazorProducer.lua")
         or not source.matches("media/lua/client/XpSystem/ISUI/ISCharacterScreen.lua", 4277275709, nil, true) then return false end
+    local receipts = {}
+    for _, method in ipairs({"onTrimBeard", "onCutHair"}) do
+        local callback = source.own(menu, method)
+        if producer.supports(method, callback) then
+            receipts[#receipts + 1] = {owner = menu, method = method, callback = callback}
+        end
+    end
+    if #receipts == 0 then return false end
     local watch = source.captureBindings({
         {owner = _G, keys = {"PZSurvivorToolkit", "ISCharacterScreen", "getActivatedMods", "getFirstLineOfClosure"}},
         {owner = PZSurvivorToolkit, keys = {"ActionQueueOperations", "ActionQueueRazorProducer"}},
         {owner = Operations, keys = {"installRazorProducer", "producer"}},
-        {owner = producer, keys = {"bind", "observe", "owns"}},
+        {owner = producer, keys = {"bind", "observe", "owns", "supports"}},
         {owner = source, keys = {"own", "closure", "matches", "captureBindings"}},
     })
     if not watch or not watch() then return false end
     local dispatcher = producer.bind(run)
-    if type(dispatcher) ~= "function" or not watch() or source.own(menu, "onTrimBeard") ~= callback then return false end
-    local receipt = {owner = menu, method = "onTrimBeard", callback = callback}
-    local wrapper = function(...) return dispatcher(run, {}, receipt, callback, ...) end
-    receipt.wrapper = wrapper
-    local function installed()
-        return watch() and source.own(menu, "onTrimBeard") == wrapper
+    if type(dispatcher) ~= "function" or not watch() then return false end
+    local scopes = {}
+    for _, receipt in ipairs(receipts) do
+        if source.own(menu, receipt.method) ~= receipt.callback then return false end
+        local callback = receipt.callback
+        receipt.wrapper = function(...) return dispatcher(run, {}, receipt, callback, ...) end
+        scopes[receipt] = true
     end
-    menu.onTrimBeard = wrapper
+    local function installed()
+        if not watch() then return false end
+        for _, receipt in ipairs(receipts) do
+            if source.own(menu, receipt.method) ~= receipt.wrapper then return false end
+        end
+        return true
+    end
+    for _, receipt in ipairs(receipts) do menu[receipt.method] = receipt.wrapper end
     if not installed() then
-        if source.own(menu, "onTrimBeard") == wrapper then menu.onTrimBeard = callback end
+        for _, receipt in ipairs(receipts) do
+            if source.own(menu, receipt.method) == receipt.wrapper then menu[receipt.method] = receipt.callback end
+        end
         return false
     end
-    RazorScope, RazorObserve, razorInstalled = receipt, producer.observe, installed
+    groomingScopes, observeGrooming, razorInstalled = scopes, producer.observe, installed
     return true
 end
 function Operations.installRazorProducer()

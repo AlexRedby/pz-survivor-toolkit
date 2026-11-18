@@ -28,7 +28,7 @@ local phase,index,since='prepare',1,getTimestampMs()
 local started,ready,done=false,false,false
 local state,authority,previous,ids,receipt,placement,placing,placementProof,quiet
 local evidence,actions,tracks,order={},{},{},{}
-local menu,primaryMenu,nativeMethods
+local menu,cutMenu,primaryMenu,nativeMethods
 local originReceipt,originRequestedAt
 local observeCancelStop
 local function originCase()return ids.case=='full-origin'or ids.case=='unavailable-origin'or ids.case=='keep-return'end
@@ -61,7 +61,7 @@ local function exactApproach(action)
  return isContainerApproach(action,bag:getItemContainer(),getPlayer())==true
 end
 local function role(action)
- if action.Type=='ISTrimBeard'then return 'trim'end
+ if action.Type==(ids.case=='cut-hair-scissors'and'ISCutHair'or'ISTrimBeard')then return 'trim'end
  if action.Type=='ISReadABook'then return 'tail'end
  if action.Type=='ISInventoryTransferAction'and action.item and action.item:getID()==ids.items.razor.id then
   return action.destContainer==getPlayer():getInventory()and'pickup'or'returned'
@@ -93,11 +93,11 @@ local function track(action)
  local name=role(action);assert(name~='unknown','unexpected native producer action '..tostring(action.Type))
  if name~='command'then assert(not actions[name]or actions[name]==action,'duplicate exact native action '..name);actions[name]=action end
  local row={role=name,type=action.Type,actionRef=tostring(action),operationRef=tostring(action.toolkitQueueOperation),itemId=action.item and action.item:getID()or false,
-  constructorDuration=action.maxTime,sourceRef=action.srcContainer and tostring(action.srcContainer)or false,allocated=false,started=false,progress=false,events={},ack={},transfers={}}
+  constructorDuration=action.maxTime,hairStyle=action.Type=='ISCutHair'and action.hairStyle or nil,sourceRef=action.srcContainer and tostring(action.srcContainer)or false,allocated=false,started=false,progress=false,events={},ack={},transfers={}}
  row.actor,row.queue,row.root,row.item,row.operation=action.character,q(),action.character:getInventory(),action.item,action.toolkitQueueOperation
  row.source,row.destination=action.srcContainer,action.destContainer
  tracks[action]=row;order[#order+1]=row
- raw('ACTION',{case=ids.case,action={role=name,type=row.type,actionRef=row.actionRef,itemId=row.itemId,constructorDuration=row.constructorDuration}})
+ raw('ACTION',{case=ids.case,action={role=name,type=row.type,actionRef=row.actionRef,itemId=row.itemId,constructorDuration=row.constructorDuration,hairStyle=row.hairStyle}})
  return row
 end
 local function itemIdentity(action,row,boundary)
@@ -195,14 +195,15 @@ Events.OnServerCommand.Add(function(module,command,args)
  end
 end)
 local function callbacksUnchanged()
- if ISCharacterScreen.onTrimBeard~=menu or ISInventoryPaneContextMenu.OnPrimaryWeapon~=primaryMenu then return false end
+ if ISCharacterScreen.onTrimBeard~=menu or ISCharacterScreen.onCutHair~=cutMenu or ISInventoryPaneContextMenu.OnPrimaryWeapon~=primaryMenu then return false end
  for class,methods in pairs(nativeMethods)do for name,callback in pairs(methods)do if class[name]~=callback then return false end end end
  return true
 end
 local function produce()
  assert(empty()and F.same(F.snapshot(state),ids.baseline),'native producer baseline differs')
  actions,tracks,order={},{},{}
- evidence={before=F.snapshot(state),producer='ISCharacterScreen.onTrimBeard',target=ids.targetBeard,installed=Razor.enabled()==true,
+ local cut=ids.case=='cut-hair-scissors'
+ evidence={before=F.snapshot(state),producer=cut and'ISCharacterScreen.onCutHair'or'ISCharacterScreen.onTrimBeard',target=cut and ids.targetHair or ids.targetBeard,installed=Razor.enabled()==true,
   explicitRequested=false,initialRevision=T.ActionQueueTidyIntent.primaryRequestRevision(getPlayer())}
  if editorOff then evidence.editor={};editorTicks=0;observeEditor('before-producer')end
  assert(evidence.initialRevision~=nil,'own primary intent tracking unavailable')
@@ -214,7 +215,8 @@ local function produce()
  assert(evidence.handSeed.ordinary and not evidence.handSeed.requiresBoth and not evidence.handSeed.supportsTwo,
   'authority initial primary is outside ordinary one-hand restoration')
  phase='running'
- ISCharacterScreen.onTrimBeard(getPlayer(),ids.targetBeard)
+ if cut then ISCharacterScreen.onCutHair(getPlayer(),ids.targetHair,300)
+ else ISCharacterScreen.onTrimBeard(getPlayer(),ids.targetBeard)end
  for _,action in ipairs(q().queue)do track(action)end
  assert(actions.pickup and actions.preparationEquip and actions.trim,'actual razor menu did not produce native pickup/equip/trim')
  local queue=q();local list=queue.queue;local prefix=actions.approach and 1 or 0
@@ -402,9 +404,9 @@ require('QueuePreflight').onTick(Events,function()
    assert(Razor.install()and Razor.enabled(),'real Razor.install consumer did not install')
    player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false);getCore():setOptionAutoDrink(false);getCore():setOptionPauseOnFocusloss(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
-   menu,primaryMenu=ISCharacterScreen.onTrimBeard,ISInventoryPaneContextMenu.OnPrimaryWeapon
+   menu,cutMenu,primaryMenu=ISCharacterScreen.onTrimBeard,ISCharacterScreen.onCutHair,ISInventoryPaneContextMenu.OnPrimaryWeapon
    nativeMethods={}
-   for _,class in ipairs({ISInventoryTransferAction,ISEquipWeaponAction,ISTrimBeard,ISReadABook})do
+   for _,class in ipairs({ISInventoryTransferAction,ISEquipWeaponAction,ISTrimBeard,ISCutHair,ISReadABook})do
     local methods={};for name,callback in pairs(class)do if type(callback)=='function'then methods[name]=callback end end;nativeMethods[class]=methods
    end
    ready=true;emit({event='setup',cases=config.cases,nativeDurations=true,provider='native-returns',installed=true});since=getTimestampMs()
@@ -428,7 +430,7 @@ require('QueuePreflight').onTick(Events,function()
    assert(actions.trim and tracks[actions.trim].started and tracks[actions.trim].progress,'real native trim did not progress')
    assert(actions.tail and tracks[actions.tail].started and tracks[actions.tail].progress,'independent native reader did not progress')
    local debts=T.ActionQueueSettlement.blockedReturns(player)
-   if ids.case=='restore-success'or ids.case=='cancel-active'then
+   if F.returnedCase(ids.case)then
     assert(actions.restore and actions.returned and #debts==0 and not evidence.explicitRequested,'ordinary producer restore/return missing')
     if ids.case=='cancel-active'then assert(evidence.control and evidence.control.nativeStop and evidence.control.nativeStop.after,'exact native trim cancellation was not observed before cleanup')end
    elseif ids.case=='new-primary-intent'then

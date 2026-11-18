@@ -91,6 +91,7 @@ local function noStylingCost(name)
  return (not (name:find('Mohawk',1,true)or name:find('Spike',1,true)or name:find('GreasedBack',1,true))or name=='MohawkFlat')
   and not name:find('Buffont',1,true)and not name:find('Greased',1,true)
 end
+Pending.noStylingCost = noStylingCost
 function Pending.apply(profile,snapshot,action,result,policy,context)
  local actor=action.character
  local token=action.toolkitQueueOperation

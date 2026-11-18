@@ -49,7 +49,7 @@ end
 local function currentTool(episode)
     local root = episode.actor:getInventory()
     local item = root:getItemById(episode.itemId)
-    if item and item:getFullType() == 'Base.Razor' and item:getContainer() == root
+    if item and item:getFullType() == episode.itemType and item:getContainer() == root
         and (item == episode.tool or isClient()) then return item end
 end
 
@@ -58,12 +58,13 @@ function Razor.observe(episode, action)
     local settlement, policy = Toolkit.ActionQueueSettlement, Toolkit.ActionQueuePolicy
     local actor, tool = episode.actor, episode.tool
     if action == episode.pickup then
-        if tool:getFullType() ~= 'Base.Razor' or not policy.matchesNative(action)
+        local itemType = tool:getFullType()
+        if (itemType ~= 'Base.Razor' and itemType ~= 'Base.Scissors') or not policy.matchesNative(action)
             or not policy.isOrdinaryTransfer(action) or not policy.isCarriedContainer(action.srcContainer, actor)
             or actor:isEquipped(tool) then return end
         if not Toolkit.Settings.actionQueue() and not settlement.beginIndependentRestoration(episode, action) then return end
         local source, root = action.srcContainer, actor:getInventory()
-        episode.itemId = tool:getID()
+        episode.itemId, episode.itemType = tool:getID(), itemType
         episode.loan = settlement.observePreparation(action, {
             guard = function(value)
                 return value == action and value.character == actor and value.srcContainer == source
