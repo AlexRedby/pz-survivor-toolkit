@@ -43,7 +43,17 @@ local function nestedSentinel(container)
  check(instanceof(bag,'InventoryContainer'),'Garbagebag is not a native bag')
  local inner=bag:getInventory();inner:setExplored(true)
  local child=assert(inner:AddItem('Base.Nails'))
- return {outer=outer:getID(),bag=bag:getID(),child=child:getID()}
+ local hammer=assert(inner:AddItem('Base.Hammer'))
+ hammer:setCondition(3)
+ hammer:getModData().LootDemandOwner={label='before-save',sequence=17}
+ local tape=assert(inner:AddItem('Base.DuctTape'))
+ tape:setCurrentUses(2)
+ local bottle=assert(inner:AddItem('Base.WaterBottle'))
+ local fluid=assert(bottle:getFluidContainer())
+ fluid:Empty()
+ fluid:addFluid(Fluid.Water,0.25)
+ return {outer=outer:getID(),bag=bag:getID(),child=child:getID(),
+  hammer=hammer:getID(),tape=tape:getID(),bottle=bottle:getID()}
 end
 local function checkSentinel(container,sentinel)
  local outer,bag
@@ -60,6 +70,17 @@ local function checkSentinel(container,sentinel)
   if item:getID()==sentinel.child then child=item end
  end
  check(child and child:getFullType()=='Base.Nails','saved nested sentinel missing')
+ if sentinel.hammer==nil then return end -- Legacy seed contains IDs and nesting only.
+ local hammer=inner:getItemById(sentinel.hammer)
+ check(hammer and hammer:getFullType()=='Base.Hammer' and hammer:getCondition()==3,'saved tool condition changed')
+ local owner=hammer:getModData().LootDemandOwner
+ check(owner and owner.label=='before-save' and owner.sequence==17,'saved nested item modData changed')
+ local tape=inner:getItemById(sentinel.tape)
+ check(tape and tape:getFullType()=='Base.DuctTape' and tape:getCurrentUses()==2,'saved drainable uses changed')
+ local bottle=inner:getItemById(sentinel.bottle)
+ check(bottle and bottle:getFullType()=='Base.WaterBottle','saved bottle identity changed')
+ local fluid=bottle:getFluidContainer()
+ check(fluid and fluid:getAmount()==0.25 and fluid:getSpecificFluidAmount(Fluid.Water)==0.25,'saved water volume or composition changed')
 end
 local function automatic(object)
  lootDemandAutomatic(object,false);lootDemandAutomatic(object,true)
@@ -107,7 +128,7 @@ function B.seedPersistence(player)
   check(lootDemandEnsure(completed,player) and rows[completed].calls==1,'seed repeat filled again')
   check(lootDemandFingerprint(completed)==fingerprint,'seed repeat changed IDs/types/tree')
   local meta=ModData.getOrCreate(KEY)
-  meta.schema=1;meta.phase='seeded';meta.pending=describe(objects[1]);meta.completed=describe(objects[2])
+  meta.schema=2;meta.phase='seeded';meta.pending=describe(objects[1]);meta.completed=describe(objects[2])
   meta.completed.fingerprint=fingerprint;meta.completed.count=count;meta.completed.sentinel=rows[completed].sentinel
   meta.completed.rows=lootDemandRows(completed)
   meta.completed.roundtripRows=lootDemandRoundtripRows(completed)
@@ -121,12 +142,13 @@ end
 function B.reloadPersistence(player)
  authority(player)
  local meta=ModData.get(KEY)
- check(meta and meta.schema==1 and meta.phase=='seeded','wrong/missing stopped-world seed metadata')
+ check(meta and (meta.schema==1 or meta.schema==2) and meta.phase=='seeded','wrong/missing stopped-world seed metadata')
  local pendingObject,pending=locate(meta.pending);local completedObject,completed=locate(meta.completed)
  if not pendingObject or not completedObject then return false end -- Caller may poll until its bounded deadline.
  return observedFill({pending,completed},function(rows)
   check(not pending:isExplored() and pending:isEmpty() and lootDemandPending(pending),'pending did not survive stopped-world reload')
   check(completed:isExplored(),'completed explored state did not persist')
+  if meta.schema==2 then check(meta.completed.sentinel.hammer and meta.completed.sentinel.tape and meta.completed.sentinel.bottle,'seed lacks item state sentinels') end
   checkSentinel(completed,meta.completed.sentinel)
   check(treeCount(completed)==meta.completed.count,'completed recursive count changed')
   print('[LOOT_DEMAND_TEST] DETAIL reload-expected '..tostring(meta.completed.rows):gsub('\n',';'))
@@ -144,6 +166,8 @@ function B.reloadPersistence(player)
   check(lootDemandFingerprint(pending)==fingerprint,'pending repeat changed IDs/types/tree')
   check(lootDemandMoveableRoundtrip(),'native movable load normalization regression')
   print('[LOOT_DEMAND_TEST] PASS native-moveable-roundtrip original=Base.Mov_PalletEmpty saved=Base.construction_01_5 same_id=true')
+  checkSentinel(completed,meta.completed.sentinel)
+  if meta.schema==2 then print('[LOOT_DEMAND_TEST] PASS saved-item-state condition=3 uses=2 water=0.25 nested_moddata=true') end
   print('[LOOT_DEMAND_TEST] PASS persist-reload pending_cold_unexplored=true completed_ids_persist=true nested=true completed_count='..meta.completed.count..' pending_count='..count)
   return true
  end)

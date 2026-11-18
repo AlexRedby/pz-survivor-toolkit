@@ -107,9 +107,11 @@ rejected. Native `Moveable.load` changes `Base.Mov_PalletEmpty` to
 `Base.construction_01_5`; a separate real-item serialization control checks that
 normalization with the same ID/world sprite, independently of loot generation.
 
-The reference does not cover all item condition, age, uses, fluids or modData.
-Reload observes server contents; its separate seed request exchange is still one
-client, not concurrent clients. Grid-event diagnostics run after possible earlier
+Schema 2 also stores a nested, partially used roll of tape, a damaged hammer
+with nested modData, and a bottle containing a measured volume of water.
+The seed and reload check their exact IDs, contents and values. Earlier schema 1
+seeds retain their original identity/nesting coverage. A separate client
+request during the Host seed verifies replication for that case. Grid-event diagnostics run after possible earlier
 listeners and do not represent raw bytes before deserialization.
 
 ## Qualification state
@@ -139,10 +141,16 @@ A separate witness times the selected live object without importing the prior
 automatic visit. The server reports missing timing separately from actual
 inventory delivery.
 
-The earlier SP lifecycle run passed functional assertions and failed its
-telemetry world-name guard. Current-runtime persistence, native furniture
-moves, simultaneous players and broader item state remain open. The loot hook
-stays in the test fixture.
+On Build 42.22.2 with the full selected pack, fresh SP and menu Host processes
+reloaded sealed worlds on macOS. The pending bin stayed unexplored until one
+first fill. The completed dumpster retained its saved item tree, including the
+non-default sentinel condition, uses, fluid and nested modData. Reopening did
+not refill it. In a separate Host run, the client replicated the populated
+world-bin overlay for `trashcontainers_01_17`. Ordinary empty-trash dispatch
+during a native fill was blocked before listeners; it emptied the same bin
+after the fill. The in-memory serialization check compares IDs and nested
+items against the game’s native save format, including its type normalization
+and grouping of items by type.
 
 The actual dynamic-JAR activation checker also preserves regressions for helper
 self-loading recursion and Buddy registered-JAR discovery. Startup-classpath tests

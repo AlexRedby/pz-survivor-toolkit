@@ -37,6 +37,11 @@ function B.run(player)
   check(row.calls==1,'repeated fill callback')
   -- One fixture sentinel makes a legitimate empty random draw observable.
   row.sentinel=assert(container:AddItem('Base.Nails')):getID()
+  if row.trashObject then
+   -- Re-enter the ordinary command dispatcher while this real native fill owns the bin.
+   lootDemandTrash(player,row.trashObject)
+   check(container:getItemById(row.sentinel)~=nil,'active empty-trash removed owned item')
+  end
   if row.reenter then ItemPickerJava.fillContainer(container,player) end
   row.generated=identities(container)
  end
@@ -82,6 +87,29 @@ function B.run(player)
   lootDemandTrash(player,object)
   check(lootDemandEnsure(container,player) and row.calls==0 and container:isEmpty(),'trash command permitted later refill')
   print('[LOOT_DEMAND_TEST] PASS empty-trash')
+  if isServer() then
+   local activeObject,active,activeRow=create('bin',lootDemandTrashSprite())
+   lootDemandAutomatic(activeObject,false)
+   activeRow.trashObject=activeObject
+   local forwarded=0
+   local function command(module,name,actor,args)
+    if module=='object' and name=='emptyTrash' and actor==player and args and args.index==activeObject:getObjectIndex()
+     and args.x==activeObject:getX() and args.y==activeObject:getY() and args.z==activeObject:getZ() then forwarded=forwarded+1 end
+   end
+   Events.OnClientCommand.Add(command)
+   local passed,problem=pcall(function()
+    check(lootDemandEnsure(active,player) and activeRow.calls==1,'active-trash fixture did not fill')
+    check(forwarded==0 and active:getItemById(activeRow.sentinel)~=nil,'active trash command reached listeners or removed contents')
+    lootDemandTrash(player,activeObject)
+    check(forwarded==1 and active:isEmpty(),'ordinary empty-trash failed to reach listeners and remove contents')
+    check(lootDemandEnsure(active,player) and activeRow.calls==1 and active:isEmpty(),'empty-trash refilled completed bin')
+   end)
+   Events.OnClientCommand.Remove(command)
+   if not passed then error(problem) end
+   print('[LOOT_DEMAND_TEST] PASS active-trash receipt=blocked-during-fill cleared-after-fill=true')
+   check(lootDemandMoveableRoundtrip(),'native pallet and mixed container roundtrip failed')
+  end
+
  end)
  Events.OnFillContainer.Remove(fill)
  -- Everything created here is fixture-owned in a disposable world. Do not remove preexisting objects/items.
@@ -104,11 +132,12 @@ function B.prepareNetwork(player)
   if candidate and candidate:getFloor() then square=candidate;break end
  end
  check(square,'no loaded square outside nearby inventory scan')
- local object=IsoObject.new(getCell(),square,assert(getSprite(lootDemandSprite('bin'))))
+ local object=IsoObject.new(getCell(),square,assert(getSprite('trashcontainers_01_17')))
  object:createContainersFromSpriteProperties();object:setName('LootDemandNativeProbe');square:AddTileObject(object)
  local container=assert(object:getContainer());check(lootDemandPending(container),'native request source not pending')
  lootDemandAutomatic(object,false)
  check(not container:isExplored() and container:isEmpty(),'native request source eagerly filled')
+ check(object:getOverlaySprite()==nil,'pending overlay must be empty')
  network={object=object,container=container,calls=0}
  network.callback=function(room,kind,current)
   if current~=container then return end
@@ -124,6 +153,10 @@ function B.verifyNetwork(player,args)
  check(network.container:isExplored() and network.calls==1,'Host did not fill exactly once')
  check(lootDemandFingerprint(network.container)==args.fingerprint,'client contents differ from authority')
  check(args.requests==2,'expected repeated native content request')
+ local overlay=network.object:getOverlaySprite()
+ check(overlay and overlay:getName()==args.overlay,'client overlay and authority differ')
+ print('[LOOT_DEMAND_TEST] PASS native-container-overlay sprite='..overlay:getName()..' items='..network.container:getItems():size())
+
  Events.OnFillContainer.Remove(network.callback)
  network.object:getSquare():transmitRemoveItemFromSquare(network.object)
  network=nil

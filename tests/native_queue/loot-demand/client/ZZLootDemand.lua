@@ -35,10 +35,11 @@ preflight.onTick(Events,function()
      if object:getName()~=probe.name then return end
      local container=assert(object:getContainer())
      if requests==0 then
+      assert(container:isEmpty() and not container:isExplored() and object:getOverlaySprite()==nil,'initial pending bin/overlay state differs')
       container:requestServerItemsForContainer();container:requestServerItemsForContainer();requests=2
-     elseif not container:isEmpty() then
+     elseif not container:isEmpty() and object:getOverlaySprite() then
       observed=true
-      sendClientCommand('LootDemandTest','Observe',{fingerprint=lootDemandFingerprint(container),requests=requests})
+      sendClientCommand('LootDemandTest','Observe',{fingerprint=lootDemandFingerprint(container),requests=requests,overlay=object:getOverlaySprite():getName()})
      end
     end
     return
