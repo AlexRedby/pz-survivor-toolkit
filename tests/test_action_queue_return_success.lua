@@ -390,6 +390,107 @@ ReturnSuccessVectors=function(fixtures)
             'historical Forget waived location debt or manufactured hand/native success')
     end
 
+    -- Craft-style optional returns are independent native rows. Keeping one
+    -- exact loan must leave the other row and its original destination intact.
+    local function nativeReturnsFixture(client,unconfirmed)
+        local s=fixtures.setup(client)
+        s.root.isExistYet=function()return true end
+        s.scope=s.settlement.deferred(s.player,s.token)
+        s.sources,s.items,s.rows={},{},{}
+        for index=1,2 do
+            local source={items={},carried=true,reachable=true,isExistYet=function()return true end}
+            function source:getItemById(id)return self.items[id]end
+            local bag=s.item(500+index,s.root);bag.fullType='Base.Bag_Schoolbag'
+            bag.getInventory=function()return source end
+            source.getContainingItem=function()return bag end;s.root.items[bag.id]=bag
+            local item=s.item(600+index,source);source.items[item.id]=item
+            local pickup=s.action();pickup.Type='ISInventoryTransferAction';pickup.item=item
+            pickup.srcContainer,pickup.destContainer=source,s.root
+            pickup.action,pickup.queueList,pickup.transactionId={},{{items={item}}},70+index
+            order(s,pickup,{pickup,s.current,s.tail})
+            assert(s.settlement.remember(s.scope,pickup,{knownInputs=true,items={[item.id]=true}}))
+            assert(s.settlement.preparePickup(s.scope,pickup))
+            assert(s.settlement.beginPickup(s.scope,pickup,function()return true end))
+            source.items[item.id],s.root.items[item.id],item.container=nil,item,s.root
+            if index~=unconfirmed then
+                pickup.queueList,pickup.transactionId={},0
+                assert(s.settlement.finishPickup(s.scope,pickup,true))
+            end
+            local row=s.action();row.Type='ISInventoryTransferAction';row.item=item
+            row.srcContainer,row.destContainer,row.allowMissingItems=s.root,source,true
+            assert(s.settlement.track(row,'body'))
+            s.sources[index],s.items[index],s.rows[index]=source,item,row
+        end
+        s.current.Type='ISCraftRecipeAction';s.settlement.track(s.current,'body')
+        order(s,s.current,{s.current,s.rows[1],s.rows[2],s.tail})
+        PZSurvivorToolkit.ActionQueuePolicy.matchesNative=function(action)
+            return action==s.rows[1] or action==s.rows[2]
+        end
+        s.returnGuard=function(action,reference)
+            for index,row in ipairs(s.rows)do
+                if action==row then return not reference or reference.id==s.items[index]:getID()
+                    and reference.fullType==s.items[index]:getFullType()end
+            end
+            return false
+        end
+        return s
+    end
+    local function nativeLoanState(s,index)
+        for _,loan in ipairs(assert(s.settlement.operationState(s.current)).borrowings)do
+            if loan.id==s.items[index]:getID()then return loan.state end
+        end
+        error('missing exact native optional borrowing')
+    end
+    for _,client in ipairs({false,true})do
+        for _,keptIndex in ipairs({1,2})do
+            local s=nativeReturnsFixture(client);local returnedIndex=3-keptIndex
+            local kept,returned=s.rows[keptIndex],s.rows[returnedIndex]
+            local waiver=assert(s.settlement.pendingReturnWaiver(kept,s.returnGuard))
+            assert(s.settlement.waivePendingReturn(waiver,kept,s.returnGuard))
+            assert(nativeLoanState(s,keptIndex)=='waived'and nativeLoanState(s,returnedIndex)=='active'
+                and s.queue.current==s.current and s.queue.queue[2]==s.rows[1]and s.queue.queue[3]==s.rows[2]
+                and s.counts()==0,'Keep changed a neighboring native row, loan or active craft')
+            assert(not s.settlement.waivePendingReturn(waiver,returned,s.returnGuard)
+                and not s.settlement.waivePendingReturn(waiver,kept,s.returnGuard),
+                'Keep capability was transferable or replayable')
+            -- The reviewed row-removal boundary follows the committed waiver.
+            for index,row in ipairs(s.queue.queue)do if row==kept then table.remove(s.queue.queue,index);break end end
+            assert(s.settlement.canWaivePendingReturn(returned,s.returnGuard),
+                'waiving one original container suppressed the independent sibling')
+            order(s,returned,{returned,s.tail})
+            returned.action,returned.queueList,returned.transactionId={},{{items={returned.item}}},91
+            local obligation=assert(s.settlement.obligation(s.settlement.context(s.scope)))
+            assert(s.settlement.beginReturn(returned,obligation,s.returnGuard))
+            local item=s.items[returnedIndex];local destination=s.sources[returnedIndex]
+            s.root.items[item.id],destination.items[item.id],item.container=nil,item,destination
+            returned.queueList,returned.transactionId={},0
+            assert(s.settlement.finishReturn(obligation,true)
+                and s.settlement.returnState(obligation)=='completed')
+            assert(nativeLoanState(s,keptIndex)=='waived'and nativeLoanState(s,returnedIndex)=='completed'
+                and s.items[keptIndex]:getContainer()==s.root and s.root.items[s.items[keptIndex].id]==s.items[keptIndex]
+                and s.sources[keptIndex].items[s.items[keptIndex].id]==nil
+                and s.queue.queue[2]==s.tail and s.counts()==0,
+                'sibling native completion moved the retained item or settled another origin')
+        end
+        for _,mutation in ipairs({'unconfirmed','stale-row','foreign-item','started'})do
+            local s=nativeReturnsFixture(client,mutation=='unconfirmed'and 1 or nil)
+            local row=s.rows[1];local waiver=s.settlement.pendingReturnWaiver(row,s.returnGuard)
+            if mutation=='unconfirmed'then assert(not waiver,'unconfirmed pickup offered Keep')
+            else
+                assert(waiver)
+                if mutation=='stale-row'then table.remove(s.queue.queue,2)
+                elseif mutation=='foreign-item'then row.item=s.item(s.items[1].id,s.root)
+                else row.action={}end
+                assert(not s.settlement.waivePendingReturn(waiver,row,s.returnGuard),
+                    mutation..': stale exact row acquired Keep')
+            end
+            assert(nativeLoanState(s,1)~='waived'and nativeLoanState(s,2)=='active'
+                and s.settlement.canWaivePendingReturn(s.rows[2],s.returnGuard)
+                and s.items[1]:getContainer()==s.root and s.items[2]:getContainer()==s.root and s.counts()==0,
+                mutation..': rejected Keep altered or disabled its independent sibling')
+        end
+    end
+
     -- Cancellation must consult the exact same dependency, rather than its
     -- unconditional fallback synthesizing a return for an active location loan.
     do

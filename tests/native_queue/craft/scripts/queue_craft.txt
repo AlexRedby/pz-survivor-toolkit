@@ -18,3 +18,24 @@ module Base
         }
     }
 }
+
+module Base
+{
+    craftRecipe QueueKeepCraftTools
+    {
+        time = 30,
+        timedAction = SawLogs,
+        Tags = InHandCraft,
+        category = Carpentry,
+        inputs
+        {
+            item 1 [Base.Plank],
+            item 1 [Base.Saw] mode:keep,
+            item 1 [Base.HandDrill] mode:keep,
+        }
+        outputs
+        {
+            item 1 Base.WoodenStick2,
+        }
+    }
+}

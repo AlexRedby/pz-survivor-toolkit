@@ -2289,17 +2289,25 @@ pendingReturnReason = function(queue, action, context)
     local index = queue:indexOf(action)
     local capacity = {first = index, last = index}
     local comparisons = cancellationComparisons(queue, index, index, context)
-    for otherIndex, other in ipairs(queue.queue) do
-        if other ~= action then
-            local comparison = cancellationComparison(other, comparisons)
-            if not knownCraftInputs(other, comparison) then return "operation_dependent", nil, nil, other end
-            if otherIndex > index then
-                local shared = sharedItem(action, other, comparison)
-                if shared then return "operation_shared_item", nil, nil, other, shared end
-                local conflict = sharedWorldTarget(action, other, comparison)
-                    or dynamicConflict(action, other, comparison) or dynamicConflict(other, action, comparison)
-                if conflict then return "operation_dependent", nil, nil, other, conflict end
-            end
+    -- Keep only removes a future outbound transfer. Earlier work sees exactly
+    -- the same inventory and cannot depend on that later transfer's result.
+    for otherIndex = index + 1, #queue.queue do
+        local other = queue.queue[otherIndex]
+        local comparison = cancellationComparison(other, comparisons)
+        local known, contract = knownCraftInputs(other, comparison)
+        if not known then return "operation_dependent", nil, nil, other end
+        local shared = sharedItem(action, other, comparison)
+        if shared then return "operation_shared_item", nil, nil, other, shared end
+        local conflict = sharedWorldTarget(action, other, comparison)
+            or dynamicConflict(action, other, comparison) or dynamicConflict(other, action, comparison)
+        if conflict then return "operation_dependent", nil, nil, other, conflict end
+        -- An independent earned sibling return can check its own destination
+        -- at native admission and isolate a refusal. No future space is credited.
+        local capability, execution
+        if other.toolkitQueueOperation == action.toolkitQueueOperation and pendingReturnTarget(queue, other) then
+            capability, execution = returnCapacityCapability(other, contract, context)
+        end
+        if not (capability and execution and execution.capacityDeferred and execution.capacityDeferred(other, capability)) then
             local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context, comparison)
             if blocker then return "container_capacity", nil, nil, other, blocker end
         end

@@ -4,6 +4,7 @@ require "TimedActions/ISQueueActionsAction"
 require "Entity/ISEntityUI"
 require "Entity/TimedActions/ISHandcraftAction"
 require "ISUI/ISCraftingUI"
+local CraftLoans = require "PZSurvivorToolkit/ActionQueueCraftLoans"
 
 local Recipes = {}
 PZSurvivorToolkit.CraftChainRecipes = Recipes
@@ -484,17 +485,26 @@ local function addStep(player, step, context, initialIds)
         local book = logic:getUsingRecipeAtHandItem()
         if book then items:add(book); kept:add(book) end
     end
+    -- Observe actual kept-tool fetches without replacing native return rows.
+    -- Unsupported recipes/providers keep the original transfer/return path.
+    local loans
+    if CraftLoans and not recipe:isCanBeDoneFromFloor() and kept:size() > 0 then
+        local ok, observed = pcall(CraftLoans.capture, player, action, selected, kept)
+        if ok then loans = observed end
+    end
     if not recipe:isCanBeDoneFromFloor() then
         for i = 0, items:size() - 1 do
             local item = items:get(i)
             if item:getContainer() ~= player:getInventory() and not transferred[item:getID()] then
                 transferred[item:getID()] = true
-                Bulk.transfer(player, item)
+                local pickup = Bulk.transfer(player, item)
+                if loans and pickup then pcall(loans.pickup, pickup) end
                 if kept:contains(item) then returns[#returns + 1] = item end
             end
         end
     end
     ISTimedActionQueue.add(action)
+    if loans then pcall(loans.body, action) end
     ISCraftingUI.ReturnItemsToOriginalContainer(player, returns)
 end
 

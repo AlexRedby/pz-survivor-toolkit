@@ -129,3 +129,32 @@ state.sparePlanks={}
 root:Remove(output)
 assert(not Fixture.verify(state,true),'losing an older baseline output cannot be hidden by a new output')
 print('Craft active authority: exact new output IDs, native accounting and explicit removal stay distinct.')
+
+-- Keep-craft authority binds each source bag independently and preserves output accounting.
+for keptIndex=1,2 do
+ local inventory=container()
+ local keptState={case='keep-craft-tool',root=inventory,player={getInventory=function()return inventory end},
+  bags={},tools={},toolMeta={},outputs=0,outputBaseline={},sparePlanks={},keptIndex=keptIndex,
+  materialCondition=10,materialUses=0,material={getID=function()return 30 end}}
+ for i,kind in ipairs({'Base.Saw','Base.HandDrill'})do
+  local bag=item(inventory,40+i,'Base.Bag_Schoolbag');bag.bag=true
+  local source=container();bag.getItemContainer=function()return source end
+  local tool=item(i==keptIndex and inventory or source,50+i,kind)
+  keptState.bags[i],keptState.tools[i]=bag,tool
+  keptState.toolMeta[i]={id=tool:getID(),kind=kind,condition=10,uses=0}
+ end
+ local book=item(inventory,60,'Base.BookCarpentry1')
+ book.getAlreadyReadPages=function()return 100 end;book.getNumberOfPages=function()return 100 end
+ keptState.book=book
+ local resultItem=item(inventory,61,'Base.WoodenStick2')
+ resultItem.getModData=function()return {['Base.Plank']=1}end
+ local receipt=assert(Fixture.verify(keptState,true))
+ assert(receipt.consumed==1 and receipt.toolsReturned==1 and receipt.toolsKept==1 and receipt.accountedPlanks==1)
+ assert(receipt.resources[keptIndex].rootCount==1 and receipt.resources[3-keptIndex].sourceCount==1
+  and receipt.resources[3-keptIndex].sourceId==keptState.bags[3-keptIndex]:getID())
+ local retained=keptState.tools[keptIndex];retained.condition=9
+ assert(not Fixture.verify(keptState,true),'Keep must preserve original exact tool condition');retained.condition=10
+ resultItem.getModData=function()return {['Base.Plank']=2}end
+ assert(not Fixture.verify(keptState,true),'Keep must not hide duplicate native material effects')
+end
+print('Keep craft authority: per-origin tool retention, independent return and single exact output passed.')

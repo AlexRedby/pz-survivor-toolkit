@@ -2,6 +2,7 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'Entity/TimedActions/ISHandcraftAction'
 require 'ISUI/ISCraftingUI'
 local config=require 'QueueTestSelection'
+if config.cases[1]=='keep-craft-tool' then require('QueueCraftKeep')();return end
 local Fixture=require 'QueueCraftFixture'
 local JSON=require 'QueueHealthEvents'
 local Toolkit=PZSurvivorToolkit

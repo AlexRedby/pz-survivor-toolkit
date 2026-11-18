@@ -317,11 +317,22 @@ local function cancelAllowed()
  assert(not policy.previewCancel(queue,returning,false).reason,'pending return preview denied')
 end
 Counters={};cancelAllowed()
-assert(Counters.contracts==20,'cancel comparisons rebuilt device-only projections')
+assert(Counters.contracts>0 and Counters.contracts<=20,'cancel comparisons rebuilt device-only projections')
 -- A later member of the own group must disable elision for the entire group.
 transferDomain='device';transferDevice={};Counters={};cancelAllowed()
-assert(Counters.contracts>=128,'device edit on a later group member borrowed the elision')
+local deviceContext={contracts={},items={}}
+assert(not policy.cancelReason(queue,returning,deviceContext))
+assert(deviceContext.contracts[queue.queue[32]],'device edit on a later group member borrowed the elision')
 transferDomain='item';transferDevice=nil
+-- An unknown input before the removed transfer cannot consume its result.
+-- The identical uncertainty after it must still prevent the edit.
+reader.toolkitWorldOperation='fuel'
+assert(policy.evaluateCancel(queue,returning,false).allowed)
+reader.toolkitWorldOperation=nil
+local later=queue.queue[#queue.queue]
+later.toolkitWorldOperation='fuel'
+assert(not policy.evaluateCancel(queue,returning,false).allowed)
+later.toolkitWorldOperation=nil
 -- Shared native item resources remain visible with device projection omitted.
 queue.queue[32].item=book
 assert(not policy.evaluateCancel(queue,reader,true).allowed,'group hid shared item')
