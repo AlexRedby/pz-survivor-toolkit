@@ -55,12 +55,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.2.12
 
-- Toolkit's opt-in grooming restoration now returns borrowed scissors after beard trimming and supports ordinary haircuts with a borrowed razor or scissors. The native haircut still applies its appearance changes before Toolkit restores the previous hand item and returns the tool.
+- Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
+- Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
 
 ### 0.2.11
 
-- Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
-- Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
+- With Toolkit razor restoration enabled and P4 absent, shaving can restore the previous hand item and return the borrowed razor to its bag while the queue editor is turned off.
 
 ### 0.2.10
 
