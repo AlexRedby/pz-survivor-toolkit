@@ -59,12 +59,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.2.11
 
-- With Toolkit razor restoration enabled and P4 absent, shaving can restore the previous hand item and return the borrowed razor to its bag while the queue editor is turned off.
+- Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
+- Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
 
 ### 0.2.10
 
-- Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
-- Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
+- **Fix:** In the opt-in tool restoration, a full bag after restoring the previous hand item could clear unrelated queued actions. The blocked tool now stays in inventory with an explicit Keep option.
 
 ### 0.2.9
 

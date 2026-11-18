@@ -41,6 +41,32 @@ CPU utilization. Scheduler data would be needed to distinguish runnable delay
 from native waits during the remainder of the long game interval. This run
 used the research collector that preceded the optional mode.
 
+## Chunk admission in the recorded drive
+
+In the measured stretch, 222 of 953 main-thread JFR samples included
+`IsoChunk.doLoadGridsquare`. Its immediate children accounted for 52 samples
+in erosion, 51 in `loadInMainThread`, 42 in Lua event dispatch and 40 in the
+grid-square loader. The remaining 37 samples covered other children and the
+method itself. These are mutually exclusive sample counts. The largest game
+interval contained only three such samples. The separate Windows recording on
+42.21 contained the same four branches.
+
+Tree and bush replacement accounted for 36 of the erosion samples. Both use
+the normal tile-removal path, including neighbor recalculation and Lua events.
+The native per-square initialization flag survives serialization. The initial
+world had no saved chunks along the center of the measured stretch. After
+the drive, the first serialized ground square in each available route chunk
+was initialized. A revisit can still require growth updates and chunk
+admission. A fresh-route percentage cannot predict repeat-route frame times.
+
+A native replay removed only the second navigation update at each corner of a
+chunk. Ordinary dense, sparse and multilevel layouts preserved their observed
+state. On freshly restored inputs, alternating uninstrumented JVM runs gave
+approximately 0.73 ms per integration prefix in the dense layout and 0.38 ms
+in the mixed layout for both variants. The experiment did not justify changing
+the gameplay code. Navigation, collision, vision and pathfinding updates stay
+on their original engine paths.
+
 ## Checking the profiler locally
 
 ```sh
