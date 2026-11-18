@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 local config=require 'QueueTestSelection'
 if config.suite~='loot-resolved' then return end
 local JSON=require 'QueueHealthEvents'
@@ -27,7 +28,7 @@ local function finish(source)
  done=true
  emit('COMPLETE',{role='client1',case=case,runtimeMode=mode,status='complete',authority=true})
 end
-Events.OnGameStart.Add(function() started=true end)
+preflight.onGameStart(Events,function() started=true end)
 Events.OnServerCommand.Add(function(name,command,args)
  if name~=module then return end
  local ok,problem=pcall(function()
@@ -40,7 +41,7 @@ Events.OnServerCommand.Add(function(name,command,args)
  end)
  if not ok then fail(problem) end
 end)
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
  if done or not started or not isIngameState() then return end
  local ok,problem=pcall(function()
   local player=getPlayer()

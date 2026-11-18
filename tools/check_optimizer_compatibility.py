@@ -45,12 +45,12 @@ def prepare_overlay(manifest: dict, archive: Path, game: Path, output: Path) -> 
 
 def compile_ground_highlight_checks(jdk: Path, kotlin_home: Path | None,
                                     jar: Path, fonts: Path, game: Path,
-                                    output: Path, classes: Path, parser) -> None:
+                                    output: Path, classes: Path, parser, project: Path) -> None:
     """Reuse the native parity suite; compile-only API classes never enter the JVM."""
-    spec = importlib.util.spec_from_file_location('optimizer_patch_build', ROOT / 'JavaPatches/build.py')
+    spec = importlib.util.spec_from_file_location('optimizer_patch_build', project / 'JavaPatches/build.py')
     build = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(build)
-    build.require_current_patch_jar(jar, ROOT / 'JavaPatches')
+    build.require_current_patch_jar(jar, project / 'JavaPatches')
     home = build.kotlin_toolchain(kotlin_home, parser)
     api = output / 'ground-highlight-test-api'
     api.mkdir()
@@ -60,9 +60,9 @@ def compile_ground_highlight_checks(jdk: Path, kotlin_home: Path | None,
     # The shipped metadata is relocated. Compile only this bridge for original
     # Kotlin internals metadata, with the same module name as the actual artifact.
     build.compile_kotlin(jdk, home, os.pathsep.join([stdlib, dependencies]), api,
-                         [ROOT / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/GroundHighlight.kt'])
+                         [project / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/GroundHighlight.kt'])
     build.compile_kotlin(jdk, home, os.pathsep.join([stdlib, str(api), dependencies]), classes,
-                         [ROOT / 'JavaPatches/tests/net/alexredby/pztoolkitjavapatches/GroundHighlightChecks.kt'],
+                         [project / 'JavaPatches/tests/net/alexredby/pztoolkitjavapatches/GroundHighlightChecks.kt'],
                          module_name=build.KOTLIN_MODULE + '_tests',
                          options=['-Xfriend-paths=' + str(api)])
     relocation = output / 'ground-highlight-build-tools'
@@ -107,21 +107,28 @@ def main() -> None:
     parser.add_argument('--jdk', type=Path, required=True)
     parser.add_argument('--kotlin-home', type=Path, help='Pinned compiler for the existing Kotlin parity suite')
     parser.add_argument('--output', type=Path, required=True, help='New directory for isolated inputs and reports')
+    parser.add_argument('--patch-project', type=Path, default=ROOT,
+                        help='Toolkit checkout containing matching B42.21 Java Patches sources and build')
     args = parser.parse_args()
+    project = args.patch_project.resolve()
+    metadata = project / 'JavaPatches/build/PZToolkitJavaPatches/42/mod.info'
+    if not metadata.is_file() or 'versionMax=42.21' not in metadata.read_text().splitlines():
+        parser.error('This historical optimizer check requires the B42.21 Java Patches build. '
+                     'Use --patch-project with a built checkout of fc95a6aa.')
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
     manifest = json.loads((ROOT / 'tests/optimizer_trial/candidate-manifest.json').read_text())
     if len(manifest['profile']['properties']) != 770 or len(manifest['selected_files']) != 888:
         raise ValueError('Review the changed complete profile before running')
     overlay = prepare_overlay(manifest, args.archive, args.game, args.output)
-    mod = ROOT / 'JavaPatches/build/PZToolkitJavaPatches/42/media'
+    mod = project / 'JavaPatches/build/PZToolkitJavaPatches/42/media'
     jar = mod / 'java/PZToolkitJavaPatches.jar'
     fonts = mod / 'bootstrap/PZToolkitFonts.jar'
     if not jar.is_file() or not fonts.is_file():
         raise ValueError('Build Java Patches first')
     classes = args.output / 'classes'
     classes.mkdir()
-    compile_ground_highlight_checks(args.jdk, args.kotlin_home, jar, fonts, args.game, args.output, classes, parser)
+    compile_ground_highlight_checks(args.jdk, args.kotlin_home, jar, fonts, args.game, args.output, classes, parser, project)
     cp = os.pathsep.join(map(str, [classes, overlay, jar, fonts, args.game / 'projectzomboid.jar', args.game / 'ZombieBuddy.jar']))
     subprocess.run([str(args.jdk / 'bin/javac'), '--release', '25', '-cp', cp, '-d', str(classes),
                     str(ROOT / 'tests/optimizer_trial/java/OptimizerAdmissionChecks.java')], check=True)

@@ -620,7 +620,13 @@ local function state(host,server,case)
  e.Events=setmetatable({}, {__index=function(t,k)local v={Add=function(f)e.handlers[k]=e.handlers[k]or{};table.insert(e.handlers[k],f)end};rawset(t,k,v);return v end})
  e.fire=function(name,...)for _,f in ipairs(e.handlers[name]or{})do f(...)end end
  e.print=function(v)table.insert(e.outputs,v)end
- e.require=function(n)return n=='QueueTestSelection'and e.selection or JSON end
+ e.require=function(n)
+  if n=='QueuePreflight' then return {
+   onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,
+   onTick=function(events,fn)events.OnTick.Add(fn)end,
+   removeTick=function(events,fn)events.OnTick.Remove(fn)end} end
+  return n=='QueueTestSelection'and e.selection or JSON
+ end
  e.isClient=function()return host and not server end;e.isServer=function()return server end
  e.isIngameState=function()return true end;e.getTimestampMs=function()return 1000 end
  e.player={isDead=function()return false end,getSquare=function()return{}end,getOnlineID=function()return 3 end,getUsername=function()return 'client1'end}

@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 local config=require "QueueTestSelection"
 local F=require "DrivingBenchFixture"
 local MODULE="PZDrivingBenchTest"
@@ -46,7 +47,7 @@ Events.OnServerCommand.Add(function(module, command, args)
     end)
     if not ok then fail(problem) end
 end)
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
     local C=PZDrivingBenchClient
     if failed or sampled or not C or not C.ready or not F.allowed() then return end
     local now=getTimestampMs()

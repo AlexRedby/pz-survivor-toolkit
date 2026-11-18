@@ -5,9 +5,9 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import zipfile
 from check_optimizer_compatibility import prepare_overlay
+from queue_checks import preparation_process
 
 
 def sources(project, selection):
@@ -28,7 +28,7 @@ def stage_viewport(project, output, game, jdk, runtime, native_guards):
     root, output, game, jdk = map(Path, (project, output, game, jdk))
     probe = Path(output) / 'viewport-classes'
     probe.mkdir(parents=True)
-    subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
+    preparation_process.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
         os.pathsep.join(str(game / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar')),
         '-d', str(probe), str(root / 'tests/native_queue/support/viewport/Main.java')],
         check=True, capture_output=True, text=True, timeout=60)
@@ -114,9 +114,9 @@ def stage(project, output, game, jdk, selection, runtime):
         if text.count(anchor) != 1:
             raise ValueError('Native launcher main changed')
         launcher.write_text(text.replace(anchor, anchor + '\n' + assignments + '\n' + role_assignments))
-        subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
-                        str(game / 'projectzomboid.jar'), str(classes / 'ToolkitWindowBootstrap.java'),
-                        str(launcher)], check=True, capture_output=True, text=True, timeout=60)
+        preparation_process.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
+            os.pathsep.join((str(classes), str(game / 'projectzomboid.jar'))), str(launcher)],
+            check=True, capture_output=True, text=True, timeout=60)
     (scratch / 'receipt.json').write_text(json.dumps({
         'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
         'profile': manifest['profile']['id'], 'properties': len(props) - 1,

@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 local config = require "QueueTestSelection"
 if config.cases and config.cases[1] == "seed" then return end
 local started, ended, readyAt, screenshot, actualZoom
@@ -7,7 +8,7 @@ local function fail(problem)
     ended = true
     print("[DRIVING_PERF] FAIL Lua: " .. tostring(problem))
 end
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
     if ended then return end
     local C = PZDrivingBenchClient
     if not C or not C.ready then return end

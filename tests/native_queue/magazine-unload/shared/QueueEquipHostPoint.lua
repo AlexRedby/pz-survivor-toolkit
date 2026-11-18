@@ -35,7 +35,7 @@ if isServer()then
   pending={player=player,args=args,since=getTimestampMs()}
   end)
  end)
- Events.OnTick.Add(function()
+ require('QueuePreflight').onTick(Events,function()
   if not pending then return end
   guard(pending.player,function()
   assert(toolkitNativeHandStateApiMatches and toolkitNativeHandStateApiMatches(toolkitNativeHandState),'native hand point API unavailable')

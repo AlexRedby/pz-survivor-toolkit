@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 local config=require 'QueueTestSelection'
 local entered,starting,readyAt,saved=false,false,nil,false
 PZDrivingPerfSeeding=config.cases[1]=='seed'
@@ -62,7 +63,7 @@ Events.OnPreUIDraw.Add(function()
     end)
     if not ok then print('[DRIVING_PERF_WORLD] FAIL '..tostring(problem)) end
 end)
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
     if not PZDrivingPerfSeeding or not isIngameState() then return end
     local player=getPlayer()
     if not player or not player:getSquare() then return end
@@ -161,7 +162,7 @@ Events.OnTick.Add(function()
         print('[DRIVING_PERF_WORLD] FAIL '..tostring(problem))
     end
 end)
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
     if saved or config.cases[1]~='seed' or not PZDrivingBenchClient or not PZDrivingBenchClient.ready then return end
     if not readyAt then
         getPlayer():setGhostMode(false)
@@ -208,7 +209,7 @@ Events.OnPreUIDraw.Add(function()
     if x==target[1] and y==target[2] then pendingTeleport=nil;arrived=now end
 end)
 
-Events.OnGameStart.Add(function()
+preflight.onGameStart(Events,function()
     if urban and config.cases[1]=='drive' then
         local ok,problem=pcall(function()
             checkUrbanPreset()
@@ -222,7 +223,7 @@ Events.OnGameStart.Add(function()
 end)
 
 local lastNativeSeedStatus=0
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
     if not nativePopulation or config.cases[1]~='seed' or saved or not isIngameState() then return end
     local now=getTimestampMs()
     if now-lastNativeSeedStatus<5000 then return end

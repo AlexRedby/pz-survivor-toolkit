@@ -15,12 +15,6 @@ import zombie.radio.devices.DeviceData;
 import zombie.vehicles.VehicleInterpolation;
 
 public final class Main {
-    @Patch(className="zombie.gameStates.IngameState", methodName="enter", warmUp=true, strictMatch=true)
-    public static class PrepareOutlineShaders {
-        @Patch.OnExit
-        public static void exit() { OutlineShaderPreparation.prepareAfterLoad(); }
-    }
-
     public static final boolean VIDEO_SUPPORTED = MainPolicy.videoSupported();
 
     @Patch(className="zombie.Lua.LuaManager", methodName="RunLua", warmUp=true, strictMatch=true)

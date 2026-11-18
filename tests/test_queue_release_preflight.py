@@ -17,9 +17,15 @@ class ReleaseViewportPreflightTests(unittest.TestCase):
         source = """
 local selection={suite=SUITE, options={optimizer_archive='reviewed',optimizer_enabled=FLAG},mods={},window_size={1600,900},mode='native'}
 package.preload.QueueTestSelection=function()return selection end
+package.path=arg[2]..'/?.lua;'..package.path
+package.preload.QueuePreflightConfig=function()return {roles={'client1'},token='viewport-test'} end
+getFileReader=function(name)
+    assert(name=='smoke-user.txt')
+    return {readLine=function()return 'client1' end,close=function()end}
+end
 local start,lines
 lines={}
-Events={OnGameStart={Add=function(callback)start=callback end}}
+Events={OnGameStart={Add=function(callback)start=callback end},OnTickEvenPaused={Add=function()end}}
 getCore=function()return {getScreenWidth=function()return WIDTH end,getScreenHeight=function()return HEIGHT end}end
 isClient=function()return false end
 print=function(value)lines[#lines+1]=value end
@@ -34,8 +40,10 @@ io.write(table.concat(lines,'\\n'))
         with tempfile.TemporaryDirectory(prefix='release-preflight-') as directory:
             script = Path(directory) / 'check.lua'
             script.write_text(source)
-            result = subprocess.run([lua, str(script), str(ROOT / 'tests/native_queue/support/ZZReleasePreflight.lua')],
-                                    capture_output=True, text=True, timeout=10, check=True)
+            support = ROOT / 'tests/native_queue/support'
+            result = subprocess.run([lua, str(script), str(support / 'ZZReleasePreflight.lua'), str(support)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
     def test_explicit_native_logical_and_optimized_framebuffer_contracts(self):
@@ -60,6 +68,7 @@ io.write(table.concat(lines,'\\n'))
                 output = self.preflight(**arguments)
                 self.assertIn('FAIL release preflight', output)
                 self.assertNotIn('PREFLIGHT_COMPLETE', output)
+                self.assertIn('"event":"failed"', output)
 
 
 if __name__ == '__main__':

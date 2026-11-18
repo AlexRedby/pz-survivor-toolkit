@@ -57,8 +57,11 @@ def _font_preload_enabled(selection):
     return enabled
 
 
-def font_preload(cache, selection, game=None):
+def font_preload(cache, selection, game=None, project=None):
     """Explicit local-JAR opt-in; ordinary approvals do not grant signed early loading."""
+    loot = selection.get('suite') == 'loot-resolved'
+    if loot:
+        adapters.get('loot-resolved').validate(selection)
     if not _font_preload_enabled(selection):
         return ''
     layer = Path(cache) / 'mods/PZToolkitJavaPatches/42'
@@ -468,7 +471,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         _json(cache / "zombie-buddy/mod_approvals.json", {"formatVersion": 2, "mods": approvals})
         runtime["roles"][role] = {"cache": str(cache), "language": language}
         if role != "server":
-            font_preload(cache, selection, game if os.name == 'nt' else None)
+            font_preload(cache, selection, game if os.name == 'nt' else None, project)
             helper_names = ("ToolkitWindowBootstrap.java", "ToolkitHostChildDiagnostics.java", "ToolkitHostOutput.java", "ToolkitSmokeLauncher.java")
             for name in helper_names:
                 shutil.copy2(support / name, cache / "classes")

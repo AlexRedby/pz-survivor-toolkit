@@ -17,7 +17,7 @@ import java.security.ProtectionDomain;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
-import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.lwjgl.glfw.GLFW;
 import org.lwjglx.opengl.Display;
 import zombie.core.Core;
@@ -26,19 +26,30 @@ import zombie.core.opengl.RenderThread;
 /** Fixture-only agent. The installed game and its class resources stay unchanged. */
 public final class ToolkitWindowBootstrap {
     private static final String DISPLAY = "org/lwjglx/opengl/Display";
-    // Reviewed 42.21 and 42.22 Display resources differ only in debug metadata;
-    // all fields, executable methods and GLFW call descriptors are identical.
-    // Keep historical-world controls isolated while rejecting every unknown resource.
-    private static final Set<String> DISPLAY_SHA256 = Set.of(
-        "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578",
-        "3b49c8639b52dcfe11daa70c3d397ea8b55c22fb09b9ede2f7b523fee3b7b525");
-    private static final Map<String, Integer> EXPECTED = Map.of(
-        "glfwDefaultWindowHints", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
-        "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2,
-        "glfwPollEvents", 1);
+    // Exact reviewed native B42.21/B42.22 and xD3I d1bbdcf Display bytes only.
+    // The optimizer adds a core-context retry and a failed-HDR-window destroy.
+    private static final String DISPLAY_NATIVE_SHA256 = "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578";
+    private static final String DISPLAY_4222_SHA256 = "3b49c8639b52dcfe11daa70c3d397ea8b55c22fb09b9ede2f7b523fee3b7b525";
+    private static final String DISPLAY_XD3I_SHA256 = "da78691b554a0341827f841abc73a34b776ecf0fde845b15703cb855a8847d57";
+    private static final Map<String, Map<String, Integer>> EXPECTED = Map.of(
+        DISPLAY_NATIVE_SHA256, Map.of(
+            "glfwDefaultWindowHints", 1, "glfwCreateWindow", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
+            "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2, "glfwPollEvents", 1),
+        DISPLAY_4222_SHA256, Map.of(
+            "glfwDefaultWindowHints", 1, "glfwCreateWindow", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
+            "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2, "glfwPollEvents", 1),
+        DISPLAY_XD3I_SHA256, Map.of(
+            "glfwDefaultWindowHints", 1, "glfwCreateWindow", 2, "glfwShowWindow", 2, "glfwFocusWindow", 1,
+            "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 3, "glfwPollEvents", 1));
+    // These are available at window creation, after the isolated launcher's main pins them.
+    // premain checks exact bytes without initializing Display or any optimizer helper.
+    private static final Map<String, String> OPTIMIZER_PRESENTATION = Map.of(
+        "hdr", "false", "hdrAuto", "false", "macPresent", "off", "macGlCore", "false",
+        "macNativeFullscreen", "false", "borderlessFullscreen", "off");
     private static boolean agentInstalled;
     private static volatile boolean displayTransformed;
     private static volatile boolean optimizedDisplay;
+    private static volatile String transformedDisplaySha256;
     private static Thread glfwOwnerThread;
     private static long routedWindow;
     private static long pendingVisibleWindow;
@@ -78,7 +89,7 @@ public final class ToolkitWindowBootstrap {
             }
             System.out.println("[QUEUE_TEST] WINDOW_VIEWPORT pid=" + ProcessHandle.current().pid() + " glfw=" + window
                 + " contract=" + (optimizedDisplay ? "framebuffer" : "logical")
-                + " display_sha256=" + (optimizedDisplay ? DISPLAY_XD3I_SHA256 : DISPLAY_NATIVE_SHA256)
+                + " display_sha256=" + transformedDisplaySha256
                 + " window=" + values[0] + "x" + values[1] + " framebuffer=" + values[2] + "x" + values[3]
                 + " display=" + values[4] + "x" + values[5] + " core=" + values[6] + "x" + values[7]);
             validateViewport(optimizedDisplay, expectedWidth, expectedHeight, values);
@@ -154,7 +165,7 @@ public final class ToolkitWindowBootstrap {
         if (!enabled()) throw new IllegalStateException("Window isolation agent requires a macOS routing gate");
         gatePath();
         try (var stream = ToolkitWindowBootstrap.class.getClassLoader().getResourceAsStream(DISPLAY + ".class")) {
-            if (stream == null || !DISPLAY_SHA256.contains(sha256(stream.readAllBytes()))) {
+            if (stream == null || !EXPECTED.containsKey(sha256(stream.readAllBytes()))) {
                 throw new IllegalStateException("Unsupported Display resource for native window isolation");
             }
         }
@@ -169,7 +180,8 @@ public final class ToolkitWindowBootstrap {
                 if (!DISPLAY.equals(name)) return null;
                 try {
                     byte[] patched = patchDisplay(bytes);
-                    optimizedDisplay = DISPLAY_XD3I_SHA256.equals(sha256(bytes));
+                    transformedDisplaySha256 = sha256(bytes);
+                    optimizedDisplay = DISPLAY_XD3I_SHA256.equals(transformedDisplaySha256);
                     displayTransformed = true;
                     return patched;
                 } catch (Throwable error) {
@@ -185,9 +197,12 @@ public final class ToolkitWindowBootstrap {
 
     /** Pure bytecode operation, also used by preparation checks without starting native UI. */
     static byte[] patchDisplay(byte[] original) throws Exception {
-        if (!DISPLAY_SHA256.contains(sha256(original))) {
-            throw new IllegalStateException("Unsupported Display bytecode: " + sha256(original));
-        }
+        var expected = EXPECTED.get(sha256(original));
+        if (expected == null) throw new IllegalStateException("Unsupported Display bytecode: " + sha256(original));
+        return transformDisplay(original, expected);
+    }
+
+    private static byte[] transformDisplay(byte[] original, Map<String, Integer> expected) throws Exception {
         var calls = new HashMap<String, Integer>();
         var classFile = ClassFile.of();
         var patched = classFile.transformClass(classFile.parse(original),

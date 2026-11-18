@@ -193,10 +193,6 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.CartTransitionMathTest': 'PASS cart transition world/actor roundtrips',
           'net.alexredby.javapatchfixture.CartBootstrapCheck': 'CART_BOOTSTRAP_PASS'}
 CHECKS['net.alexredby.pztoolkitjavapatches.OptimizerCompatibilityChecks'] = 'OPTIMIZER_COMPATIBILITY_CHECKS_PASS'
-CHECKS['net.alexredby.pztoolkitjavapatches.CutawaySouthEdgeChecks'] = 'CUTAWAY_SOUTH_EDGE_CHECKS_PASS'
-CHECKS['net.alexredby.pztoolkitjavapatches.TranslucentUnionChecks'] = 'TRANSLUCENT_UNION_CHECKS_PASS'
-CHECKS['net.alexredby.pztoolkitjavapatches.WorldItemTextureChecks'] = 'WORLD_ITEM_TEXTURE_CHECKS_PASS'
-CHECKS['net.alexredby.pztoolkitjavapatches.OutlineShaderPreparationChecks'] = 'OUTLINE_SHADER_PREPARATION_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryTest'] = 'CART_INJURY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOOD_AGE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.NativeIgnitionSourceChecks'] = 'NATIVE_IGNITION_SOURCE_CHECKS_PASS'
@@ -622,7 +618,7 @@ def main(argv=None):
                             shutil.copy2(testclasses / relative, runtime_classes / relative)
                         cold_fonts = name == 'net.alexredby.pztoolkitjavapatches.FontColdChecks'
                         cold_kotlin = name == 'net.alexredby.javapatchfixture.KotlinRuntimeChecks'
-                        testpath = [str(testclasses), classpath] if cold_bootstrap or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
+                        testpath = [str(testclasses), classpath] if cold_fonts or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
                         log = log_path(name, trace)
                         timeout = args.test_timeout if args.test_timeout is not None else CHECK_TIMEOUTS.get(name, 120)
                         try:

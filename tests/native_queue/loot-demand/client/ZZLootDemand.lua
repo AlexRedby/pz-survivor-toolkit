@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 local config=require 'QueueTestSelection'
 if config.suite~='loot-demand' then return end
 require 'LootDemandBank'
@@ -8,7 +9,7 @@ local started,sent,done=false,false,false
 local at,probe,requests,observed
 requests=0
 local function fail(problem) done=true;print('[LOOT_DEMAND_TEST] FAIL '..tostring(problem)) end
-Events.OnGameStart.Add(function() started=true end)
+preflight.onGameStart(Events,function() started=true end)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='LootDemandTest' or done then return end
  if command=='NativeProbe' then
@@ -18,7 +19,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  if not sent or command~='Complete' or type(args)~='table' or args.ok~=true or args.case~=case or (case~='persist-reload' and not observed) then fail('authority response failed');return end
  done=true;print('[LOOT_DEMAND_TEST] COMPLETE '..case)
 end)
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
  if done or not started or not isIngameState() then return end
  local player=getPlayer();if not player or player:isDead() or not player:getSquare() then return end
  local ok,problem=pcall(function()

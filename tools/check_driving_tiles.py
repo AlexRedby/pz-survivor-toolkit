@@ -82,7 +82,8 @@ def main(argv=None):
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         runtime_sources = sorted((source / 'java').glob('*.java'))
         check_sources = [source / 'checks' / (name + '.java') for name in ('StageProfilerChecks', 'TileProfilerChecks', 'ChunkProfilerChecks', 'LootProfilerChecks')]
-        source_paths = [*runtime_sources, *check_sources, Path(__file__).resolve(), manifest_path,
+        union_source = ROOT / 'tests/driving_benchmark/legacy_java/src/net/alexredby/pztoolkitjavapatches/TranslucentSquareUnion.java'
+        source_paths = [*runtime_sources, *check_sources, union_source, Path(__file__).resolve(), manifest_path,
                         ROOT / 'JavaPatches/build.py', ROOT / 'tools/check_driving_callbacks.py',
                         ROOT / 'tools/check_optimizer_compatibility.py', ROOT / 'tools/queue_checks/tile_metrics.py',
                         ROOT / 'tools/queue_checks/adapters/optimizer_benchmark.py', ROOT / 'tools/queue_checks/chunk_metrics.py', ROOT / 'tools/queue_checks/loot_metrics.py']
@@ -108,8 +109,9 @@ def main(argv=None):
         native_cp = os.pathsep.join(map(str, (game_jar, buddy)))
         run('java-version', [java, '-version'])
         run('compile-runtime', [javac, '--release', '25', '-cp', native_cp, '-d', classes, *runtime_sources])
-        run('compile-checks', [javac, '--release', '25', '-cp', str(classes) + os.pathsep + native_cp,
-                               '-d', checks, *check_sources])
+        check_cp = os.pathsep.join(map(str, (classes, patch, game_jar, buddy)))
+        run('compile-checks', [javac, '--release', '25', '-cp', check_cp, '-d', checks,
+                               *check_sources, union_source])
         properties = {'pz.optimizerTrial.profile': manifest['profile']['id'],
                       **{'pzopt.' + key: value for key, value in manifest['profile']['properties'].items()}}
         profile_args = output / 'official-profile.args'

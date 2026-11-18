@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 -- Diagnostic-only inner spans in the disposable benchmark snapshot.
 -- Protected calls add observer overhead; use these spans to locate work, not as a baseline.
 local config = require "QueueTestSelection"
@@ -60,7 +61,7 @@ local function install()
     print("[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=" .. tostring(#targets))
 end
 
-Events.OnGameStart.Add(function()
+preflight.onGameStart(Events,function()
     local ok, problem = pcall(install)
     if not ok then
         print("[DRIVING_PERF] FAIL callback-detail-install: " .. tostring(problem))

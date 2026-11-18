@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 require 'TimedActions/WalkToTimedAction'
 require 'TimedActions/ISTimedActionQueue'
 local config=require 'QueueTestSelection'
@@ -87,7 +88,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  elseif command=='ResourcesStart'then getGameTime():setTimeOfDay(args.time);resourceStarted=true
  elseif command=='ResourcesRestored'then getGameTime():setTimeOfDay(args.time);resourceRestored=true end
 end)
-Events.OnGameStart.Add(function()
+preflight.onGameStart(Events,function()
  started=true;beginAt=now();since=beginAt
  if config.kind=='sp'then role='client1' end
  getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
@@ -252,7 +253,7 @@ local function tick()
   F.emit('COMPLETE',{case='lighting',role=role});done=true
  end
 end
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
  if not started or done or not isIngameState()then return end
  local ok,err=pcall(function()
   if resourceMode and (phase=='decal_loading'or phase=='decal_ready')then worldRenderOutline(getPlayer(),true)end

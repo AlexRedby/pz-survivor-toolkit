@@ -1,10 +1,18 @@
 package net.alexredby.pztoolkitjavapatches
 
+import java.security.MessageDigest
+import java.util.HexFormat
+
 /** Policy regressions run against genuine native resources, without loading optimizer classes. */
 object OptimizerCompatibilityChecks {
     private fun verify(value: Boolean, reason: String) {
         if (!value) throw AssertionError(reason)
     }
+
+    private fun actualHash(resource: String): String? =
+        OptimizerCompatibilityChecks::class.java.classLoader.getResourceAsStream(resource)?.use {
+            HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(it.readAllBytes()))
+        }
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -115,8 +123,9 @@ object OptimizerCompatibilityChecks {
                 for (key in saved.keys) system.remove(key)
                 for ((resource, pair) in OptimizerCompatibility.alternatives) {
                     verify(
-                        BytecodeSupport.supports(resource, pair.nativeSha256),
-                        "native baseline changed: $resource",
+                        BytecodeSupport.supports(resource, pair.nativeSha256) ==
+                            (actualHash(resource) == pair.nativeSha256),
+                        "native admission differs from exact resource hash: $resource",
                     )
                     verify(
                         !OptimizerCompatibility.supports(
@@ -141,7 +150,8 @@ object OptimizerCompatibilityChecks {
                         "profile substituted for actual official resources: $resource",
                     )
                     verify(
-                        BytecodeSupport.supports(resource, pair.nativeSha256),
+                        BytecodeSupport.supports(resource, pair.nativeSha256) ==
+                            (actualHash(resource) == pair.nativeSha256),
                         "opt-in changed native admission: $resource",
                     )
                     verify(
@@ -166,7 +176,7 @@ object OptimizerCompatibilityChecks {
             }
         }
         println(
-            "OPTIMIZER_COMPATIBILITY_CHECKS_PASS (20 exact triples; every configuration pin missing/changed; real native resources retained)",
+            "OPTIMIZER_COMPATIBILITY_CHECKS_PASS (20 exact triples; every configuration pin missing/changed; exact native resource admission retained)",
         )
     }
 }

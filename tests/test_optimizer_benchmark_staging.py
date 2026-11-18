@@ -124,7 +124,7 @@ class BenchmarkViewportStagingTests(unittest.TestCase):
     def test_shared_helper_still_stages_all_roles_from_one_compilation(self):
         project, output, game, jdk, _, runtime, manifest = self.fixture()
         runtime['roles']['server'] = {'cache': str(output / 'server')}
-        with patch.object(optimizer_profile.subprocess, 'run', side_effect=self.compile_fixture) as compiler:
+        with patch.object(optimizer_profile.preparation_process, 'run', side_effect=self.compile_fixture) as compiler:
             optimizer_profile.stage_viewport(project, output / 'observer-inputs', game, jdk, runtime, manifest['native_guards'])
             self.assertEqual(compiler.call_count, 1)
         for role in ('client1', 'server'):

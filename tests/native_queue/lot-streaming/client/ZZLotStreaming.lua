@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 local config=require 'QueueTestSelection'
 if config.suite~='lot-streaming'then return end
 local F=require 'LotStreamingFixture'
@@ -23,7 +24,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  elseif command=='Start'then go=true
  elseif command=='Probe'then ack=args.phase end
 end)
-Events.OnGameStart.Add(function()
+preflight.onGameStart(Events,function()
  started=true;beginAt=now();at=beginAt
  local player=getPlayer();player:setGodMod(true);player:setGhostMode(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
@@ -92,7 +93,7 @@ Events.OnPreUIDraw.Add(function()
  end)
  if not ok then done=true;F.emit('FAIL',{role=role,phase=phase,error=tostring(err)})end
 end)
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
  if done or not started or not isIngameState()or now()<at then return end
  local ok,err=pcall(function()
   if workBegin then assert(now()-workBegin<180000,'Bounded native streaming timed out')

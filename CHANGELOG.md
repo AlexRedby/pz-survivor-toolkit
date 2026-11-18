@@ -71,6 +71,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.2.8
 
+- Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
 - Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
 
 ### 0.2.7
@@ -1794,6 +1795,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.2.4
 
+- **Research:** Restored the driving and loot diagnostics. The historical Windows optimizer profile is pinned to its reviewed 42.21 resources. The additional map-lot and rendering experiments still require qualification on 42.22.2.
 - **Fixed:** The client renderer now remembers the south wall cutaway state when deciding whether the neighbouring chunk needs redrawing. Previously it stored the north edge in that slot and could repeatedly mark an unchanged neighbour for redraw.
 
 ### 0.2.3
@@ -1915,19 +1917,6 @@ The older README associates medicine indicators with this label, but no separate
 ### 0.1.82
 
 - Keep client item-transfer timeout accounting stable when server time first synchronizes or changes. Transfers retain the native request lifetime and duration grace period, preventing premature local completion from advancing reading or other dependent work before inventory replication. Server validation, item effects and packet handling are unchanged; unsupported or previously unobserved requests retain the native path.
-
-### 0.1.81
-
-- Remove the shared lock around independent map-lot reads at initial class definition, retaining the synchronized object pool and original parser. Unsupported or already-loaded input classes keep their native path.
-- Prepare the three native outline composite shaders on the render context after world loading, preserving their native lifetime and lazy fallback.
-- Avoid synchronous PNG dimension reads for pending 2D world-item textures that the native render queue rejects. Ready textures keep their authored geometry and render-state commands; custom texture classes and non-game threads retain the original getters.
-
-- Reduce repeated membership scans when combining dense translucent-square lists. Use bounded invocation-local identity membership after a small linear-search budget, preserving item duplicates, square order, sorting and rendering callbacks. Sparse and unsupported inputs retain the native path; no lighting results are cached between calls.
-
-- **Fixed:** Menu Host strips the authenticated client optimizer overlay from its child server classpath. The server retains native game resources and the existing ZombieBuddy loader/approval policy; malformed or ambiguous overlay launches are rejected.
-
-- Fix the cutaway cache storing the north-edge result for the south edge. Unchanged south edges no longer repeatedly invalidate the neighbouring chunk texture; actual edge changes still invalidate it immediately.
-- Admit the pinned experimental optimizer profile only with its complete 770 settings and 888 exact resources. Native bytecode checks remain the default; unsupported profiles and modified resources are rejected. No optimizer binaries are bundled or installed automatically.
 
 ### 0.1.81
 

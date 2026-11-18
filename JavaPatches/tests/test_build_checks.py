@@ -224,7 +224,9 @@ class BuildChecks(unittest.TestCase):
                     'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
                     'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks',
                     'net.alexredby.pztoolkitjavapatches.VehicleSalvageSandboxChecks',
-                    'net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks'}
+                    'net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks',
+                    'net.alexredby.pztoolkitjavapatches.HandEventRecipeSourceChecks'}
+        self.assertEqual(build.EXPLICIT_ONLY_CHECKS, workshop)
         grouped = [name for name in build.CHECKS if name not in workshop]
         ordinary = [name for name in grouped if not name.endswith('.VideoChecks')]
         video = 'net.alexredby.pztoolkitjavapatches.VideoChecks'

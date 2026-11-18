@@ -17,6 +17,7 @@ import se.krka.kahlua.vm.LuaClosure;
 public final class LuaCallbackDetailsChecks {
     private static final String SETUP="""
         require=function(name)
+            if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end} end
             assert(name=='QueueTestSelection')
             return {options={callback_profile=true,callback_detail_profile=true,callback_chain_profile=chainProfile}}
         end

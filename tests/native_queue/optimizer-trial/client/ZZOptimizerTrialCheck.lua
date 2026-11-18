@@ -1,3 +1,4 @@
+local preflight = require 'QueuePreflight'
 -- Functional smoke only: normal timed actions in the disposable starter world.
 -- No input injection, terrain/population edits, teleport or chunk preload.
 require "TimedActions/ISTimedActionQueue"
@@ -128,7 +129,7 @@ local function finish(player, now)
         .. " availableAfterStart=" .. arrivedChunkCount .. " visitedChunks=" .. visitedChunkCount
         .. " distance=" .. string.format("%.2f", totalDistance) .. " screenshots=begin,end")
 end
-Events.OnTick.Add(function()
+preflight.onTick(Events,function()
     if ended then return end
     local C = PZDrivingBenchClient
     if not C or not C.ready or not F.allowed() then return end

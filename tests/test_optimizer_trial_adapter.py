@@ -66,13 +66,17 @@ class OptimizerTrialAdapterTests(unittest.TestCase):
                 destination = Path(command[command.index('-d') + 1]) / 'net/fixture/Viewport.class'
                 destination.parent.mkdir(parents=True)
                 destination.write_bytes(b'compiled-viewport')
+            else:
+                classpath = command[command.index('-cp') + 1].split(optimizer_profile.os.pathsep)
+                self.assertIn(str(self.cache / 'classes'), classpath)
+                self.assertEqual(Path(command[-1]).name, 'ToolkitSmokeLauncher.java')
 
         def bridge_fixture(destination, game, jdk, project):
             mod = Path(destination) / 'PZDrivingOptimizerBridge'
             (mod / '42').mkdir(parents=True)
             return mod
 
-        with patch('optimizer_profile.subprocess.run', side_effect=compile_fixture), \
+        with patch('optimizer_profile.preparation_process.run', side_effect=compile_fixture), \
                 patch('prepare_optimizer_trial.build_bridge', side_effect=bridge_fixture) as build:
             trial.stage(self.project, self.output, self.game, self.jdk, self.selection, {}, self.runtime)
             return build.call_count
@@ -211,6 +215,7 @@ for _, name in ipairs({'TimedActions/ISTimedActionQueue','TimedActions/WalkToTim
     package.loaded[name] = {}
 end
 Events = {OnTick={Add=function() end}}
+package.loaded.QueuePreflight = {onTick=function(events,fn)events.OnTick.Add(fn)end}
 local input = assert(io.open(arg[1])); local source = input:read('*a'); input:close()
 local sample = assert(loadstring(source .. '\nreturn sample'))()
 local function rejects(player, reason)

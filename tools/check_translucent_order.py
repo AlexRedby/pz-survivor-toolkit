@@ -7,9 +7,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-TESTS = ROOT / 'JavaPatches/tests/net/alexredby/pztoolkitjavapatches'
+LEGACY = ROOT / 'tests/driving_benchmark/legacy_java'
+TESTS = LEGACY / 'checks/net/alexredby/pztoolkitjavapatches'
 
 
 def digest(path):
@@ -34,6 +36,9 @@ def main():
     build = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(build)
     build.require_current_patch_jar(patch, ROOT / 'JavaPatches')
+    with zipfile.ZipFile(game / 'projectzomboid.jar') as native:
+        if 'zombie/util/list/PZArrayList.class' not in native.namelist():
+            parser.error('This historical translucent-square experiment requires the B42.21 PZArrayList class')
     output.mkdir(parents=True)
     for name in ('classes', 'sources', 'home'):
         (output / name).mkdir()
@@ -42,6 +47,9 @@ def main():
         path = output / 'sources' / name
         path.write_bytes((TESTS / name).read_bytes())
         sources.append(path)
+    helper = output / 'sources/TranslucentSquareUnion.java'
+    helper.write_bytes((LEGACY / 'src/net/alexredby/pztoolkitjavapatches/TranslucentSquareUnion.java').read_bytes())
+    sources.append(helper)
     receipt = {'format': 1, 'research_only': True, 'performance_measurement': False,
                'inputs': {name: digest(path) for name, path in (
                    ('game', game / 'projectzomboid.jar'), ('buddy', game / 'ZombieBuddy.jar'),
