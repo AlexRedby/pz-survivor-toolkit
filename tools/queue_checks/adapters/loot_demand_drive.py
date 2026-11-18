@@ -174,6 +174,10 @@ def census(directory, arm, log):
         key, value = line.split('=', 1)
         if key in status: raise ValueError('Duplicate census status')
         status[key] = value
+    # The current probe also reports a manually watched Host target. A road
+    # capture observes only automatic discoveries. Earlier captures omit it.
+    if status.pop('watched', '0') != '0':
+        raise ValueError('Unexpected manually watched container in driving census')
     if set(status) != {'schema','arm','capacity','objects','overflow','active'} or status['schema'] != '1' or status['arm'] != arm:
         raise ValueError('Invalid census status or arm')
     if int(status['overflow']) != 0 or int(status['active']) != 0: raise ValueError('Incomplete census')

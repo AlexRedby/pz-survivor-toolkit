@@ -23,15 +23,20 @@ entrypoints ensure every member container before capturing contents. Run its
 source-backed Lua checks with `furniture_checks.py --furniture-root PATH` using a
 Python environment containing Lupa.
 
-These are functional checks, not a driving benchmark. The lifecycle bank
-serializes containers in memory; that alone is not a world restart. The Host phase creates a separate
-source outside the nearby inventory scan, sends two native RequestItemsForContainer
-requests and compares recursive item IDs/types/count/tree against authority.
-Custom commands set up and verify the exchange; they do not transport contents.
-This is one client, not a two-client race or condition/modData equality proof.
-Source-backed furniture tests use engine/network/geometry doubles; actual full-pack furniture moves remain a separate gate. The fixture
-must not be promoted before those gates and representative driving/first-access
-cost are qualified.
+The lifecycle bank serializes containers in memory. The separate persistence
+cases below save and reload the world. In the one-client Host lifecycle case,
+the server creates an object outside the nearby inventory scan. The client
+sends two native requests and compares its recursive inventory with the
+authority. Coordination messages carry observations only.
+
+Select `--cases furniture` to exercise the actual selected push/pull actions on
+a two-part orange dumpster in SP or menu Host. Each part starts pending. The
+case covers a controlled empty fill, an item already owned by each part, and a
+populated fill. It checks the original item references at the destination and
+after the return trip. On SP, the push commits on a later tick after the shove
+animation. On Host, a native client checks both final trees and overlay states.
+The fixture invokes the task's completion method on authority. It does not
+exercise the player context menu or require a positive overlay on these sprites.
 
 Tradeoffs: delayed random outcome/callback and fill overlay, possible first-access
 hitch, and unrealized pending fire fuel. Existing/placed/moved/special objects are

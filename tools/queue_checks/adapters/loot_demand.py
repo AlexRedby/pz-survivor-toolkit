@@ -19,13 +19,13 @@ REQUIRED = {'ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', 'Furnitu
 def definitions():
     return {'loot-demand': {'status': 'ready', 'clients': 1, 'default_mods': sorted(REQUIRED),
         'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
-                       modes=['toolkit'], languages=['EN']) for case in ('lifecycle', 'persist-seed', 'persist-reload')]
+                       modes=['toolkit'], languages=['EN']) for case in ('lifecycle', 'persist-seed', 'persist-reload', 'furniture')]
         + [dict(id='natural',producer='fixture',capability='effect',kinds=['mp'],modes=['toolkit'],languages=['EN'])]}}
 
 
 def validate(s):
     o = s.get('options', {})
-    if (s.get('cases') not in (['lifecycle'], ['persist-seed'], ['persist-reload'], ['natural']) or s.get('kind') not in ('sp', 'mp')
+    if (s.get('cases') not in (['lifecycle'], ['persist-seed'], ['persist-reload'], ['natural'], ['furniture']) or s.get('kind') not in ('sp', 'mp')
             or s.get('mode') != 'toolkit' or s.get('clients') != 1 or s.get('languages') != ['EN']
             or not REQUIRED <= set(s.get('mods', [])) or MOD in s['mods']
             or s.get('resources', {}).get('exclusive') is not True
@@ -160,6 +160,24 @@ def verify(root, selection, catalog):
             status='failed' if issues else 'passed', reason='; '.join(issues))],
             'evidence': {'first_fill_timed': bool(re.search(r'\[LOOT_NATURAL\] RESULT role=server [^\n]* fill_kind=(?:demand|automatic) fill_ns=\d+', authority)),
                          'limits': ['Natural menu Host map load and on-foot approach. A missing fill duration is unavailable; inventory delivery is checked independently. No driving FPS inference.']}}
+    if case == 'furniture':
+        for empty in ('false', 'true'):
+            if len(re.findall(r'\[LOOT_FURNITURE\] PASS mode=(?:sp|host-authority) empty=' + empty + r'\s', authority)) != 1:
+                issues.append('Missing/duplicate actual furniture empty=' + empty)
+        if authority.count('[LOOT_FURNITURE] OWNED_PENDING_PRESERVED bothMembers=true') != 1:
+            issues.append('Missing owned pending member preservation')
+        if selection['kind'] == 'mp':
+            if authority.count('[LOOT_FURNITURE] PASS host-native-client-content-overlay ') != 1:
+                issues.append('Missing independent native client contents/overlay confirmation')
+            if authority.count(PREFIX + 'PASS native-request') != 1:
+                issues.append('Missing separate native request exchange')
+        if not complete(selection, 'client1', client):
+            issues.append('Missing/duplicate completion')
+        return {'issues': issues, 'outcomes': [dict(actor='client1', case=case,
+            status='failed' if issues else 'passed', reason='; '.join(issues))],
+            'evidence': {'limits': ['Actual selected mod complete() called directly on native authority; no client UI/timed-action dispatch.',
+                'Native pickup/place and exact item references checked; controlled empty callback result.',
+                'Host observes native multipart contents/overlay equality; nil overlays are allowed. No client UI/timed-action dispatch or two-client race.']}}
     expected = [] if case == 'persist-reload' else ['bin', 'dumpster', 'existing-items', 'destroy-fill', 'empty-trash']
     if case != 'lifecycle':
         expected.append(case)

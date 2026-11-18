@@ -6,12 +6,16 @@ require 'LootDemandPersistence'
 local case=config.cases[1]
 require 'LootDemandFurniture'
 local started,sent,done=false,false,false
-local at,probe,requests,observed
+local at,probe,requests,observed,furnitureProbe,furnitureSeen,furnitureCoroutine
 requests=0
 local function fail(problem) done=true;print('[LOOT_DEMAND_TEST] FAIL '..tostring(problem)) end
 preflight.onGameStart(Events,function() started=true end)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='LootDemandTest' or done then return end
+ if case=='furniture' and command=='FurnitureProbe' then
+  furnitureProbe = args
+  return
+ end
  if command=='NativeProbe' then
   if not sent or probe or type(args)~='table' then fail('unexpected native probe');return end
   probe=args;return
@@ -28,6 +32,38 @@ preflight.onTick(Events,function()
    if not isClient() or player:getOnlineID()<0 then return end
    if sent then
     assert(getTimestampMs()-at<120000,'authority response timeout')
+    if case=='furniture' and furnitureProbe and not furnitureSeen then
+     local ready = true
+     local fingerprints, overlays = {}, {}
+     for _, expected in ipairs(furnitureProbe.entries) do
+      local square = getCell():getGridSquare(expected.x, expected.y, expected.z)
+      local object = square and square:getObjects():size() > expected.index
+       and square:getObjects():get(expected.index)
+      if object and object:getSprite() and object:getSprite():getName() == expected.sprite
+       and object:getContainer() then
+       local container = object:getContainer()
+       local overlay = object:getOverlaySprite()
+       local observedOverlay = overlay and overlay:getName() or ''
+       local observedFingerprint = lootDemandFingerprint(container)
+       if container:isExplored() and container:getItems():size() == expected.count
+        and observedFingerprint == expected.fingerprint and observedOverlay == expected.overlay then
+        fingerprints[#fingerprints + 1] = expected.sprite .. '=' .. observedFingerprint
+        overlays[#overlays + 1] = expected.sprite .. '=' .. observedOverlay
+       else
+        ready = false
+       end
+      else
+       ready = false
+      end
+     end
+     if ready then
+      furnitureSeen = true
+      sendClientCommand('LootDemandTest', 'FurnitureObserve', {
+       fingerprint = table.concat(fingerprints, ';'),
+       overlay = table.concat(overlays, ';'),
+      })
+     end
+    end
     if probe and not observed then
      local square=getCell():getGridSquare(probe.x,probe.y,probe.z)
      if not square or square:getObjects():size()<=probe.index then return end
@@ -37,7 +73,7 @@ preflight.onTick(Events,function()
      if requests==0 then
       assert(container:isEmpty() and not container:isExplored() and object:getOverlaySprite()==nil,'initial pending bin/overlay state differs')
       container:requestServerItemsForContainer();container:requestServerItemsForContainer();requests=2
-     elseif not container:isEmpty() and object:getOverlaySprite() then
+     elseif not container:isEmpty() and object:getOverlaySprite() and (case~='furniture' or furnitureSeen) then
       observed=true
       sendClientCommand('LootDemandTest','Observe',{fingerprint=lootDemandFingerprint(container),requests=requests,overlay=object:getOverlaySprite():getName()})
      end
@@ -46,7 +82,16 @@ preflight.onTick(Events,function()
    end
    sent=true;at=getTimestampMs();sendClientCommand('LootDemandTest','Run',{})
   else
-   if case=='persist-reload' then
+   if case=='furniture' then
+    if not furnitureCoroutine then
+     require 'LootDemandFurnitureNative'
+     furnitureCoroutine=coroutine.create(function()return LootDemandBank.runFurniture(player)end)
+    end
+    local resumed,result=coroutine.resume(furnitureCoroutine)
+    assert(resumed,result)
+    if coroutine.status(furnitureCoroutine)~='dead' then return end
+    assert(result,'native furniture coroutine did not complete')
+   elseif case=='persist-reload' then
     at=at or getTimestampMs();assert(getTimestampMs()-at<120000,'persisted squares did not load')
     if not LootDemandBank.reloadPersistence(player) then return end
    else
