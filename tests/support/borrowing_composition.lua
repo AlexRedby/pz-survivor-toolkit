@@ -258,6 +258,7 @@ return function(client,options)
     player.getPrimaryHandItem=function(self)return self.primary end;player.getSecondaryHandItem=function(self)return self.secondary end
     player.setPrimaryHandItem=function(self,item)self.primary=item end;player.setSecondaryHandItem=function(self,item)self.secondary=item end
     player.getClothingItem_Back=function()end
+    player.removeWornItem=function(_,item)assert(not player:isEquippedClothing(item))end
     player.getWornItems=function()return {getItem=function()end,size=function()return 0 end}end
     player.getAttachedItems=function()return {getItem=function()end,size=function()return 0 end}end
     player.getModData=function()return {P4TidyUpMeister={doNotReequip=false}}end
@@ -445,6 +446,7 @@ return function(client,options)
         styles.FindFemaleStyle=styles.FindMaleStyle
         env.getHairStylesInstance=function()return styles end
         env.sendHumanVisual=function()end;env.triggerEvent=function()end
+        env.sendEquip=function(actor)assert(actor==player)end
     end
     if options.ackFirst then env.require('PZSurvivorToolkit/ActionQueueAcknowledgements')end
     env.require('PZSurvivorToolkit/ActionQueueOperations')
@@ -543,6 +545,7 @@ return function(client,options)
         value.getType=function()return fullType:match('[^.]+$')end
         value.getCategory=function()return 'Item'end
         value.isBroken=function()return false end
+        value.getClothingItem=function()end;value.getUnequipSound=function()end;value.isTwoHandWeapon=function()return false end
         value.getStaticModel=function()return 'DisposableRazor'end
         value.hasTag=function(_,tag)return fullType=='Base.Razor'and tag==env.ItemTag.RAZOR
             or fullType=='Base.Scissors'and tag==env.ItemTag.SCISSORS end

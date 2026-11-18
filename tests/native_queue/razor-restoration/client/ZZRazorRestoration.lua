@@ -66,6 +66,7 @@ local function role(action)
  if action.Type=='ISInventoryTransferAction'and action.item and action.item:getID()==ids.items.razor.id then
   return action.destContainer==getPlayer():getInventory()and'pickup'or'returned'
  end
+ if ids.case=='empty-primary'and action.Type=='ISUnequipAction'and action.item and action.item:getID()==ids.items.razor.id then return 'restore'end
  if action.Type=='ISEquipWeaponAction'and action.item then
   for name,spec in pairs(ids.items)do if action.item:getID()==spec.id then
    return({razor='preparationEquip',previous='restore',replacement='explicitEquip'})[name]or'unknown'
@@ -162,7 +163,17 @@ assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
  started=function(action)
   if phase~='running'or action.character~=getPlayer()then return end
   if observeCancelStop then observeCancelStop('before-next-admission',action)end
-  local row=track(action);row.admittedAt=getTimestampMs();observeEditor('native-admission',action)
+  local row=track(action)
+  if ids.case=='empty-primary'and row.role=='returned'then
+   local restore=assert(actions.restore);acknowledge(restore,assert(tracks[restore]))
+  end
+  row.admittedAt=getTimestampMs();observeEditor('native-admission',action)
+  if ids.case=='empty-primary'and row.role=='returned'then
+   local restore=assert(actions.restore);local restored=assert(tracks[restore])
+   evidence.restoreBoundary={at=getTimestampMs(),actionRef=restored.actionRef,nativeRef=tostring(restore.action),
+    returnRef=row.actionRef,snapshot=F.snapshot(state)}
+   raw('RESTORE_BOUNDARY',{case=ids.case,observation=evidence.restoreBoundary})
+  end
   if row.role=='tail'then evidence.tailBoundary={at=getTimestampMs(),snapshot=F.snapshot(state),debts=T.ActionQueueSettlement.blockedReturns(getPlayer())}end
  end,
  begin=function(action,boundary)
@@ -209,9 +220,15 @@ local function produce()
  assert(evidence.initialRevision~=nil,'own primary intent tracking unavailable')
  local previous=assert(F.find(getPlayer(),ids.items.previous.id))
  local hands=T.ActionQueueEquip.restorationHands(getPlayer(),previous)
+ if ids.case=='empty-primary'then
+  evidence.handSeed={primary=false,secondary=previous:getID(),type=previous:getFullType(),requiresBoth=previous:isRequiresEquippedBothHands(),
+   handWeapon=instanceof(previous,'HandWeapon'),supportsTwo=instanceof(previous,'HandWeapon')and previous:isTwoHandWeapon()or false,
+   ordinary=hands~=nil and hands.primary==false and hands.secondary and hands.secondary.item==previous}
+ else
  evidence.handSeed={id=previous:getID(),type=previous:getFullType(),requiresBoth=previous:isRequiresEquippedBothHands(),
   handWeapon=instanceof(previous,'HandWeapon'),supportsTwo=instanceof(previous,'HandWeapon')and previous:isTwoHandWeapon()or false,
   ordinary=hands~=nil and hands.primary~=nil and hands.primary.item==previous}
+ end
  assert(evidence.handSeed.ordinary and not evidence.handSeed.requiresBoth and not evidence.handSeed.supportsTwo,
   'authority initial primary is outside ordinary one-hand restoration')
  phase='running'
@@ -406,7 +423,7 @@ require('QueuePreflight').onTick(Events,function()
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
    menu,cutMenu,primaryMenu=ISCharacterScreen.onTrimBeard,ISCharacterScreen.onCutHair,ISInventoryPaneContextMenu.OnPrimaryWeapon
    nativeMethods={}
-   for _,class in ipairs({ISInventoryTransferAction,ISEquipWeaponAction,ISTrimBeard,ISCutHair,ISReadABook})do
+   for _,class in ipairs({ISInventoryTransferAction,ISEquipWeaponAction,ISUnequipAction,ISTrimBeard,ISCutHair,ISReadABook})do
     local methods={};for name,callback in pairs(class)do if type(callback)=='function'then methods[name]=callback end end;nativeMethods[class]=methods
    end
    ready=true;emit({event='setup',cases=config.cases,nativeDurations=true,provider='native-returns',installed=true});since=getTimestampMs()

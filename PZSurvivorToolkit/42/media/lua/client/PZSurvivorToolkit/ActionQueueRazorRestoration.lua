@@ -89,7 +89,7 @@ function Razor.observe(episode, action)
             capture = function()
                 local revision = Toolkit.ActionQueueTidyIntent.primaryRequestRevision(actor)
                 local before = Toolkit.ActionQueueEquip.restorationHands(actor)
-                if before and before.primary and revision ~= nil then
+                if before and revision ~= nil then
                     episode.revision = revision
                     return before
                 end
@@ -119,14 +119,24 @@ local function restore(episode, parent)
     if not eligible() then return end
     local proposal, plan = Hand.propose(episode.hand, hands(actor))
     if not proposal then return end
-    local previous = plan.incoming.item
-    if not hands(actor, previous) then return end
-    local action = ISEquipWeaponAction:new(actor, previous, 50, true, false)
+    local borrowed = currentTool(episode)
+    if not borrowed then return end
+    local previous = plan.incoming and plan.incoming.item
+    local action
+    if plan.mode == 'unequip' then
+        action = ISUnequipAction:new(actor, borrowed, 50)
+    else
+        if not previous or not hands(actor, previous) then return end
+        action = ISEquipWeaponAction:new(actor, previous, 50, true, false)
+    end
     local token = parent.toolkitQueueOperation
     ops.adopt(action, token)
     if not settlement.inheritCleanup(action, parent) then return end
     local function bound(value)
-        return value == action and isPrimaryEquip(value, actor, previous)
+        if value ~= action then return false end
+        if previous then return isPrimaryEquip(value, actor, previous) end
+        return getmetatable(value) == ISUnequipAction and value.character == actor and value.item == borrowed
+            and not value.fromHotbar and value.reason == nil and Toolkit.ActionQueuePolicy.matchesNative(value)
     end
     local effect = settlement.observeCleanupEffect(action, {
         guard = bound, sourceGuard = bound,
@@ -136,7 +146,7 @@ local function restore(episode, parent)
         capture = function() return hands(actor) end,
         observed = function(_, before)
             local after = hands(actor)
-            return after and after.primary and after.primary.item == previous and before.primary
+            return after and (after.primary and after.primary.item) == previous and before.primary
                 and before.primary.item == currentTool(episode)
                 and (after.secondary and after.secondary.item) == (before.secondary and before.secondary.item)
         end,

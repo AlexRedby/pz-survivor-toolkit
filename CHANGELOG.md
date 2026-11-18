@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.13
+
+- When the primary hand starts empty, opt-in grooming restoration puts away the borrowed tool, leaves the secondary hand as it was, and returns the tool to its bag after the unequip is confirmed.
+
 ### 0.2.12
 
 - Toolkit's opt-in grooming restoration now returns borrowed scissors after beard trimming and supports ordinary haircuts with a borrowed razor or scissors. The native haircut still applies its appearance changes before Toolkit restores the previous hand item and returns the tool.

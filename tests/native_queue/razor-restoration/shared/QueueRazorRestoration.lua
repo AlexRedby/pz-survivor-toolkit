@@ -1,7 +1,7 @@
 -- Authority-only seeds/interventions; native queue work is never synthesized.
 local F={}
 local P=require 'QueueEnergyPlacement'
-function F.returnedCase(case)return case=='restore-success'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
+function F.returnedCase(case)return case=='restore-success'or case=='empty-primary'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
 local function id(item)return item and item:getID()or false end
 function F.same(a,b)
  if type(a)~=type(b)then return false end
@@ -87,7 +87,7 @@ end
 function F.prepare(player,case,target,proof,previous)
  assert(not isClient()and P.atCentered(player,target),'authority must be at the prepared square')
  assert(not player:isFemale(),'native male character creation required for beard trimming')
- assert(({['restore-success']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case],'unknown razor case')
+ assert(({['restore-success']=true,['empty-primary']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case],'unknown razor case')
  if previous then F.dispose(previous)end
  assert(not player:getPrimaryHandItem()and not player:getSecondaryHandItem(),'authority seed requires empty initial hands')
  local root=player:getInventory();local bag=assert(root:AddItem('Base.Bag_Military'));local source=bag:getItemContainer();source:setExplored(true)
@@ -103,7 +103,9 @@ function F.prepare(player,case,target,proof,previous)
  local tail=F.find(player,ids.items.tail.id);local pages=tail:getNumberOfPages();assert(pages>2)
  ids.items.tail.total=pages;ids.items.tail.initial=pages-2
  tail:setAlreadyReadPages(pages-2);player:setAlreadyReadPages(tail:getFullType(),pages-2);player:setPerkLevelDebug(Perks.Woodwork,0)
- player:setWornItem(bag:canBeEquipped(),bag);player:setPrimaryHandItem(F.find(player,ids.items.previous.id))
+ player:setWornItem(bag:canBeEquipped(),bag)
+ if case=='empty-primary'then player:setSecondaryHandItem(F.find(player,ids.items.previous.id))
+ else player:setPrimaryHandItem(F.find(player,ids.items.previous.id))end
  local visual=player:getHumanVisual();visual:setBeardModel(ids.initialBeard)
  if cut then
   -- Disposable fixture setup precedes the exact inventory/appearance baseline.
@@ -144,7 +146,8 @@ function F.expected(ids)
  local row=clone(ids.baseline)
  if ids.case=='cut-hair-scissors'then row.appearance.hair=ids.targetHair;row.appearance.nonAttached=false
  else row.appearance.beard=ids.case=='cancel-active'and ids.initialBeard or ids.targetBeard end
- row.primary=ids.items[ids.case=='new-primary-intent'and'replacement'or'previous'].id
+ if ids.case=='empty-primary'then row.primary=false
+ else row.primary=ids.items[ids.case=='new-primary-intent'and'replacement'or'previous'].id end
  row.tail.pages=ids.items.tail.total;row.tail.characterPages=ids.items.tail.total
  if not F.returnedCase(ids.case)then
   row.origin.sourceCount=0

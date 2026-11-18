@@ -5,7 +5,7 @@ import zipfile
 
 from .tv_controls import MODS as SELECTED_MODS
 
-CASES = ('restore-success', 'new-primary-intent', 'cancel-active', 'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors')
+CASES = ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active', 'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors')
 MODS = [identifier for identifier in SELECTED_MODS if identifier != 'P4TidyUpMeister']
 PREFIX = '[RAZOR_RESTORATION] '
 
@@ -19,7 +19,7 @@ def definitions():
 def validate(selection):
     cases = selection.get('cases')
     editor = selection.get('options', {}).get('queue_editor_enabled', True)
-    if type(editor) is not bool or not editor and (type(cases) is not list or any(case not in ('restore-success', 'trim-scissors', 'cut-hair-scissors') for case in cases)):
+    if type(editor) is not bool or not editor and (type(cases) is not list or any(case not in ('restore-success', 'empty-primary', 'trim-scissors', 'cut-hair-scissors') for case in cases)):
         raise ValueError('queue_editor_enabled must be boolean; editor-off requires ordinary restore cases')
     if (type(cases) is not list or not cases or cases != [case for case in CASES if case in cases]
             or selection.get('kind') not in ('sp', 'mp') or selection.get('mode') != 'toolkit'

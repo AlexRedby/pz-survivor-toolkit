@@ -8,7 +8,10 @@ local function prepared(editorEnabled,kind)
  kind=kind or {tool='Base.Razor',body='ISTrimBeard',style='Moustache'}
  local f=create(false,{p4=false,carried=true,razor=true,queue=editorEnabled})
  local e,q,t=f.env,f.queue,f.env.PZSurvivorToolkit
- local previous=f.tool(810,'Base.Pen',f.inventory)
+ local previous,secondary
+ if kind.empty then secondary=f.tool(810,'Base.Pen',f.inventory)
+ else previous=f.tool(810,'Base.Pen',f.inventory) end
+ f.player.secondary=secondary
  local razor=f.tool(811,kind.tool)
  f.player.primary=previous
  if kind.body=='ISCutHair'then e.ISCharacterScreen.onCutHair(f.player,kind.style,300)
@@ -34,16 +37,17 @@ local function prepared(editorEnabled,kind)
  state=assert(t.ActionQueueSettlement.operationState(body))
  assert(state.borrowings[1].state=='active','only actual native pickup may earn the carried tool loan')
  f.start(body)
- return f,previous,razor,body,cleanup
+ return f,previous,razor,body,cleanup,secondary
 end
 for _,kind in ipairs({
  {tool='Base.Razor',body='ISTrimBeard',style='Moustache'},
  {tool='Base.Scissors',body='ISTrimBeard',style='Moustache'},
- {tool='Base.Scissors',body='ISCutHair',style='Bald'},
+ {tool='Base.Scissors',body='ISCutHair',style='Bald',empty=true},
+ {tool='Base.Razor',body='ISTrimBeard',style='Moustache',empty=true},
  {tool='Base.Scissors',body='ISCutHair',style='Fabian'},
 })do
 for _, editorEnabled in ipairs({true, false}) do
- local f,previous,razor,body,cleanup=prepared(editorEnabled,kind)
+ local f,previous,razor,body,cleanup,secondary=prepared(editorEnabled,kind)
  local q,t=f.queue,f.env.PZSurvivorToolkit
  f.dispatch(body,'perform')
  local visual=f.player:getHumanVisual()
@@ -55,9 +59,10 @@ for _, editorEnabled in ipairs({true, false}) do
  end
  f.start(cleanup);f.dispatch(cleanup,'perform')
  local restored=q.current
- assert(#q.queue==2 and restored.Type=='ISEquipWeaponAction'and restored.item==previous,'owned cleanup must issue one native prior-primary restore')
+ assert(#q.queue==2 and restored.Type==(kind.empty and 'ISUnequipAction' or 'ISEquipWeaponAction')
+  and restored.item==(previous or razor),'owned cleanup must issue one matching hand action')
  f.start(restored);f.dispatch(restored,'perform')
- assert(f.player.primary==previous and razor.container==f.inventory,'native hand restoration changed the borrowed item location')
+ assert(f.player.primary==previous and f.player.secondary==secondary and razor.container==f.inventory,'hand state or borrowed item location differs before return')
  local returnCommand=q.current
  f.start(returnCommand);f.dispatch(returnCommand,'perform')
  local returned=q.current
@@ -134,8 +139,10 @@ assert(#canceled.queue.queue==0 and #canceled.effects==2 and borrowedRazor.conta
 
 -- The container can change after the razor was borrowed. Only the location
 -- obligation is waived by Keep; native hand restoration has already finished.
-for _, obstacle in ipairs({'unavailable', 'full'}) do
-    local run, hammer, tool, grooming, restore = prepared()
+for _, obstacle in ipairs({'unavailable', 'full', 'full-empty-hand'}) do
+    local empty = obstacle == 'full-empty-hand'
+    local kind = empty and {tool='Base.Razor', body='ISTrimBeard', style='Moustache', empty=true} or nil
+    local run, hammer, tool, grooming, restore, secondary = prepared(not empty, kind)
     local queue, execution = run.queue, run.env.PZSurvivorToolkit.ActionQueueExecution
     if obstacle == 'unavailable' then run.bag.container = nil else run.source.room = false end
     run.env.ISInventoryPaneContextMenu.readItem(run.book(812, run.inventory), 0)
@@ -144,17 +151,17 @@ for _, obstacle in ipairs({'unavailable', 'full'}) do
     run.dispatch(grooming, 'perform')
     run.start(restore); run.dispatch(restore, 'perform')
     local hand = queue.current
-    assert(hand.Type == 'ISEquipWeaponAction' and hand.item == hammer)
+    assert(hand.Type == (empty and 'ISUnequipAction' or 'ISEquipWeaponAction') and hand.item == (hammer or tool))
     run.start(hand); run.dispatch(hand, 'perform')
     local continuation = queue.current
     run.start(continuation); run.dispatch(continuation, 'perform')
-    if obstacle == 'full' then
+    if obstacle ~= 'unavailable' then
         local transfer = queue.current
         assert(transfer.Type == 'ISInventoryTransferAction' and transfer.item == tool and not transfer:isValid())
         run.remove(transfer)
         queue:tick()
     end
-    assert(queue.current == tail and tool.container == run.inventory and run.player.primary == hammer,
+    assert(queue.current == tail and tool.container == run.inventory and run.player.primary == hammer and run.player.secondary == secondary,
         obstacle .. ': blocked return interrupted independent work')
     local debts = execution.blockedReturns(run.player)
     assert(#debts == 1 and debts[1].itemId == tool:getID() and debts[1].state == 'blocked',

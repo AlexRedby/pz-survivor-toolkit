@@ -5,8 +5,8 @@
 -- capture(before, after, tool) verifies the projected native preparation write.
 -- The caller must separately earn that exact native episode/hand outcome and
 -- exclude heavy, worn, hotbar, optional two-hand, activation and other effects.
--- This first slice requires an occupied prior primary; empty-hand restoration
--- needs a separately reviewed native unequip contract.
+-- Restoring an empty prior primary projects an exact-tool primary unequip;
+-- an independently held secondary remains unchanged.
 -- propose(handle, current) returns an opaque proposal and a detached plan DTO.
 -- consume(handle, proposal, current) consumes the scheduling right BEFORE any
 -- native restore is issued and returns a fresh DTO. It proves no native effect,
@@ -102,7 +102,17 @@ local function facts(state)
     return result
 end
 local function projects(key, before, incoming, expected)
-    local resource = equip(key, copyState(before), copyRow(incoming), 'primary')
+    local resource
+    if incoming == false then
+        -- The caller separately authenticates native unequip and excludes its
+        -- non-hand effects. This resource clears only the exact held tool;
+        -- capture rejects moving it from secondary or overlapping hand slots.
+        if before.primary == false then return nil, 'assignment_refused' end
+        resource = {domain='hands', key=key, facts=facts(before),
+            requires={{field='primary', equal=before.primary.item}}, effects={
+                {field='primary', set=false}, {field='primaryRequiresBoth', set=false},
+                {field='primaryHandWeapon', set=false}, {field='primaryHandgun', set=false}}}
+    else resource = equip(key, copyState(before), copyRow(incoming), 'primary') end
     if not trusted() then return nil, 'source_changed' end
     if kind(resource) ~= 'table' then return nil, 'assignment_refused' end
     local requires = {}
@@ -129,7 +139,8 @@ local function obligation(handle)
     if ok then return state end
 end
 local function plan(state)
-    return {mode='primary', incoming=copyRow(state.before.primary), expected=copyState(state.before)}
+    return {mode=state.before.primary == false and 'unequip' or 'primary',
+        incoming=copyRow(state.before.primary), expected=copyState(state.before)}
 end
 local function guarded(callback, ...)
     if busy then return nil, 'reentrant' end
@@ -147,12 +158,12 @@ local function captureState(before, after, tool)
     if not prepared then return nil, reason end
     local incoming; incoming, reason = row(tool)
     if not incoming then return nil, reason or 'invalid_input' end
-    if initial.primary == false then return nil, 'empty_previous_primary' end
     if sameRow(initial.primary, incoming) then return nil, 'unchanged_primary' end
     if initial.secondary ~= false and equal(initial.secondary.item, incoming.item) then return nil, 'overlapping_hands' end
     if not sameRow(initial.secondary, prepared.secondary) then return nil, 'secondary_changed' end
     -- The same opaque item cannot acquire different native traits between rows.
-    local rows = {initial.primary, incoming}
+    local rows = {incoming}
+    if initial.primary ~= false then rows[#rows+1] = initial.primary end
     if initial.secondary ~= false then rows[#rows+1] = initial.secondary end
     if prepared.primary ~= false then rows[#rows+1] = prepared.primary end
     for i, left in ipairs(rows) do

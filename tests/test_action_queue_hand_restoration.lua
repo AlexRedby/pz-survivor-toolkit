@@ -6,7 +6,7 @@ local function setup()
     env._G = env
     local function load(name) return assert(setfenv(assert(loadfile(root..name..'.lua')), env))() end
     local model, hands = load('ActionQueueEditModel'), load('ActionQueueHands')
-    local hook, modelHook, calls = nil, nil, 0
+    local hook, modelHook, calls, modelCalls = nil, nil, 0, 0
     local nativeEquip, nativeEvaluate = hands.equipResource, model.evaluate
     hands.equipResource = function(...)
         calls = calls+1
@@ -14,6 +14,7 @@ local function setup()
         return nativeEquip(...)
     end
     model.evaluate = function(...)
+        modelCalls = modelCalls+1
         if modelHook then modelHook() end
         return nativeEvaluate(...)
     end
@@ -24,7 +25,7 @@ local function setup()
     local planner = load('ActionQueueHandRestoration')
     return {env=env, hands=hands, model=model, planner=planner,
         hook=function(value) hook=value end, modelHook=function(value) modelHook=value end,
-        calls=function() return calls end}
+        calls=function() return calls end, modelCalls=function() return modelCalls end}
 end
 local opaqueMeta = {__index=function() error('item getter executed') end,
     __eq=function() error('item equality executed') end}
@@ -62,28 +63,31 @@ local function refused(reason, value, actual)
 end
 local function inputs(secondary, previousWeapon, toolWeapon)
     local previous, tool = row(previousWeapon), row(toolWeapon)
+    if previousWeapon=='empty' then previous=false end
     return state(previous,secondary), state(tool,copyRow(secondary)), tool
 end
 local function capture(case, before, after, tool)
     return assert(case.planner.capture(before,after,tool), 'ordinary primary preparation refused')
 end
 
--- The old primary can be an ordinary object or single-hand weapon. Secondary
+-- The old primary can be empty, an ordinary object or single-hand weapon. Secondary
 -- remains precisely the original opaque item (or empty), and never gets a write.
 for _, secondary in ipairs({false,row(),row(true)}) do
-    for _, previousWeapon in ipairs({false,true}) do
+    for _, previousWeapon in ipairs({false,true,'empty'}) do
         for _, toolWeapon in ipairs({false,true}) do
             local case = setup()
             local before,after,tool = inputs(secondary,previousWeapon,toolWeapon)
             local handle = capture(case,before,after,tool)
             local proposal,plan = case.planner.propose(handle,copy(after))
-            assert(proposal and plan.mode=='primary' and sameRow(plan.incoming,before.primary))
+            local mode=before.primary==false and 'unequip' or 'primary'
+            assert(proposal and plan.mode==mode and sameRow(plan.incoming,before.primary))
             assert(empty(proposal) and handle.before==nil and handle.after==nil, 'private snapshots escaped into handles')
             same(plan.expected,before)
-            assert(case.calls()>=3, 'capture/proposal bypassed actual Hands assignment projection')
+            assert(case.calls()>0 and case.modelCalls()>=3, 'capture/proposal bypassed actual hand assignment projection')
+            if mode=='primary' then assert(case.calls()>=3, 'occupied restore bypassed Hands assignment projection') end
             local consumed = assert(case.planner.consume(handle,proposal,copy(after)))
             same(consumed.expected,before)
-            assert(consumed.mode=='primary' and sameRow(consumed.incoming,before.primary))
+            assert(consumed.mode==mode and sameRow(consumed.incoming,before.primary))
             refused('invalid_proposal',case.planner.consume(handle,proposal,after))
             refused('not_open',case.planner.propose(handle,after))
             refused('not_open',case.planner.waive(handle))
@@ -119,6 +123,47 @@ do
     refused('current_changed',case.planner.consume(handle,proposal,state(row(),after.secondary)))
     refused('current_changed',case.planner.consume(handle,proposal,state(after.primary,row())))
     assert(case.planner.consume(handle,proposal,after), 'temporary mismatch implicitly waived obligation')
+end
+
+-- Empty-primary restoration keeps the same exact-tool and one-shot gates.
+-- Detached DTOs and stale observations cannot change the independently held
+-- secondary, waive the obligation, or authorize clearing a replacement tool.
+do
+    local case=setup()
+    local before,after,tool=inputs(row(true),'empty',true)
+    local originalBefore,originalAfter=copy(before),copy(after)
+    local handle=capture(case,before,after,tool)
+    before.secondary.item=row().item;after.primary.item=row().item;tool.handWeapon=false
+    refused('current_changed',case.planner.propose(handle,state(row(true),originalAfter.secondary)))
+    refused('current_changed',case.planner.propose(handle,state(originalAfter.primary,false)))
+    local proposal,plan=case.planner.propose(handle,originalAfter)
+    assert(proposal and plan.mode=='unequip' and plan.incoming==false and plan.expected.primary==false)
+    same(plan.expected,originalBefore)
+    plan.mode='primary';plan.incoming=row();plan.expected.primary=row();plan.expected.secondary=false
+    refused('current_changed',case.planner.consume(handle,proposal,state(row(true),originalAfter.secondary)))
+    refused('current_changed',case.planner.consume(handle,proposal,state(originalAfter.primary,row())))
+    refused('invalid_proposal',case.planner.consume(handle,{},originalAfter))
+    local consumed=assert(case.planner.consume(handle,proposal,originalAfter))
+    assert(consumed.mode=='unequip' and consumed.incoming==false and consumed.expected.primary==false)
+    same(consumed.expected,originalBefore)
+    refused('invalid_proposal',case.planner.consume(handle,proposal,originalAfter))
+    local waived=capture(case,originalBefore,originalAfter,originalAfter.primary)
+    local pending=assert(case.planner.propose(waived,originalAfter))
+    assert(case.planner.waive(waived))
+    refused('invalid_proposal',case.planner.consume(waived,pending,originalAfter))
+    refused('not_open',case.planner.propose(waived,originalAfter))
+    refused('assignment_mismatch',case.planner.capture(originalBefore,state(row(),originalBefore.secondary),originalAfter.primary))
+    refused('secondary_changed',case.planner.capture(originalBefore,state(originalAfter.primary,false),originalAfter.primary))
+    refused('overlapping_hands',case.planner.capture(state(false,originalAfter.primary),state(originalAfter.primary,false),originalAfter.primary))
+    local fresh=capture(case,originalBefore,originalAfter,originalAfter.primary)
+    local evaluate=case.model.evaluate
+    case.modelHook(function()
+        refused('reentrant',case.planner.propose(fresh,originalAfter))
+        case.model.evaluate=function() error('replacement invoked') end
+    end)
+    refused('source_changed',case.planner.propose(fresh,originalAfter))
+    case.modelHook(nil);case.model.evaluate=evaluate
+    assert(case.planner.propose(fresh,originalAfter), 'source refusal consumed empty-primary obligation')
 end
 
 -- Waiver represents distinct explicit intent; forged/cross-episode proposals
@@ -161,7 +206,6 @@ end
 do
     local case = setup()
     local before,after,tool = inputs(row(),false,false)
-    refused('empty_previous_primary',case.planner.capture(state(false,before.secondary),after,tool))
     refused('unchanged_primary',case.planner.capture(after,after,tool))
     refused('secondary_changed',case.planner.capture(before,state(tool,false),tool))
     refused('assignment_mismatch',case.planner.capture(before,state(row(),before.secondary),tool))

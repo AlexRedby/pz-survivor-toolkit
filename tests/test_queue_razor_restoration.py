@@ -29,6 +29,8 @@ def control_observation(case):
                *[dict(id=item['id'], type=item['type'], container=42 if name == 'razor' else 'root') for name, item in ids['items'].items()]],
         origin=dict(id=42, type='Base.Bag_Military', container='root', worn=True, sourceCount=1), worn=[dict(id=42, location='Back')],
         tail=dict(id=76, type='Base.BookCarpentry1', pages=8, characterPages=8, total=10))
+    if case == 'empty-primary':
+        ids['baseline'].update(primary=False, secondary=ids['items']['previous']['id'])
     if case == 'cut-hair-scissors':
         ids.update(initialHair='Fabian', targetHair='Bald')
         ids['baseline']['appearance'].update(hair='Fabian', nonAttached=False)
@@ -74,7 +76,7 @@ class RazorRestorationTests(unittest.TestCase):
                 a.validate(value)
 
     def test_ordered_subsets_preserve_old_and_individual_control_cases(self):
-        self.assertEqual(a.CASES, ('restore-success', 'new-primary-intent', 'cancel-active',
+        self.assertEqual(a.CASES, ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active',
                                   'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors'))
         for kind in ('sp', 'mp'):
             for cases in (list(a.CASES[:2]), *([case] for case in a.CASES), list(a.CASES[2:])):
@@ -90,8 +92,8 @@ class RazorRestorationTests(unittest.TestCase):
             value = selection(kind)
             value['cases'] = ['restore-success']
             value['options']['queue_editor_enabled'] = False
-            for cases in (['restore-success'], ['trim-scissors'], ['cut-hair-scissors'],
-                          ['restore-success', 'trim-scissors', 'cut-hair-scissors']):
+            for cases in (['restore-success'], ['empty-primary'], ['trim-scissors'], ['cut-hair-scissors'],
+                          ['restore-success', 'empty-primary', 'trim-scissors', 'cut-hair-scissors']):
                 value['cases'] = cases
                 a.validate(value)
             for change in (lambda s: s.update(cases=['new-primary-intent']),
@@ -256,6 +258,98 @@ for _,case in ipairs({'trim-scissors','cut-hair-scissors'})do
  assert(final.appearance.hair==(case=='cut-hair-scissors'and'Bald'or'Fabian'))
  assert(ids.baseline.appearance.beard=='LongScruffy'and ids.baseline.appearance.hair=='Fabian')
 end
+'''
+        result = subprocess.run(['luajit', '-', str(PROJECT / 'tests/native_queue/razor-restoration/shared/QueueRazorRestoration.lua')],
+                                input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_empty_primary_exact_secondary_and_borrowed_return_state(self):
+        ids, _, _ = control_observation('empty-primary')
+        baseline = ids['baseline']; baseline['male'] = True
+        for item in baseline['items']:
+            item.update(canonical=True, condition=10, favorite=True, count=1)
+        target = dict(x=10, y=10, z=0)
+        ids['placement'] = target
+        ids['placementProof'] = dict(mode='replica', target=target,
+            actual=dict(x=10.5, y=10.5, z=0, square=target, currentSquare=target),
+            teleports=0, stableMs=500, quietMs=0, elapsedMs=500, centered=True, centers=0)
+        v.validate_prepared(ids, selection())
+        final = v.expected(ids, True)
+        self.assertIs(final['primary'], False)
+        self.assertEqual(final['secondary'], ids['items']['previous']['id'])
+        self.assertEqual(final['items'][1]['container'], ids['bag']['id'])
+        self.assertEqual(final['tail']['pages'], ids['items']['tail']['total'])
+        self.assertEqual(v.borrowed_snapshot(ids)['secondary'], final['secondary'])
+        for mutate in (lambda i: i['baseline'].update(primary=i['items']['previous']['id']),
+                       lambda i: i['baseline'].update(primary=0),
+                       lambda i: i['baseline'].update(secondary=False),
+                       lambda i: i['baseline'].update(secondary=i['items']['replacement']['id'])):
+            changed = copy.deepcopy(ids); mutate(changed)
+            with self.assertRaises(ValueError): v.validate_prepared(changed, selection())
+
+    def test_empty_primary_requires_completed_native_unequip_before_exact_return(self):
+        # Focused receipt sub-schema checks, never a fabricated native pass.
+        ids, _, _ = control_observation('empty-primary')
+        for kind in ('sp', 'mp'):
+            restore = dict(role='restore', type='ISUnequipAction', actionRef='unequip', nativeRef='native',
+                operationRef='episode', startedAt=10,
+                events=[dict(boundary=boundary, phase=phase, at=11 + index, nativeRef='native', succeeded=True)
+                        for index, (boundary, phase) in enumerate((('begin', 'perform'), ('finish', 'perform'),
+                             ('begin', 'complete'), ('finish', 'complete'))) if kind == 'sp' or phase == 'perform'], ack=[])
+            if kind == 'mp':
+                restore['ack'] = [dict(state='completed', at=14, kind='ISUnequipAction', transaction=7,
+                    token='01234567-89ab-cdef-0123-456789abcdef', nativeRef='native', operationRef='episode',
+                    **{key: True for key in ('nativeSame', 'actorSame', 'queueSame', 'rootSame', 'itemSame', 'operationSame')})]
+            returned = dict(actionRef='return', admittedAt=15, startedAt=16)
+            roles = dict(restore=[restore], returned=[returned])
+            snapshot = v.expected(ids, kind == 'sp'); snapshot.pop('authority')
+            snapshot['origin']['sourceCount'] = 0; snapshot['items'][1]['container'] = 'root'
+            snapshot['tail'].update(pages=8, characterPages=8)
+            ev = dict(restoreBoundary=dict(at=15, actionRef='unequip', nativeRef='native', returnRef='return', snapshot=snapshot))
+            self.assertEqual(v.lifecycle_errors(restore, kind), [])
+            self.assertEqual(v.restore_boundary_errors(ev, roles, ids, kind), [])
+            for mutate in (lambda e: e.pop('restoreBoundary'),
+                           lambda e: e['restoreBoundary'].update(actionRef='foreign'),
+                           lambda e: e['restoreBoundary'].update(nativeRef='foreign'),
+                           lambda e: e['restoreBoundary'].update(returnRef='foreign'),
+                           lambda e: e['restoreBoundary'].update(at=17),
+                           lambda e: e['restoreBoundary']['snapshot'].update(primary=73),
+                           lambda e: e['restoreBoundary']['snapshot'].update(primary=0),
+                           lambda e: e['restoreBoundary']['snapshot'].update(secondary=False),
+                           lambda e: e['restoreBoundary']['snapshot']['items'][1].update(container=42),
+                           lambda e: e['restoreBoundary']['snapshot']['tail'].update(pages=9)):
+                changed = copy.deepcopy(ev); mutate(changed)
+                self.assertTrue(v.restore_boundary_errors(changed, roles, ids, kind))
+            changed = copy.deepcopy(roles)
+            terminal = changed['restore'][0]['events'][-1] if kind == 'sp' else changed['restore'][0]['ack'][0]
+            terminal['at'] = 17
+            self.assertTrue(v.restore_boundary_errors(ev, changed, ids, kind))
+            changed = copy.deepcopy(roles)
+            changed['restore'][0]['events' if kind == 'sp' else 'ack'] = []
+            self.assertTrue(v.restore_boundary_errors(ev, changed, ids, kind))
+            if kind == 'mp':
+                for mutate in (lambda a: a['ack'][0].update(state='rejected'),
+                               lambda a: a['ack'][0].update(kind='ISEquipWeaponAction'),
+                               lambda a: a['ack'][0].update(itemSame=False)):
+                    changed = copy.deepcopy(restore); mutate(changed)
+                    self.assertTrue(v.lifecycle_errors(changed, kind))
+        old_ids, _, _ = control_observation('restore-success')
+        self.assertTrue(v.restore_boundary_errors(ev, roles, old_ids, 'sp'))
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_native_fixture_empty_primary_keeps_exact_secondary_and_tool_origin(self):
+        script = r'''
+package.preload.QueueEnergyPlacement=function()return {}end
+local F=assert(loadfile(arg[1]))()
+local ids={case='empty-primary',initialBeard='LongScruffy',targetBeard='Moustache',
+ items={razor={id=73},previous={id=74},tail={total=10}},
+ baseline={appearance={beard='LongScruffy'},primary=false,secondary=74,
+  tail={pages=8,characterPages=8},origin={sourceCount=1},items={{id=73,container=42}}}}
+local final=F.expected(ids)
+assert(F.returnedCase(ids.case)and final.primary==false and final.secondary==74)
+assert(final.items[1].container==42 and final.origin.sourceCount==1)
+assert(final.tail.pages==10 and final.tail.characterPages==10 and final.appearance.beard=='Moustache')
+assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseline.tail.pages==8)
 '''
         result = subprocess.run(['luajit', '-', str(PROJECT / 'tests/native_queue/razor-restoration/shared/QueueRazorRestoration.lua')],
                                 input=script, text=True, capture_output=True)

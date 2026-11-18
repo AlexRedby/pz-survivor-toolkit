@@ -12,7 +12,7 @@ ACTION_TYPES = {'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEq
                 'restore': 'ISEquipWeaponAction', 'returned': 'ISInventoryTransferAction', 'tail': 'ISReadABook',
                 'explicitEquip': 'ISEquipWeaponAction', 'command': 'ISQueueActionsAction', 'approach': 'ISQueueActionsAction'}
 ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle')
-RETURNED_CASES = {'restore-success', 'cancel-active', 'trim-scissors', 'cut-hair-scissors'}
+RETURNED_CASES = {'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors'}
 SCISSORS_CASES = {'trim-scissors', 'cut-hair-scissors'}
 
 
@@ -40,7 +40,7 @@ def expected(ids, authority):
         row['appearance'].update(hair=ids['targetHair'], nonAttached=False)
     else:
         row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
-    row['primary'] = ids['items']['replacement' if ids['case'] == 'new-primary-intent' else 'previous']['id']
+    row['primary'] = False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] == 'new-primary-intent' else 'previous']['id']
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
     if ids['case'] not in RETURNED_CASES:
         row['origin']['sourceCount'] = 0
@@ -91,7 +91,8 @@ def validate_prepared(ids, selection):
     if (by_id[bag['id']]['container'] != 'root' or by_id[bag['id']]['type'] != bag['type']
             or len([item for item in baseline['worn'] if item.get('id') == bag['id']]) != 1
             or baseline.get('case') != ids['case'] or baseline.get('male') is not True
-            or baseline.get('primary') != owned['previous']['id'] or baseline.get('secondary') is not False
+            or (baseline.get('primary') is not False or baseline.get('secondary') != owned['previous']['id'] if ids['case'] == 'empty-primary'
+                else baseline.get('primary') != owned['previous']['id'] or baseline.get('secondary') is not False)
             or baseline['appearance'].get('beard') != ids['initialBeard']):
         raise ValueError('authority seed equipment/appearance differs')
     if baseline.get('origin') != dict(id=bag['id'], type=bag['type'], container='root', worn=True, sourceCount=1):
@@ -424,6 +425,35 @@ def lifecycle_errors(action, kind, canceled=False):
     return errors
 
 
+
+def restore_boundary_errors(ev, roles, ids, kind):
+    """Empty-hand cleanup must earn its exact physical effect before returning the tool."""
+    boundary = ev.get('restoreBoundary')
+    if ids['case'] != 'empty-primary':
+        return [] if boundary is None else ['Unexpected empty-primary restore boundary']
+    try:
+        restore, returned = roles['restore'][0], roles['returned'][0]
+        wanted = expected(ids, kind == 'sp'); wanted.pop('authority')
+        wanted['origin']['sourceCount'] = 0
+        for item in wanted['items']:
+            if item['id'] == ids['items']['razor']['id']: item['container'] = 'root'
+        wanted['tail']['pages'] = wanted['tail']['characterPages'] = ids['items']['tail']['initial']
+        terminals = ([event for event in restore['events'] if event.get('boundary') == 'finish' and event.get('phase') == 'complete']
+                     if kind == 'sp' else [ack for ack in restore['ack'] if ack.get('state') == 'completed'])
+        if (type(boundary) is not dict or boundary.get('actionRef') != restore['actionRef']
+                or boundary.get('nativeRef') != restore['nativeRef'] or boundary.get('returnRef') != returned['actionRef']
+                or boundary.get('snapshot') != wanted or boundary['snapshot'].get('primary') is not False
+                or type(boundary['snapshot'].get('secondary')) is not int or not number(boundary.get('at'))
+                or not number(returned.get('admittedAt')) or not number(restore.get('startedAt'))
+                or not restore['startedAt'] <= returned['admittedAt'] <= boundary['at'] <= returned['startedAt']
+                or len(terminals) != 1 or not number(terminals[0].get('at'))
+                or not restore['startedAt'] <= terminals[0]['at'] <= returned['admittedAt']):
+            raise ValueError('native completion/exact hand effect did not precede return admission')
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        return ['Empty-primary native restore boundary differs: ' + str(error)]
+    return []
+
+
 def editor_errors(ev, selection):
     """Additional editor-off receipts; all existing native/physical gates still apply."""
     samples = ev.get('editor')
@@ -502,12 +532,14 @@ def check_case(row, selection, prepared, verified):
             raise ValueError('Action identity duplicated/missing')
         errors.extend(producer_errors(ev, roles, ids))
         seed = ev.get('handSeed')
-        if seed != dict(id=ids['items']['previous']['id'], type='Base.Hammer', requiresBoth=False,
-                        handWeapon=True, supportsTwo=False, ordinary=True):
+        wanted_seed = dict(type='Base.Hammer', requiresBoth=False, handWeapon=True, supportsTwo=False, ordinary=True)
+        wanted_seed.update(dict(primary=False, secondary=ids['items']['previous']['id']) if case == 'empty-primary'
+                           else dict(id=ids['items']['previous']['id']))
+        if seed != wanted_seed:
             errors.append('Initial primary lacks exact ordinary one-hand restoration proof')
         for role, values in roles.items():
             for action in values:
-                if action.get('type') != (grooming(case)[1] if role == 'trim' else ACTION_TYPES[role]):
+                if action.get('type') != (grooming(case)[1] if role == 'trim' else 'ISUnequipAction' if case == 'empty-primary' and role == 'restore' else ACTION_TYPES[role]):
                     raise ValueError('Action native class differs: ' + role)
                 if role in ('command', 'approach'):
                     continue
@@ -519,12 +551,14 @@ def check_case(row, selection, prepared, verified):
                     continue
                 if role == 'trim' and case == 'cut-hair-scissors' and (action.get('hairStyle') != ids['targetHair'] or action.get('constructorDuration') != 300):
                     errors.append('Native haircut hairStyle/ordinary duration differs')
-                item = 'previous' if role == 'restore' else 'replacement' if role == 'explicitEquip' else 'tail' if role == 'tail' else 'razor'
+                item = 'previous' if role == 'restore' and case != 'empty-primary' else 'replacement' if role == 'explicitEquip' else 'tail' if role == 'tail' else 'razor'
                 if (action.get('itemId') != ids['items'][item]['id'] or any(action.get(key) is not True for key in ('allocated', 'started', 'progress'))
                         or not number(action.get('startedAt')) or not number(action.get('effectiveDuration')) or action['effectiveDuration'] <= 1
                         or not isinstance(action.get('nativeRef'), str) or not isinstance(action.get('operationRef'), str)):
                     errors.append('Native duration/allocation/progress missing: ' + role)
                 duration = action.get('constructorDuration')
+                if case == 'empty-primary' and role == 'restore' and duration != 50:
+                    errors.append('Empty-primary restore does not use ordinary native unequip duration')
                 if not number(duration) or (duration != -1 if selection['kind'] == 'mp' and role in ('pickup', 'returned') else duration <= 1):
                     errors.append('Original native constructor duration differs: ' + role)
                 errors.extend(lifecycle_errors(action, selection['kind'], case == 'cancel-active' and role == 'trim'))
@@ -587,6 +621,7 @@ def check_case(row, selection, prepared, verified):
                     or operation_key(restore['operationRef']) != token
                     or case != 'unavailable-origin' and operation_key(get('returned')['operationRef']) != token or 'intent' in ev):
                 errors.append('Origin failure hand restoration operation/order differs')
+        errors.extend(restore_boundary_errors(ev, roles, ids, selection['kind']))
         boundary = ev.get('tailBoundary', {})
         at_tail = expected(ids, selection['kind'] == 'sp'); at_tail.pop('authority')
         at_tail['tail']['pages'] = at_tail['tail']['characterPages'] = ids['items']['tail']['initial']
@@ -630,7 +665,7 @@ def verify(root, selection, catalog):
             issues.append('Raw exact native action records differ from published case actions')
         if [value for _, value in intent_rows] != [dict(case=row['id'], observation=row['evidence']['intent']) for _, row in rows if 'intent' in row['evidence']]:
             issues.append('Raw accepted primary intent records differ')
-        for marker, field in (('CONTROL', 'control'), ('BLOCKED', 'blocked'), ('KEEP', 'keep'), ('ORIGIN_REPLICA', 'originReplica')):
+        for marker, field in (('CONTROL', 'control'), ('BLOCKED', 'blocked'), ('KEEP', 'keep'), ('ORIGIN_REPLICA', 'originReplica'), ('RESTORE_BOUNDARY', 'restoreBoundary')):
             values = records(client, PREFIX + marker + ' ')
             observations = [(row['id'], row['evidence'][field]) for _, row in rows if field in row['evidence']]
             if marker == 'ORIGIN_REPLICA':
@@ -672,7 +707,7 @@ def verify(root, selection, catalog):
         if [value for _, value in origins] != wanted_origins or [value for _, value in client_origins] != wanted_origins:
             issues.append('Independent raw authority/client origin intervention observations differ')
         if selection['kind'] == 'mp' and (records(client, PREFIX + 'ORIGIN ') or records(authority, PREFIX + 'ORIGIN_CLIENT ')
-                or any(records(authority, PREFIX + marker + ' ') for marker in ('CONTROL', 'BLOCKED', 'KEEP', 'RETOKEN', 'CANCEL_NATIVE', 'ORIGIN_REPLICA', 'EDITOR'))):
+                or any(records(authority, PREFIX + marker + ' ') for marker in ('CONTROL', 'BLOCKED', 'KEEP', 'RETOKEN', 'CANCEL_NATIVE', 'ORIGIN_REPLICA', 'EDITOR', 'RESTORE_BOUNDARY'))):
             issues.append('Live razor control/origin evidence emitted by wrong process')
         for position, value in origins:
             index = cases.index(value['case'])
