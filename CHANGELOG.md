@@ -49,10 +49,14 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.2.13
+### 0.2.14
 
 - Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
 - Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
+
+### 0.2.13
+
+- When the primary hand starts empty, opt-in grooming restoration puts away the borrowed tool, leaves the secondary hand as it was, and returns the tool to its bag after the unequip is confirmed.
 
 ### 0.2.12
 
