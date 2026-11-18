@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration version="2.0" label="Road attribution" description="Client-only low-overhead diagnostic" provider="PZ research">
+  <event name="jdk.ExecutionSample">
+    <setting name="enabled">true</setting>
+    <setting name="period">10 ms</setting>
+  </event>
+  <event name="jdk.NativeMethodSample">
+    <setting name="enabled">true</setting>
+    <setting name="period">10 ms</setting>
+  </event>
+  <event name="jdk.ThreadPark">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.JavaMonitorEnter">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.JavaMonitorWait">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.ThreadSleep">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.FileRead">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.FileWrite">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.SocketRead">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.SocketWrite">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">1 ms</setting>
+    <setting name="stackTrace">true</setting>
+  </event>
+  <event name="jdk.GarbageCollection">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="jdk.GCPhasePause">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="jdk.CPULoad">
+    <setting name="enabled">true</setting>
+    <setting name="period">1 s</setting>
+  </event>
+  <event name="jdk.ThreadCPULoad">
+    <setting name="enabled">true</setting>
+    <setting name="period">1 s</setting>
+  </event>
+  <event name="jdk.ThreadStart">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="jdk.ThreadEnd">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="pz.RoadClockAnchor">
+    <setting name="enabled">true</setting>
+    <setting name="stackTrace">false</setting>
+  </event>
+</configuration>

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+import uuid
 import optimizer_profile
 from .optimizer_benchmark import route_source, metrics
 
@@ -43,6 +44,9 @@ def validate(selection):
     chain = options.get('callback_chain_profile', False)
     if type(chain) is not bool or chain and not details:
         raise ValueError('callback_chain_profile must be an explicit boolean and requires callback_detail_profile')
+    road_jfr = options.get('road_jfr', False)
+    if type(road_jfr) is not bool or road_jfr and selection['cases'] != ['drive']:
+        raise ValueError('road_jfr must be a boolean and requires an isolated SP drive')
     perf = options.get('driving_perf', {})
     if (perf.get('scenario') != 'muldraugh-extinction' or perf.get('population_mode') != 'native'
             or perf.get('vehicle_script') != 'Base.SportsCar' or perf.get('full_throttle') is not True):
@@ -99,7 +103,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         build = Path(temporary)
         subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
                         str(game / 'projectzomboid.jar') + ':' + str(game / 'ZombieBuddy.jar'),
-                        '-d', str(build), str(source / 'Main.java'), str(legacy / 'java/ApproachClearance.java')], check=True, capture_output=True)
+                        '-d', str(build), str(source / 'Main.java'), str(source / 'RoadProfile.java'), str(legacy / 'java/ApproachClearance.java')], check=True, capture_output=True)
         with zipfile.ZipFile(mod / 'media/java/PZDrivingPerfProbe.jar', 'w', zipfile.ZIP_DEFLATED) as jar:
             jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\n\n')
             for path in sorted(build.rglob('*.class')): jar.write(path, path.relative_to(build).as_posix())
@@ -127,6 +131,12 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     text = launcher.read_text(); anchor = 'public static void main(String[] args) throws Exception {'
     if text.count(anchor) != 1: raise ValueError('Native launcher signature changed')
     props = {'pz.drivingPerf.cachedir': str(cache)}
+    if selection['options'].get('road_jfr', False):
+        owner = uuid.uuid4().hex
+        shutil.copy2(source / 'road-profile.jfc', classes / 'road-profile.jfc')
+        props['pz.drivingPerf.jfr.owner'] = owner
+        runtime['fixture']['road_jfr'] = {'owner': owner}
+
     assignments = '\n'.join('System.setProperty(' + json.dumps(k) + ', ' + json.dumps(v) + ');' for k,v in props.items())
     launcher.write_text(text.replace(anchor, anchor + '\n' + assignments))
     subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
@@ -137,6 +147,28 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         from . import loot_demand
         loot_demand.stage_probe(project, output, game, jdk, selection, locations, runtime, selection['options']['loot_demand_arm'])
         runtime['fixture']['failure_markers'].extend(['[LOOT_DEMAND] FAILURE '])
+
+
+def jfr_arguments(selection, role, cache, runtime):
+    """Only the selected SP drive owns this launch recording and its files."""
+    enabled = selection.get('options', {}).get('road_jfr', False)
+    if type(enabled) is not bool:
+        raise ValueError('road_jfr must be a boolean')
+    if not enabled:
+        if runtime.get('fixture', {}).get('road_jfr'):
+            raise ValueError('JFR runtime without explicit road_jfr')
+        return []
+    if selection.get('suite') != 'loot-demand-drive' or role != 'client1':
+        raise ValueError('road_jfr requires the owned SP driving client')
+    validate(selection)
+    spec = runtime.get('fixture', {}).get('road_jfr', {})
+    if set(spec) != {'owner'} or not re.fullmatch(r'[0-9a-f]{32}', spec.get('owner', '')):
+        raise ValueError('Missing launch-owned road JFR identity')
+    cache = Path(cache)
+    return ['-XX:StartFlightRecording=name=pz-road-' + spec['owner']
+            + ',settings=' + str(cache / 'classes/road-profile.jfc')
+            + ',filename=' + str(cache / 'road-runtime.jfr')
+            + ',dumponexit=true,maxsize=128m', '-XX:FlightRecorderOptions=stackdepth=128']
 
 
 def complete(selection, role, text):
@@ -162,6 +194,17 @@ def verify(root, selection, catalog):
         for marker in ('[DRIVING_PERF] BEGIN ', '[DRIVING_PERF] MEASURE ', '[DRIVING_PERF] END ', '[DRIVING_PERF] COMPLETE '):
             if text.count(marker) != 1: issues.append('Missing or duplicate route marker: ' + marker)
         if text.count('[LOOT_DEMAND] INSTALLED isolated=true') != 1: issues.append('Missing or duplicate demand activation')
+        if selection['options'].get('road_jfr', False):
+            evidence['road_jfr'] = {'clock_event': 'pz.RoadClockAnchor',
+                'cpu_csv': 'client1/road-thread-cpu.csv', 'recording': 'client1/road-measured.jfr',
+                'limits': 'Diagnostic instrumentation; do not compare directly with unprofiled cadence.'}
+            if text.count('[ROAD_JFR] DUMPED ') != 1:
+                issues.append('Missing or duplicate owned JFR dump receipt')
+            for name in ('road-thread-cpu.csv', 'road-measured.jfr'):
+                path = root / 'client1' / name
+                if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+                    issues.append('Missing road JFR artifact: ' + name)
+
     evidence['limits'] = ['SP only; streaming RNG, traffic and NPCs may diverge despite the same sealed seed.',
                           'No first-access, Host, rendered-presentation or Windows claim.']
     return dict(issues=issues, outcomes=[dict(actor='client1', case=selection['cases'][0],

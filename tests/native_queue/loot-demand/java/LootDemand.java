@@ -27,7 +27,7 @@ public final class LootDemand {
     private static Instrumentation instrumentation;
     private static ClassFileTransformer transformer;
     private static long deferred,dumpEnsures;
-    private static final DemandCensus<ItemContainer> census=new DemandCensus<>(readArm(),8192);
+    private static final DemandCensus<ItemContainer> census=new DemandCensus<>(readArm(),8192, GAME.getResource("loot-demand-pair.txt") == null ? 1 : 2);
     private static String readArm() {
         try (var in=GAME.getResourceAsStream("loot-demand-arm.txt")) {
             if (in==null) return "legacy";

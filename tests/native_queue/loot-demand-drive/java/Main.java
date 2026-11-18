@@ -21,6 +21,7 @@ import zombie.vehicles.BaseVehicle;
 
 /** Disposable SP input and timing probe. No installed game/profile is accepted. */
 public final class Main {
+    private static RoadProfile roadProfile; // Initialized only by the explicitly opted drive.
     private static final int CAPACITY = 120000;
     private static final long[] swapNs = new long[CAPACITY], frameNs = new long[CAPACITY], cpuNs = new long[CAPACITY];
     private static final int[] swapPhase = new int[CAPACITY], framePhase = new int[CAPACITY];
@@ -133,6 +134,10 @@ public final class Main {
         setZoom(player, zoomFactor);
         width = Core.getInstance().getScreenWidth(); height = Core.getInstance().getScreenHeight();
         framebufferWidth = Display.getFramebufferWidth(); framebufferHeight = Display.getFramebufferHeight();
+        if (System.getProperty("pz.drivingPerf.jfr.owner") != null) {
+            roadProfile = new RoadProfile(cache, ownerThread, CAPACITY);
+            roadProfile.anchor("begin");
+        }
         began = phaseAt = System.nanoTime();
         phase = 1;
         System.out.println(String.format(Locale.ROOT, "[DRIVING_PERF] BEGIN sql=%d x=%.4f y=%.4f fx=%.6f fy=%.6f speed=%.2f stationary=%.2f approach=%.2f distance=%.2f width=%d height=%d framebuffer=%dx%d zoom=%.3f cap=%d vsync=%s min_visible_zombies=%d throttle_mode=%s vehicle_script=%s native_script_max_speed=%.3f effective_vehicle_max_speed=%.3f engine_force=%.3f minimum_approach_kmh=%.3f actual_speed_kmh=%.3f controller=bounded-pd-heading1.8-lateral0.16-yawrate0.35-limit0.45 zombie_semantics=alive-loaded,nearby-radius50,on-screen-square,visible-player-flag-and-on-screen,active-nearby-not-useless-not-fake-dead",
@@ -203,6 +208,7 @@ public final class Main {
                         + " mode=" + (fullThrottle ? "full-throttle" : "cruise")); return "failed";
             }
             phaseAt = now; phase = 3;
+            if (roadProfile != null) roadProfile.anchor("measure");
             System.out.println("[LOOT_ROUTE] START clock=" + now);
             System.out.println(String.format(Locale.ROOT, "[DRIVING_PERF] MEASURE x=%.4f y=%.4f progress=%.4f speed=%.4f", owned.getX(), owned.getY(), progress, kmh));
         }
@@ -333,6 +339,7 @@ public final class Main {
         synchronized (swapLock) {
             if (phase != p) return;
             if (swaps == CAPACITY) { overflow = true; return; }
+            if (roadProfile != null) roadProfile.swapped(swaps);
             swapNs[swaps] = System.nanoTime(); swapPhase[swaps++] = p;
         }
     }
@@ -344,6 +351,7 @@ public final class Main {
         int p = phase;
         if (p != 1 && p != 2 && p != 3) return;
         if (frames == CAPACITY) { overflow = true; return; }
+        if (roadProfile != null) roadProfile.framed(frames);
         frameNs[frames] = System.nanoTime(); cpuNs[frames] = GameWindow.getUpdateTime(); framePhase[frames++] = p;
     }
 
@@ -362,6 +370,10 @@ public final class Main {
         }
         Files.writeString(cache.resolve("Lua/loot-demand-drive-census.csv"), census, java.nio.file.StandardOpenOption.CREATE_NEW);
         Files.writeString(cache.resolve("Lua/loot-demand-drive-status.txt"), status, java.nio.file.StandardOpenOption.CREATE_NEW);
+        // Raw frame/census evidence survives even if optional JFR finalization fails.
+        if (roadProfile != null) {
+            roadProfile.finish(swapNs, swapPhase, swaps, frameNs, framePhase, frames);
+        }
         if (phase == -1) {
             System.out.println("[DRIVING_PERF] FAIL " + failure);
             return "failed: " + failure;

@@ -29,8 +29,14 @@ final class DemandCensus<C> {
     private long overflow;
     private C automaticNext;
     private Thread automaticThread;
-    private Row<C> watched;
+    private final int watchLimit;
+    private final IdentityHashMap<C,Row<C>> watched = new IdentityHashMap<>();
     DemandCensus(String arm,int capacity) {
+        this(arm, capacity, 1);
+    }
+    DemandCensus(String arm,int capacity,int watchLimit) {
+        if (watchLimit < 1 || watchLimit > 2) throw new IllegalArgumentException("Invalid observer capacity");
+        this.watchLimit = watchLimit;
         if (!arm.equals("legacy") && !arm.equals("observe") && !arm.equals("defer")) throw new IllegalArgumentException("Unknown census arm");
         if (capacity<1) throw new IllegalArgumentException("Census capacity");
         this.arm=arm;this.capacity=capacity;
@@ -47,7 +53,8 @@ final class DemandCensus<C> {
             if (ordered.size()==capacity) { overflow++;return; }
             // A selected watch becomes an automatic observation only on a real visit.
             // Reuse its row so an overlapping native fill keeps its timer and depth.
-            row=watched!=null && watched.identity==container?watched:row(container,type,x,y,z,index,sprite);
+            row=watched.get(container);
+            if (row==null) row=row(container,type,x,y,z,index,sprite);
             row.type=type;row.x=x;row.y=y;row.z=z;row.index=index;row.sprite=sprite;
             row.firstAuto=now;row.id=ordered.size()+1;
             identities.put(container,row);ordered.add(row);
@@ -58,13 +65,14 @@ final class DemandCensus<C> {
     /** Optional separately labelled selected target; it has no inherited automatic visits. */
     synchronized boolean watch(C container,String type,int x,int y,int z,int index,String sprite) {
         if (!capturing() || observing()) return false;
-        if (watched!=null) return watched.identity==container;
-        watched=identities.get(container);
-        if (watched==null) watched=row(container,type,x,y,z,index,sprite);
+        if (watched.containsKey(container)) return true;
+        if (watched.size() == watchLimit) return false;
+        Row<C> selected = identities.get(container);
+        watched.put(container, selected != null ? selected : row(container,type,x,y,z,index,sprite));
         return true;
     }
     private Row<C> known(C container) {
-        Row<C> row=identities.get(container);return row!=null?row:watched!=null && watched.identity==container?watched:null;
+        Row<C> row=identities.get(container);return row!=null?row:watched.get(container);
     }
     private boolean automatic(C container,Thread thread) {
         if (automaticThread!=thread) return false;
@@ -138,7 +146,7 @@ final class DemandCensus<C> {
         Row<C> row=known(container);
         if (row==null) return "known=false\nidentity=0\norigin=unknown\n";
         return "known=true\nidentity="+row.id+"\norigin="+(row.id==0?"selected-watch":"automatic-visit")
-            +"\nauto_visits="+row.visits+"\nselected_watch="+(row==watched)+"\nfirst_fill_thread="+text(row.firstThread)+"\nfirst_fill_authority_thread="+row.firstAuthority
+            +"\nauto_visits="+row.visits+"\nselected_watch="+watched.containsKey(container)+"\nfirst_fill_thread="+text(row.firstThread)+"\nfirst_fill_authority_thread="+row.firstAuthority
             +"\nconcurrent_fills="+row.concurrent+"\nfill_kind="+row.kind+"\nfirst_fill_ns="+row.firstFill+"\nfill_ns="+row.elapsed
             +"\nfill_failed="+(row.failed?1:0)+"\nreentries="+row.reentries+"\nrepeat_fills="+row.repeats+"\nactive_depth="+row.depth+"\n";
     }
@@ -150,7 +158,9 @@ final class DemandCensus<C> {
         return out.toString();
     }
     synchronized String status() {
-        int active=watched!=null && watched.id==0 && watched.depth!=0?1:0;for (Row<C> r:ordered) if(r.depth!=0) active++;
-        return "schema=1\narm="+arm+"\ncapacity="+capacity+"\nobjects="+ordered.size()+"\noverflow="+overflow+"\nactive="+active+"\nwatched="+(watched==null?0:1)+"\n";
+        int active=0;
+        for (Row<C> r:watched.values()) if (r.id==0 && r.depth!=0) active++;
+        for (Row<C> r:ordered) if(r.depth!=0) active++;
+        return "schema=1\narm="+arm+"\ncapacity="+capacity+"\nobjects="+ordered.size()+"\noverflow="+overflow+"\nactive="+active+"\nwatched="+watched.size()+"\n";
     }
 }

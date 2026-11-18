@@ -5,6 +5,11 @@ require 'TimedActions/ISWalkToTimedAction'
 require 'TimedActions/ISTimedActionQueue'
 local options=config.options or {}
 local arm=options.loot_demand_arm
+local pair
+if options.loot_demand_orange_pair then
+ require "LootDemandOrangePair"
+ pair = LootDemandOrangePair
+end
 assert(arm=='observe' or arm=='defer','natural Host requires exact arm')
 local PREFIX='[LOOT_NATURAL] '
 local started,done,sent=false,false,false
@@ -83,7 +88,7 @@ Events.OnServerCommand.Add(function(module,command,args)
    local player=assert(getPlayer());assert(not player:getVehicle(),'natural actor must walk')
    assert(math.max(math.abs(target.x-player:getX()),math.abs(target.y-player:getY()))>3,'target started inside nearby inventory scan')
    assert(nativeTarget(),'server-selected real target not replicated locally')
-   goal=chooseGoal(player);dump('before')
+   goal=chooseGoal(player);if not pair then dump('before') end
    emit('READY','phase=target x='..target.x..' y='..target.y..' z='..target.z..' index='..target.index..' goal_x='..goal:getX()..' goal_y='..goal:getY())
    sendClientCommand('LootNatural','Approaching',{})
   elseif command=='Armed' then
@@ -108,6 +113,7 @@ Events.OnServerCommand.Add(function(module,command,args)
    loot.checkExplored=tracedCheck
    approachAt=getTimestampMs();approachClock=lootDemandClock()
    emit('APPROACH','phase=start clock_ns='..tostring(approachClock)..' x='..player:getX()..' y='..player:getY()..' goal_x='..goal:getX()..' goal_y='..goal:getY())
+   if pair then pair.startClient() end
    walk=ISWalkToTimedAction:new(player,goal);assert(walk.Type=='ISWalkToTimedAction','actual native walk required');ISTimedActionQueue.add(walk)
   elseif command=='Authority' then
    assert(walk and not authority,'unrequested native authority result');authority=args
@@ -136,6 +142,7 @@ preflight.onTick(Events,function()
    local dx,dy=player:getX()-target.x,player:getY()-target.y
    local page=getPlayerLoot(player:getPlayerNum());local listed=false
    for _,button in ipairs(page and page.backpacks or {}) do if button.inventory==container then listed=true;break end end
+   if pair then pair.sampleClient(page) end
    local close=math.max(math.abs(dx),math.abs(dy))<=1.9
    local current=assert(player:getCurrentSquare(),'native standing square unavailable')
    local targetSquare=container:getParent():getSquare()
@@ -160,7 +167,7 @@ preflight.onTick(Events,function()
     end
    end
    local observed=authority and nativeSeen[authority.fingerprint]
-   if arrived and observed and observed.count==authority.count then
+   if arrived and observed and observed.count==authority.count and (not pair or pair.delivered(authority.parts)) then
     matchedAt=observed.at;local elapsed=matchedAt-approachAt
     dump('matched')
     emit('RESULT','phase=client-native-inventory x='..target.x..' y='..target.y..' items='..authority.count..' elapsed_ms='..elapsed..' nearby_to_ready_ms='..(matchedAt-nearAt)..' listed_to_ready_ms='..(matchedAt-listedAt)..' clock_ns='..tostring(observed.clock)..' empty_packet_receipt='..tostring(authority.count~=0))

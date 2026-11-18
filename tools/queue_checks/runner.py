@@ -212,7 +212,11 @@ def run(root, resource_wait=300):
             else:
                 arguments = ["-XstartOnFirstThread", "-cp", client_classpath(config), "ToolkitSmokeLauncher"]
             window_args = (glfw_args + window_manager.arguments(cache, config["classes"])) if role != "server" else []
-            command = base + window_args + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
+            road_jfr_args = []
+            if selection.get('options', {}).get('road_jfr', False) or runtime.get('fixture', {}).get('road_jfr'):
+                from .adapters import loot_demand_drive
+                road_jfr_args = loot_demand_drive.jfr_arguments(selection, role, cache, runtime)
+            command = base + road_jfr_args + window_args + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if hosted and role == 'client1':
                 command = base + window_args + ['-Dtoolkit.test.hostCache=' + str(cache)] + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if role != "server":

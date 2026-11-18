@@ -139,6 +139,19 @@ public final class LootDemandChecks {
         selectedKnown.automatic(original,"bin",1,2,0,3,"sprite",100);
         check(selectedKnown.watch(original,"bin",1,2,0,3,"sprite"),"an already known identity can be selected");
         check(!selectedKnown.watch(replacement,"bin",1,2,0,3,"sprite"),"selecting a known identity consumes the sole selection slot");
+        DemandCensus<Object> pair = new DemandCensus<>("defer", 4, 2);
+        check(pair.watch(original, "dumpster", 4, 5, 0, 1, "part1"), "select first member");
+        check(pair.watch(replacement, "dumpster", 4, 6, 0, 1, "part2"), "select second member");
+        check(!pair.watch(new Object(), "dumpster", 4, 7, 0, 1, "third"), "two-member observer stays bounded");
+        pair.enter(original, 10);
+        pair.enter(replacement, 16);
+        pair.automatic(replacement, "dumpster", 4, 6, 0, 1, "part2", 17);
+        check(pair.status().contains("objects=1\noverflow=0\nactive=2\nwatched=2\n"),
+                "observed member and promoted member each count once");
+        pair.exit(replacement, 20, false);
+        pair.exit(original, 25, false);
+        check(pair.witness(original).contains("fill_ns=15\n")
+                && pair.witness(replacement).contains("fill_ns=4\n"), "separate identities retain distinct original timers");
         DemandCensus<Object> observe=new DemandCensus<>("observe",1);
         observe.automatic(original,"bin",1,2,0,3,"sprite",100);
         Thread unrelated=new Thread(()->{observe.nativeEnter(replacement,false);observe.nativeExit(replacement,false);});unrelated.start();unrelated.join();

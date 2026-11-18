@@ -33,6 +33,10 @@ def validate(s):
             or (s['kind'] == 'mp') != (o.get('mp_host') is True)
             or any(o.get(k) for k in ('seed_run', 'startup_connection'))):
         raise ValueError('Loot demand requires explicit exclusive SP/menu Host with the selected pack')
+    pair = o.get('loot_demand_orange_pair', False)
+    if type(pair) is not bool or pair and (s['cases'] != ['natural']
+            or o.get('loot_demand_target') != {'x': 10634, 'y': 10376, 'z': 0, 'index': 1}):
+        raise ValueError('Orange dumpster access requires the pinned natural map target')
     if s['cases'] == ['natural']:
         if s['kind'] != 'mp' or o.get('loot_demand_arm') not in ('defer', 'observe') or o.get('optimizer_archive'):
             raise ValueError('Natural access requires a current menu Host and explicit loot arm')
@@ -88,6 +92,8 @@ def stage_probe(project, output, game, jdk, selection, locations, runtime, arm):
                 jar.write(path, path.relative_to(build).as_posix())
             if arm is not None:
                 jar.writestr('loot-demand-arm.txt', arm.encode('ascii'))
+            if selection['options'].get('loot_demand_orange_pair'):
+                jar.writestr('loot-demand-pair.txt', b'')
             jar.writestr('loot-demand-token.txt', token)
             jar.writestr('META-INF/loot-demand-inputs.json', json.dumps(hashes, sort_keys=True))
     runtime.setdefault('fixture', {}).setdefault('mods', []).append(MOD)
@@ -129,7 +135,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     if selection['cases'] == ['natural']:
         ini = output / 'server/Server/queue-smoke.ini'
         text = re.sub(r'^Seed=.*\n?', '', ini.read_text(), flags=re.M)
-        text, changed = re.subn(r'^SpawnPoint=.*$', 'SpawnPoint=10849,10147,0', text, flags=re.M)
+        spawn = '10640,10376,0' if selection['options'].get('loot_demand_orange_pair') else '10849,10147,0'
+        text, changed = re.subn(r'^SpawnPoint=.*$', 'SpawnPoint=' + spawn, text, flags=re.M)
         if changed != 1:
             raise ValueError('Natural Host requires one isolated spawn point')
         ini.write_text(text.rstrip() + '\nSeed=PZLootNatural4222\n')
@@ -154,6 +161,12 @@ def verify(root, selection, catalog):
     if case == 'natural':
         if not complete(selection, 'client1', client) or '[LOOT_NATURAL] RESULT ' not in authority:
             issues.append('Missing completed approach and authoritative result')
+        if selection['options'].get('loot_demand_orange_pair'):
+            for sprite in ('trashcontainers_01_13', 'trashcontainers_01_12'):
+                if client.count('[LOOT_ORANGE] CLIENT sprite=' + sprite + ' ') != 1 or authority.count('[LOOT_ORANGE] SERVER sprite=' + sprite + ' ') != 1:
+                    issues.append('Missing unique orange dumpster observations for ' + sprite)
+            if client.count('[LOOT_ORANGE] WINDOW ') != 1:
+                issues.append('Missing native approach render window')
         if '[LOOT_NATURAL] FAIL ' in client + authority:
             issues.append('Natural approach fixture reported failure')
         return {'issues': issues, 'outcomes': [dict(actor='client1', case=case,

@@ -90,6 +90,23 @@ to it using the ordinary timed action and opens the nearby inventory. The
 server records the native fill and the client checks the observed item tree.
 An empty native inventory cannot confirm arrival of a content packet.
 
+For the paired orange dumpster, set `loot_demand_orange_pair=true` with
+`loot_demand_target={"x":10634,"y":10376,"z":0,"index":1}`. The fixture
+spawns the player outside nearby inventory range, walks to the real dumpster
+and checks the native inventory of each section independently. Only this
+case allocates two watch slots. Read the client timestamps per section.
+The elapsed time between sections includes walking. An already matched
+inventory on the tick when the section first appears has no measurable
+additional delay at tick resolution.
+
+In the full-pack 42.22.2 macOS Host pair, both ordinary sections already
+matched on their first visible tick. With deferral the observed waits were
+28.8 and 46.9 ms, including server fills of 3.75 and 8.18 ms respectively.
+The largest gap between client render callbacks during the approaches was
+38.1 ms ordinarily and 25.0 ms with deferral. Both runs passed native
+client/server inventory equality. This single local Host comparison measures
+panel content readiness and callback cadence during an approach.
+
 For the separate single-player road comparison use suite `loot-demand-drive`,
 mode `native` and the same pack plus `PZDrivingBench`. Set
 `optimizer_enabled=false` and `driving_perf` to the Muldraugh Extinction

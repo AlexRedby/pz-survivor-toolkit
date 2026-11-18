@@ -2,6 +2,11 @@ local config=require 'QueueTestSelection'
 if config.suite~='loot-demand' or config.kind~='mp' or config.cases[1]~='natural' or not isServer() then return end
 local options=config.options or {}
 local arm=options.loot_demand_arm
+local pair
+if options.loot_demand_orange_pair then
+ require "LootDemandOrangePair"
+ pair = LootDemandOrangePair
+end
 assert(arm=='observe' or arm=='defer','natural Host requires exact arm')
 local PREFIX='[LOOT_NATURAL] '
 local run
@@ -113,6 +118,11 @@ local function report()
  end
  if not close then return end
  if not container:isExplored() then return end
+ local parts
+ if pair then
+  parts=pair.authority(arm,run.approachClock)
+  if not parts then return end
+ end
  local fill=witness(container,'opened')
  local kind,elapsed='unobserved',-1
  if fill.known=='true' then
@@ -131,11 +141,11 @@ local function report()
   end
  end
  run.reported=true
- local now=dump('after')
+ local now=pair and lootDemandClock() or dump('after')
  local count=container:getItems():size()
  emit('RESULT','phase=authority x='..row.x..' y='..row.y..' z='..row.z..' index='..row.object_index..' items='..count..' timing_source='..fill.origin..' fill_kind='..kind..' fill_ns='..tostring(elapsed)..' clock_ns='..tostring(now))
  sendServerCommand(run.player,'LootNatural','Authority',{x=row.x,y=row.y,z=row.z,index=row.object_index,sprite=row.sprite,kind=row.type,
-  count=count,fingerprint=lootDemandFingerprint(container),fill_kind=kind,fill_ns=elapsed,clock_ns=now})
+  parts=parts,count=count,fingerprint=lootDemandFingerprint(container),fill_kind=kind,fill_ns=elapsed,clock_ns=now})
 end
 Events.OnClientCommand.Add(function(module,command,player,args)
  if module~='LootNatural' then return end
@@ -149,7 +159,7 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    emit('READY','phase=settling x='..player:getX()..' y='..player:getY()..' z='..player:getZ()..' clock_ns='..tostring(lootDemandClock()))
   elseif command=='Approaching' then
    assert(run and not run.done and run.target and not run.started,'unrequested approach')
-   run.started=true;run.approachClock=dump('approach');run.approachAt=getTimestampMs()
+   run.started=true;run.approachClock=pair and lootDemandClock() or dump('approach');run.approachAt=getTimestampMs()
    emit('APPROACH','phase=armed clock_ns='..tostring(run.approachClock))
    sendServerCommand(player,'LootNatural','Armed',{ready=true})
   elseif command=='Observe' then
@@ -170,7 +180,8 @@ Events.OnTick.Add(function()
   assert(not run.player:isDead(),'natural actor died')
   assert(getTimestampMs()-run.begin<180000,'natural Host timeout')
   if not run.target and getTimestampMs()-run.begin>=(tonumber(options.loot_demand_settle_ms) or 5000) then
-   run.beforeClock=dump('before');run.target=choose(run.player)
+   run.beforeClock=pair and lootDemandClock() or dump('before');run.target=choose(run.player)
+   if pair then pair.prepareServer(arm) end
    local row=run.target.row
    local initial=witness(run.target.container,'selected')
    if arm=='defer' and initial.known=='false' then
