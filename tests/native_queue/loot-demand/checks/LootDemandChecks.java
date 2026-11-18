@@ -63,6 +63,31 @@ public final class LootDemandChecks {
         eq(1,state.cancellations(),"repeat cancellation cannot reopen loot");
         trash.target=false;check(!state.cancel(trash),"non-target trash native no-op");
     }
+    private static void censusChecks() {
+        Object a=new Object(),b=new Object(),unseen=new Object();
+        DemandCensus<Object> legacy=new DemandCensus<>("legacy",1);
+        legacy.automatic(a,"bin",1,2,0,3,"sprite",100);legacy.enter(a,110);legacy.exit(a,120,false);
+        check(legacy.status().contains("objects=0\n"),"legacy has no measurement identities");
+        DemandCensus<Object> observe=new DemandCensus<>("observe",2);
+        observe.automatic(a,"bin",1,2,0,3,"name,\"line\n\u044f",100);observe.enter(a,110);
+        observe.enter(a,120);observe.exit(a,130,true);observe.exit(a,150,false);
+        String csv=observe.csv();
+        check(csv.contains(",1,100,110,automatic,40,1,1,0,0\n"),"first native outer interval includes native reentry/failure");
+        check(csv.contains("\"name,\"\"line\\u000a\\u044f\""),"CSV escapes comma quote newline and non-ASCII");
+        check(csv.chars().allMatch(c->c<=127),"export stays ASCII");
+        observe.enter(a,160);observe.exit(a,180,false);
+        check(observe.csv().contains(",automatic,40,1,1,1,0\n"),"later fills cannot replace first interval");
+        observe.automatic(b,"dumpster",2,3,0,4,"sprite",200);observe.enter(unseen,210);observe.enter(b,220);observe.exit(b,240,false);
+        check(observe.csv().contains(",1,200,220,demand,20,0,0,0,0\n"),"intervening native fill consumes automatic adjacency");
+        observe.automatic(unseen,"bin",3,4,0,0,"sprite",250);
+        check(observe.status().contains("objects=2\noverflow=1\nactive=0\n"),"bounded ledger reports overflow rather than silently dropping scope");
+        DemandCensus<Object> defer=new DemandCensus<>("defer",1);
+        defer.automatic(a,"bin",1,2,0,3,"sprite",100);defer.automatic(a,"bin",1,2,0,3,"sprite",120);
+        check(defer.csv().contains(",2,100,0,none,-1,0,0,0,0\n"),"deferred visits do not imply native fill");
+        defer.enter(a,300);defer.suppressedReentry(a);defer.exit(a,350,false);
+        check(defer.csv().contains(",2,100,300,demand,50,0,1,0,0\n"),"candidate demand measures first native call and suppressed recursion");
+        check(defer.status().contains("active=0\n"),"suppressed candidate recursion cannot leak ledger depth");
+    }
     private static void eventFilterChecks() {
         se.krka.kahlua.vm.KahluaTable table=new se.krka.kahlua.j2se.KahluaTableImpl(new java.util.HashMap<>());
         Object[] valid={"object","emptyTrash",null,table};
@@ -88,7 +113,7 @@ public final class LootDemandChecks {
         try {
             check(!LootDemand.ensure(container,null),"actual bridge rejects explored-but-active movement readiness");
             boolean rejected=false;try{LootDemand.beforeDump(container);}catch(IllegalStateException expected){rejected=true;}
-            check(rejected,"actual bridge refuses destructive dumping during fill callback");
+            check(rejected!=LootDemand.censusStatus().contains("arm=observe\n"),"only mutating policy refuses destructive dumping during fill callback");
         } finally { active.remove(container); }
         check(LootDemand.ensure(container,null),"completed explored container ready after guard release");
     }
@@ -212,7 +237,7 @@ public final class LootDemandChecks {
         if(args.length>0 && args[0].equals("--partial-install")){installChecks(nativeBytes(),true);System.out.println("LootDemandChecks PARTIAL_INSTALL_PASS ("+checks+")");return;}
         if(args.length>0 && args[0].equals("--install")){installChecks(nativeBytes(),false);System.out.println("LootDemandChecks EVENT_ACTIVATION_GUARD_PASS ("+checks+")");return;}
         System.clearProperty(LootDemand.PROPERTY);check(!LootDemand.install(null),"default disabled even without instrumentation");check(!LootDemand.installed(),"default behavior inactive");
-        stateChecks();eventFilterChecks();activeBridgeChecks();Map<String,byte[]> input=nativeBytes();Map<String,byte[]> output=transformChecks(input);dumpLoopChecks(output.get(DemandTransform.CONTAINER));
+        stateChecks();censusChecks();eventFilterChecks();activeBridgeChecks();Map<String,byte[]> input=nativeBytes();Map<String,byte[]> output=transformChecks(input);dumpLoopChecks(output.get(DemandTransform.CONTAINER));
         if(args.length==2 && args[0].equals("--official"))try(ZipFile zip=new ZipFile(Path.of(args[1]).toFile())){
             for(String name:DemandTransform.TARGETS) {
                 var entry=zip.getEntry(name+".class");

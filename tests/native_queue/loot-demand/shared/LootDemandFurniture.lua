@@ -1,3 +1,5 @@
+local config = require "QueueTestSelection"
+if type(config) == "table" and config.options and config.options.loot_demand_arm == "observe" then return end
 -- Test fixture only. Source hashes are gated by the loot-demand adapter.
 require "FurniturePushPull/FurniturePushPull_Core"
 

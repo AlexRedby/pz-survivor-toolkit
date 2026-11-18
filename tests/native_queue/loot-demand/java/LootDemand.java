@@ -27,6 +27,18 @@ public final class LootDemand {
     private static Instrumentation instrumentation;
     private static ClassFileTransformer transformer;
     private static long deferred,dumpEnsures;
+    private static final DemandCensus<ItemContainer> census=new DemandCensus<>(readArm(),8192);
+    private static String readArm() {
+        try (var in=GAME.getResourceAsStream("loot-demand-arm.txt")) {
+            if (in==null) return "legacy";
+            String arm=new String(in.readAllBytes(),java.nio.charset.StandardCharsets.US_ASCII);
+            if (!arm.equals("observe") && !arm.equals("defer")) throw new IllegalStateException("Invalid exact loot census arm");
+            return arm;
+        } catch (java.io.IOException failure) { throw new ExceptionInInitializerError(failure); }
+    }
+    public static String census() { return census.csv(); }
+    public static String censusStatus() { return census.status(); }
+    public static long clock() { return System.nanoTime(); }
     private static final String EVENT="zombie/Lua/Event", EVENT_HASH="cf4b0ba953b8f965fbcacb73ebb5d1a173dc3ed140656e15b90ad932eff0e952";
     private static final DemandState<ItemContainer> state=new DemandState<>(new DemandState.Access<>() {
         public boolean enabled() { return installed; }
@@ -66,15 +78,31 @@ public final class LootDemand {
     public static boolean shouldDefer(ItemContainer c) {
         if (!installed || !authorityThread() || !pending(c) || c.getParent().isMovedThumpable()
                 || c.getParent().hasModData() || c.isHasBeenLooted() || !c.isEmpty()) return false;
+        if (census.capturing()) {
+            IsoObject parent=c.getParent();var square=parent.getSquare();
+            census.automatic(c,c.getType(),square.x,square.y,square.z,parent.getObjectIndex(),parent.getSprite().getName(),System.nanoTime());
+        }
+        if (census.observing()) return false;
         deferred++;
         return true;
     }
-    public static int enterFill(ItemContainer c) { return state.enter(c); }
-    public static void exitFill(ItemContainer c,int token,boolean failed) { state.exit(c,token,failed); }
+    public static int enterFill(ItemContainer c) {
+        int token=census.observing()?DemandState.PASS:state.enter(c);
+        if (installed && authorityThread() && census.capturing()) {
+            if (token==DemandState.REENTRANT) census.suppressedReentry(c);
+            else census.enter(c,System.nanoTime());
+        }
+        return token;
+    }
+    public static void exitFill(ItemContainer c,int token,boolean failed) {
+        if (installed && authorityThread() && census.capturing()) census.exit(c,System.nanoTime(),failed);
+        if (!census.observing()) state.exit(c,token,failed);
+    }
     /** Client demand requests native authority; it never marks local explored or creates items. */
     public static boolean ensure(ItemContainer c,IsoPlayer player) {
         if (c==null || state.isActive(c)) return false;
         if (c.isExplored()) return true;
+        if (census.observing()) return false;
         if (!targetWorld(c)) {
             // A world target whose location/provenance became ambiguous is not safe to move/dump.
             String type=c.getType();
@@ -89,6 +117,7 @@ public final class LootDemand {
         return c.isExplored();
     }
     public static boolean beforeDump(ItemContainer c) {
+        if (census.observing()) return false;
         if (state.isActive(c)) throw new IllegalStateException("Cannot dump an actively materializing loot container");
         if (!installed || !authorityThread() || !targetWorld(c)) return false;
         if (!c.isExplored()) {
@@ -99,7 +128,7 @@ public final class LootDemand {
     }
     /** Cancel uncreated loot intentionally; actual items remain for the native trash-delete listener.
      * False refuses active materialization or an unrelated/non-authoritative request. */
-    public static boolean cancelForTrash(ItemContainer c) { return state.cancel(c); }
+    public static boolean cancelForTrash(ItemContainer c) { return !census.observing() && state.cancel(c); }
     public static long trashCancelCount() { return state.cancellations(); }
     static boolean trashCommand(String name,Object[] args) {
         return "OnClientCommand".equals(name) && args!=null && args.length==4
@@ -107,7 +136,7 @@ public final class LootDemand {
     }
     /** True means refuse the command before any listener; false preserves ordinary listener dispatch. */
     public static boolean beforeEvent(Event event,Object[] args) {
-        if (!installed || event==null || !trashCommand(event.name,args) || !authorityThread()) return false;
+        if (census.observing() || !installed || event==null || !trashCommand(event.name,args) || !authorityThread()) return false;
         KahluaTable table=(KahluaTable)args[3];
         Object x=table.rawget("x"),y=table.rawget("y"),z=table.rawget("z"),index=table.rawget("index");
         if (!(x instanceof Number) || !(y instanceof Number) || !(z instanceof Number) || !(index instanceof Number)) return false;

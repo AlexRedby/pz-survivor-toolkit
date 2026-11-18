@@ -19,12 +19,13 @@ REQUIRED = {'ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', 'Furnitu
 def definitions():
     return {'loot-demand': {'status': 'ready', 'clients': 1, 'default_mods': sorted(REQUIRED),
         'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
-                       modes=['toolkit'], languages=['EN']) for case in ('lifecycle', 'persist-seed', 'persist-reload')]}}
+                       modes=['toolkit'], languages=['EN']) for case in ('lifecycle', 'persist-seed', 'persist-reload')]
+        + [dict(id='natural',producer='fixture',capability='effect',kinds=['mp'],modes=['toolkit'],languages=['EN'])]}}
 
 
 def validate(s):
     o = s.get('options', {})
-    if (s.get('cases') not in (['lifecycle'], ['persist-seed'], ['persist-reload']) or s.get('kind') not in ('sp', 'mp')
+    if (s.get('cases') not in (['lifecycle'], ['persist-seed'], ['persist-reload'], ['natural']) or s.get('kind') not in ('sp', 'mp')
             or s.get('mode') != 'toolkit' or s.get('clients') != 1 or s.get('languages') != ['EN']
             or not REQUIRED <= set(s.get('mods', [])) or MOD in s['mods']
             or s.get('resources', {}).get('exclusive') is not True
@@ -32,6 +33,11 @@ def validate(s):
             or (s['kind'] == 'mp') != (o.get('mp_host') is True)
             or any(o.get(k) for k in ('seed_run', 'startup_connection'))):
         raise ValueError('Loot demand requires explicit exclusive SP/menu Host with the selected pack')
+    if s['cases'] == ['natural']:
+        if s['kind'] != 'mp' or o.get('loot_demand_arm') not in ('defer', 'observe') or o.get('optimizer_archive'):
+            raise ValueError('Natural access requires a current menu Host and explicit loot arm')
+    elif 'loot_demand_arm' in o:
+        raise ValueError('Lifecycle fixtures use the ordinary on-demand experiment')
     if bool(o.get('world_template')) != (s['cases'] == ['persist-reload']):
         raise ValueError('Only persist-reload requires a sealed world_template')
 
@@ -44,8 +50,9 @@ def sources(project, selection):
             *optimizer_profile.sources(project, selection)]
 
 
-def stage(project, output, game, jdk, selection, locations, runtime):
-    validate(selection)
+def stage_probe(project, output, game, jdk, selection, locations, runtime, arm):
+    if arm not in (None, 'observe', 'defer') or not selection['resources'].get('exclusive'):
+        raise ValueError('A disposable exclusive loot experiment is required')
     project, output, game, jdk = map(Path, (project, output, game, jdk))
     base = project / 'tests/native_queue/loot-demand'
     spec = importlib.util.spec_from_file_location('loot_demand_furniture_checks', base / 'furniture_checks.py')
@@ -69,42 +76,69 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if cache.resolve() != output.resolve() / role or not marker.is_file() or marker.read_text().strip() != role:
             raise ValueError('Demand token requires actual owned profile marker')
         (cache / 'loot-demand.opt-in').write_text(token + '\n')
-        lua = cache / 'mods/ActionQueueTest/42/media/lua'
-        for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
-            (lua / side).mkdir(parents=True, exist_ok=True)
-            shutil.copy2(project / 'tests/native_queue/startup' / side / name, lua / side / name)
-        if selection['cases'] == ['persist-reload'] and selection['kind'] == 'sp':
-            starter = lua / 'client/ZZStartup.lua'
-            text = starter.read_text()
-            anchor = "  getWorld():setGameMode('Sandbox');getWorld():setWorld('QueueStartup');getWorld():setMap('Muldraugh, KY')"
-            if text.count(anchor) != 1:
-                raise ValueError('Common SP starter changed')
-            starter.write_text(text.replace(anchor, "  if config.cases[1]=='persist-reload' then MainScreen.continueLatestSave('Sandbox','QueueStartup');return end"))
-        for side in ('client', 'server', 'shared'):
-            (lua / side).mkdir(parents=True, exist_ok=True)
-            for path in sorted((base / side).glob('*.lua')):
-                shutil.copy2(path, lua / side / path.name)
         mod = cache / 'mods' / MOD
         (mod / 'common').mkdir(parents=True)
         version = mod / '42'
         (version / 'media/java').mkdir(parents=True)
         (version / 'mod.info').write_text('name=Disposable on-demand loot experiment\nid=' + MOD
-            + '\nversion=0.0.1\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\n'
+            + '\nversion=0.0.1\nversionMin=42.22\nversionMax=42.22\nrequire=\\ZombieBuddy\n'
             + 'ZBVersionMin=2.3.4\njavaPkgName=toolkit.lootdemandruntime\njavaJarFile=media/java/' + MOD + '.jar\n')
         with zipfile.ZipFile(version / 'media/java' / (MOD + '.jar'), 'w', zipfile.ZIP_DEFLATED) as jar:
             for path in sorted(build.rglob('*.class')):
                 jar.write(path, path.relative_to(build).as_posix())
+            if arm is not None:
+                jar.writestr('loot-demand-arm.txt', arm.encode('ascii'))
             jar.writestr('loot-demand-token.txt', token)
             jar.writestr('META-INF/loot-demand-inputs.json', json.dumps(hashes, sort_keys=True))
     runtime.setdefault('fixture', {}).setdefault('mods', []).append(MOD)
-    runtime['fixture'].update(server_ready='[STARTUP_TEST] SERVER_READY', failure_markers=[PREFIX + 'FAIL ', '[LOOT_DEMAND] FAILURE '])
+    (output / 'loot-demand-inputs.json').write_text(json.dumps(
+        {'test_only': True, 'arm': arm, 'sources': hashes, 'furniture_sources': furniture_inputs}, indent=2) + '\n')
+    if arm == 'defer' and selection['suite'] != 'loot-demand':
+        for settings in runtime['roles'].values():
+            target = Path(settings['cache']) / 'mods/ActionQueueTest/42/media/lua/shared'
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(base / 'shared/LootDemandFurniture.lua', target)
+
+
+def stage(project, output, game, jdk, selection, locations, runtime):
+    validate(selection)
+    project, output = Path(project), Path(output)
+    options = selection['options']
+    stage_probe(project, output, game, jdk, selection, locations, runtime, options.get('loot_demand_arm'))
+    for settings in runtime['roles'].values():
+        cache = Path(settings['cache'])
+        lua = cache / 'mods/ActionQueueTest/42/media/lua'
+        for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
+            (lua / side).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(project / 'tests/native_queue/startup' / side / name, lua / side / name)
+        if selection['kind'] == 'sp':
+            starter = lua / 'client/ZZStartup.lua'
+            text = starter.read_text()
+            world = 'PZDrivingBench-OptimizerTrial-LootDemand'
+            anchor = "  getWorld():setGameMode('Sandbox');getWorld():setWorld('QueueStartup');getWorld():setMap('Muldraugh, KY')"
+            if text.count(anchor) != 1:
+                raise ValueError('Common SP starter changed')
+            replacement = anchor.replace('QueueStartup', world)
+            if selection['cases'] == ['persist-reload']:
+                replacement = f"  MainScreen.continueLatestSave('Sandbox','{world}');return"
+                replacement = f"  if config.cases[1]=='persist-reload' then {replacement} end"
+            starter.write_text(text.replace(anchor, replacement))
+    fixture = runtime['fixture']
+    fixture.update(server_ready='[STARTUP_TEST] SERVER_READY',
+                   failure_markers=[PREFIX + 'FAIL ', '[LOOT_DEMAND] FAILURE ', '[LOOT_NATURAL] FAIL '])
+    if selection['cases'] == ['natural']:
+        ini = output / 'server/Server/queue-smoke.ini'
+        text = re.sub(r'^Seed=.*\n?', '', ini.read_text(), flags=re.M)
+        text, changed = re.subn(r'^SpawnPoint=.*$', 'SpawnPoint=10849,10147,0', text, flags=re.M)
+        if changed != 1:
+            raise ValueError('Natural Host requires one isolated spawn point')
+        ini.write_text(text.rstrip() + '\nSeed=PZLootNatural4222\n')
     optimizer_profile.stage(project, output, game, jdk, selection, runtime)
-    (output / 'loot-demand-inputs.json').write_text(json.dumps({'test_only': True, 'sources': hashes,
-        'furniture_sources': furniture_inputs,
-        'limits': ['Synthetic native containers, not driving. persist-reload checks stopped-world IDs/native saved types/nesting; other cases do not establish restart safety.']}, indent=2) + '\n')
 
 
 def complete(selection, role, text):
+    if selection['cases'] == ['natural']:
+        return role == 'client1' and text.count('[LOOT_NATURAL] COMPLETE ') == 1
     return role == 'client1' and len(re.findall(re.escape(PREFIX) + 'COMPLETE ' + re.escape(selection['cases'][0]) + r'(?:\s|$)', text)) == 1
 
 
@@ -117,6 +151,14 @@ def verify(root, selection, catalog):
         if '[LOOT_DEMAND] INSTALLED isolated=true' not in text or PREFIX + 'FAIL ' in text:
             issues.append(label + ': missing activation or fixture failed')
     case = selection['cases'][0]
+    if case == 'natural':
+        if not complete(selection, 'client1', client) or '[LOOT_NATURAL] RESULT ' not in authority:
+            issues.append('Missing completed approach and authoritative result')
+        if '[LOOT_NATURAL] FAIL ' in client + authority:
+            issues.append('Natural approach fixture reported failure')
+        return {'issues': issues, 'outcomes': [dict(actor='client1', case=case,
+            status='failed' if issues else 'passed', reason='; '.join(issues))],
+            'evidence': {'limits': ['Natural menu Host map load and on-foot approach. No driving FPS inference.']}}
     expected = [] if case == 'persist-reload' else ['bin', 'dumpster', 'existing-items', 'destroy-fill', 'empty-trash']
     if case != 'lifecycle':
         expected.append(case)

@@ -1,5 +1,5 @@
 local config=require 'QueueTestSelection'
-if config.suite~='loot-demand' or config.kind~='mp' or not isServer() then return end
+if config.suite~='loot-demand' or config.cases[1]=='natural' or config.kind~='mp' or not isServer() then return end
 require 'LootDemandBank'
 require 'LootDemandPersistence'
 local case=config.cases[1]

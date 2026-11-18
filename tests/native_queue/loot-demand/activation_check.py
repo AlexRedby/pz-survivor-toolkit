@@ -80,6 +80,7 @@ public final class ActivationProbe {
         System.setProperty("pz.lootDemand.enabled","true");
         require(LootDemand.install(inst),"install refused: "+LootDemand.diagnostic());
         require(LootDemand.installed(),"not active after install");
+        require(LootDemand.censusStatus().contains("arm="+System.getProperty("pz.lootDemand.expectedArm","legacy")+"\n"),"census arm mismatch");
         Map<String,Map<String,Set<String>>> observed=new ConcurrentHashMap<>();
         Map<String,String> hashes=new ConcurrentHashMap<>();
         ClassFileTransformer observer=new ClassFileTransformer(){
@@ -154,6 +155,8 @@ public final class DirectMainProbe {
         Class<?> main=Class.forName("toolkit.lootdemandruntime.Main",true,loader);
         main.getMethod("main",String[].class).invoke(null,(Object)new String[0]);
         if(!Boolean.TRUE.equals(main.getMethod("installed").invoke(null)))throw new AssertionError("actual Main not active");
+        String census=(String)main.getMethod("censusStatus").invoke(null);
+        if(!census.contains("arm="+System.getProperty("pz.lootDemand.expectedArm","legacy")+"\n"))throw new AssertionError("actual Main census arm mismatch");
         System.out.println("DIRECT_MAIN_PASS entry=actual-fixture-Main dynamicAppend=true gameplay=false");
     }
 }
@@ -164,7 +167,9 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def run(game, jdk, output, rejected_artifact=None, rejected_packaging_artifact=None):
+def run(game, jdk, output, rejected_artifact=None, rejected_packaging_artifact=None, arm=None):
+    if arm not in (None, "observe", "defer"):
+        raise ValueError("Unknown census activation arm")
     game, jdk, output = map(lambda value: Path(value).resolve(), (game, jdk, output))
     if output.exists():
         raise ValueError('Activation output must be a new directory')
@@ -186,7 +191,7 @@ def run(game, jdk, output, rejected_artifact=None, rejected_packaging_artifact=N
            if key not in ('JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'CLASSPATH')}
     (output / 'home').mkdir()
     receipt = dict(format=1, scope='real Instrumentation and JVM class verification only; no gameplay or world/GUI initialization',
-        sources={str(path.relative_to(ROOT)): digest(path) for path in [Path(__file__).resolve(), *candidate]},
+        arm=arm or 'legacy', sources={str(path.relative_to(ROOT)): digest(path) for path in [Path(__file__).resolve(), *candidate]},
         external_inputs={path.name: digest(path) for path in inputs}, runs=[])
 
     def command(name, arguments, expected_failure=False):
@@ -223,6 +228,8 @@ def run(game, jdk, output, rejected_artifact=None, rejected_packaging_artifact=N
         for path in packaged:
             archive.write(path, path.relative_to(classes).as_posix())
         archive.writestr('loot-demand-token.txt', token)
+        if arm is not None:
+            archive.writestr('loot-demand-arm.txt', arm)
     receipt['packaged_fixture_sha256'] = digest(fixture)
 
     def direct_main(name, artifact, expected_failure=False):
@@ -237,7 +244,7 @@ def run(game, jdk, output, rejected_artifact=None, rejected_packaging_artifact=N
         (cache / 'loot-demand.opt-in').write_text(authorization + '\n')
         cp = os.pathsep.join(map(str, [probes, *jars]))
         return command(name, [java, '-Xverify:all', '-Xms128m', '-Xmx256m', '-Djava.awt.headless=true',
-            '-Duser.home=' + str(output / 'home'), '-javaagent:' + str(agent), '-cp', cp,
+            '-Duser.home=' + str(output / 'home'), '-Dpz.lootDemand.expectedArm=' + (arm or 'legacy'), '-javaagent:' + str(agent), '-cp', cp,
             'toolkit.lootactivation.DirectMainProbe', cache, artifact], expected_failure=expected_failure)
 
     if rejected_artifact is not None:
@@ -287,10 +294,12 @@ def run(game, jdk, output, rejected_artifact=None, rejected_packaging_artifact=N
     direct = direct_main('direct-main', fixture)
     if direct.stdout.count('DIRECT_MAIN_PASS entry=actual-fixture-Main dynamicAppend=true gameplay=false') != 1:
         raise ValueError('Actual fixture Main did not complete')
+    if arm is not None:
+        (classes / 'loot-demand-arm.txt').write_text(arm, encoding='ascii')
     classpath = os.pathsep.join(map(str, [classes, *jars]))
     for mode in ('first-load', 'already-loaded'):
         result = command(mode, [java, '-Xverify:all', '-Xms128m', '-Xmx256m', '-Djava.awt.headless=true',
-            '-Duser.home=' + str(output / 'home'), '-javaagent:' + str(agent), '-cp', classpath,
+            '-Duser.home=' + str(output / 'home'), '-Dpz.lootDemand.expectedArm=' + (arm or 'legacy'), '-javaagent:' + str(agent), '-cp', classpath,
             'toolkit.lootactivation.ActivationProbe', mode, fixture])
         if result.stdout.count('ACTIVATION_PASS mode=' + mode + ' targets=4 verified=true gameplay=false') != 1:
             raise ValueError('Missing exact activation completion marker: ' + mode)
@@ -311,12 +320,13 @@ def main():
     parser.add_argument('--game', required=True, type=Path)
     parser.add_argument('--jdk', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--arm', choices=('observe', 'defer'), help='Embed the exact optional natural-census arm resource')
     parser.add_argument('--rejected-packaging-artifact', type=Path,
         help='Optional old JAR: verify dynamic scanner failure and that ZIP directories alone are insufficient')
     parser.add_argument('--rejected-artifact', type=Path,
         help='Optional old fixture JAR which must reproduce duplicate DemandTransform LinkageError')
     args = parser.parse_args()
-    result = run(args.game, args.jdk, args.output, args.rejected_artifact, args.rejected_packaging_artifact)
+    result = run(args.game, args.jdk, args.output, args.rejected_artifact, args.rejected_packaging_artifact, args.arm)
     print(json.dumps(dict(status=result['status'], output=str(args.output.resolve()),
         checks=[row['name'] for row in result['runs']], limits=result['limits']), indent=2))
 

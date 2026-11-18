@@ -6,7 +6,7 @@ import java.util.Map;
 import java.util.Set;
 import net.bytebuddy.jar.asm.*;
 
-/** Exact B42.21 method guards; unrelated class methods/advice remain untouched. */
+/** Exact B42.22.2 method guards; unrelated class methods/advice remain untouched. */
 public final class DemandTransform {
     public static final String PICKER="zombie/inventory/ItemPickerJava";
     public static final String LOADER="zombie/LoadGridsquarePerformanceWorkaround$ItemPicker";
@@ -18,14 +18,14 @@ public final class DemandTransform {
     private static final Map<String,String> METHODS=Map.of(
         LOADER+".checkObject(Lzombie/iso/IsoObject;)V","4e67abe12eff6f8b130e2c63f4ab849b108b4fb473af1055895126ac6e5ff288",
         PICKER+".fillContainer"+FILL,"3ae0b55334ac6e788aad2f6667c9967376c55b49d50b33833144b0005bc07697",
-        PICKER+".doOverlaySprite(Lzombie/iso/IsoGridSquare;)V","eb469af9be5d914e92d239bcb35835c8197e0704780b9e04ceaf1c657fb5419b",
+        PICKER+".doOverlaySprite(Lzombie/iso/IsoGridSquare;)V","add2dcd37b75d0163bda42ff4d285a99838c5c693249aa66a10d5692e24cdfc6",
         CONTAINER+".dumpContentsInSquare(Lzombie/iso/IsoGridSquare;)V","9f5559796888028d2b3c8627947e87d7780272850af62aaefd010bb3b8304ef9");
     /** Original whole-class provenance, not admission of other changes inside guarded methods.
      * Current official-selected profile replaces none of these three native classes. */
     public static final Map<String,String> SOURCE_SHA256=Map.of(
-        LOADER,"69b928d735ceeec0c65f7caf12970c410c746265862433e2c648c26bd00ca41d",
-        PICKER,"5c8cf626e46a52cdbd9d73e9de10766dece3388ee3e4f4d8d071df5e44d68522",
-        CONTAINER,"a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96");
+        LOADER,"3784cb74fa346686e4cd2be20a3fbbc0a83cc65d1be3e8df6f270a24ccd1201d",
+        PICKER,"baaa48855c8289fd6758eedb2801c5bbc2837de9a1b6460eca72096cf6e3d8be",
+        CONTAINER,"19ffefbabfc16ce3b40feb557189c4fbecdb752aa2c96e3daa8b8ec0542185d3");
     private DemandTransform() {}
     public static String sha(byte[] bytes) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));

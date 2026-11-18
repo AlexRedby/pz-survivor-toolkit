@@ -1,5 +1,7 @@
 # Driving performance on 42.22.2
 
+- [ ] Compare observed native versus deferred map bins in the current full-pack Muldraugh load and natural menu Host first approach. Pair coordinates and capture first-use, eligibility and intact runtime; keep road frame impact separate from authority-side timings.
+
 - [ ] On an isolated full-pack run, check wall cutaway visibility and frame times through town with the current renderer fix. Use this build as the common baseline for subsequent loot comparisons.
 - [ ] Before comparing deferred loot, qualify its automatic-load and first-access paths on the current game and menu Host with current mod sources. Compare equivalent saves on the same route and include the first on-foot approach. Keep the 42.21 optimizer overlay out of this baseline.
 

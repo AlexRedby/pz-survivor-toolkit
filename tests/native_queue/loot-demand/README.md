@@ -60,6 +60,34 @@ advice inside that method. Measure with a minimal unchanged frame collector, or
 explicitly verify a composed transform before adding richer instrumentation; do
 not weaken the guards merely to admit an unknown combination.
 
+## Natural map containers on Build 42.22.2
+
+For a menu Host choose the `natural` case and set `loot_demand_arm` to
+`observe` or `defer` in the runner config. Use the same ordered full pack
+and world-generation seed. The server selects a loaded map bin outside the
+initial inventory radius. Pin the same object in the second run with
+`loot_demand_target` containing `x`, `y`, `z` and `index`. The client walks
+to it using the ordinary timed action and opens the nearby inventory. The
+server records the native fill and the client checks the observed item tree.
+An empty native inventory cannot confirm arrival of a content packet.
+
+For the separate single-player road comparison use suite `loot-demand-drive`,
+mode `native` and the same pack plus `PZDrivingBench`. Set
+`optimizer_enabled=false` and `driving_perf` to the Muldraugh Extinction
+scenario, native population, full throttle and `Base.SportsCar`. Run case
+`seed`, export with `check_action_queue.py save-world RUN TEMPLATE`, and run
+case `drive` from that template for each arm. Both use maximum zoom by
+default. Only the disposable fixture activates the probe. The shared road
+controller supplies speed, lane, contacts, zombie counts and frame intervals.
+Compare completed runs and inspect the eligible containers recorded between
+the measured-distance markers. Different traffic and loot rolls can still
+affect the comparison.
+
+In either test `fill_ns` is elapsed time inside one native fill on the
+authority. A pending row has no fill duration. Sum completed calls to describe
+work performed across an area. Use the separate frame intervals to assess
+hitches. Server and client timestamps belong to different processes.
+
 ## Saved-world continuation
 
 `--cases persist-seed` combines the lifecycle bank, pending/completed world objects

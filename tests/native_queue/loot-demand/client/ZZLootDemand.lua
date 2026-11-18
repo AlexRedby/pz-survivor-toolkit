@@ -1,6 +1,6 @@
 local preflight = require 'QueuePreflight'
 local config=require 'QueueTestSelection'
-if config.suite~='loot-demand' then return end
+if config.suite~='loot-demand' or config.cases[1]=='natural' then return end
 require 'LootDemandBank'
 require 'LootDemandPersistence'
 local case=config.cases[1]

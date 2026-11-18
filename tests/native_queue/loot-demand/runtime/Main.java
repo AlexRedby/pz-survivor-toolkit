@@ -53,6 +53,12 @@ public final class Main {
     private static void gate() { if(!active || !LootDemand.installed()) throw new IllegalStateException("Demand fixture inactive"); }
     @LuaMethod(name="lootDemandInstalled",global=true)
     public static boolean installed() { return active && LootDemand.installed(); }
+    @LuaMethod(name="lootDemandCensus",global=true)
+    public static String census() { gate();return LootDemand.census(); }
+    @LuaMethod(name="lootDemandCensusStatus",global=true)
+    public static String censusStatus() { gate();return LootDemand.censusStatus(); }
+    @LuaMethod(name="lootDemandClock",global=true)
+    public static long clock() { gate();return LootDemand.clock(); }
     @LuaMethod(name="lootDemandPending",global=true)
     public static boolean pending(ItemContainer container) { gate();return LootDemand.pending(container); }
     @LuaMethod(name="lootDemandEnsure",global=true)
