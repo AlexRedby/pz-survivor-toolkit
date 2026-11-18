@@ -95,6 +95,76 @@ for _, secondary in ipairs({false,row(),row(true)}) do
     end
 end
 
+-- A separately qualified optional two-hand weapon is one exact prior item in
+-- both slots. Native primary preparation clears its secondary grip, so its
+-- inverse must project the real both-hands equip rather than a primary write.
+for _, toolWeapon in ipairs({false,true}) do
+    local case=setup()
+    local previous,tool=row(true),row(toolWeapon)
+    local before,after=state(previous,copyRow(previous)),state(tool,false)
+    local originalBefore,originalAfter=copy(before),copy(after)
+    local handle=capture(case,before,after,tool)
+    before.primary.item=row().item;before.secondary.handWeapon=false
+    after.primary.item=row().item;tool.handWeapon=not toolWeapon
+    local proposal,plan=case.planner.propose(handle,originalAfter)
+    assert(proposal and plan.mode=='both' and sameRow(plan.incoming,originalBefore.primary))
+    same(plan.expected,originalBefore)
+    assert(rawequal(plan.expected.primary.item,plan.expected.secondary.item), 'shared prior item identity lost')
+    plan.mode='primary';plan.incoming.item=row().item;plan.expected.secondary=false
+    local consumed=assert(case.planner.consume(handle,proposal,originalAfter))
+    assert(consumed.mode=='both' and sameRow(consumed.incoming,originalBefore.primary))
+    same(consumed.expected,originalBefore)
+    refused('invalid_proposal',case.planner.consume(handle,proposal,originalAfter))
+    refused('not_open',case.planner.propose(handle,originalAfter))
+end
+
+-- Neither a stale observation nor a new independent offhand authorizes the
+-- two-hand restoration. Explicit user intent waives even an issued proposal.
+do
+    local case=setup()
+    local previous,tool=row(true),row()
+    local before,after=state(previous,copyRow(previous)),state(tool,false)
+    local handle=capture(case,before,after,tool)
+    for _, changed in ipairs({state(row(),false),state(tool,row()),state(tool,previous),state(previous,false)}) do
+        refused('current_changed',case.planner.propose(handle,changed))
+    end
+    local proposal=assert(case.planner.propose(handle,after))
+    for _, changed in ipairs({state(row(),false),state(tool,row()),state(tool,previous),state(previous,false)}) do
+        refused('current_changed',case.planner.consume(handle,proposal,changed))
+    end
+    assert(case.planner.waive(handle))
+    refused('invalid_proposal',case.planner.consume(handle,proposal,after))
+    refused('not_open',case.planner.propose(handle,after))
+    local pending=capture(case,before,after,tool)
+    assert(case.planner.waive(pending))
+    refused('not_open',case.planner.propose(pending,after))
+end
+
+-- The exception is only the exact shared prior weapon. It never accepts
+-- unrelated secondary effects, a shared preparation tool or nonweapon overlap.
+do
+    local case=setup()
+    local previous,tool=row(true),row()
+    local before,after=state(previous,copyRow(previous)),state(tool,false)
+    refused('secondary_changed',case.planner.capture(before,state(tool,previous),tool))
+    refused('secondary_changed',case.planner.capture(before,state(tool,row()),tool))
+    refused('assignment_mismatch',case.planner.capture(before,state(row(),false),tool))
+    refused('assignment_mismatch',case.planner.capture(before,state(false,false),tool))
+    refused('overlapping_hands',case.planner.capture(before,state(tool,tool),tool))
+    local weaponTool=row(true)
+    refused('overlapping_hands',case.planner.capture(before,state(weaponTool,weaponTool),weaponTool))
+    local object=row()
+    refused('overlapping_hands',case.planner.capture(state(object,object),after,tool))
+    local different=copyRow(previous);different.handWeapon=false
+    refused('overlapping_hands',case.planner.capture(state(previous,different),after,tool))
+    local required=copyRow(previous);required.requiresBoth=true
+    refused('unsupported_traits',case.planner.capture(state(required,required),after,tool))
+    local handgun=copyRow(previous);handgun.handgun=true
+    refused('unsupported_traits',case.planner.capture(state(handgun,handgun),after,tool))
+    -- An opaque item shared with the incoming tool cannot become a loan.
+    refused('unchanged_primary',case.planner.capture(before,state(previous,false),previous))
+end
+
 -- Caller-owned inputs and DTOs never become the obligation's private snapshot.
 do
     local case = setup()

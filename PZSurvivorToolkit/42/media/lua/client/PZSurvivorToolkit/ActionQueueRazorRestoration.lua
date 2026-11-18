@@ -40,9 +40,9 @@ function Razor.install()
     return true
 end
 
-local function isPrimaryEquip(action, actor, item)
+local function isPrimaryEquip(action, actor, item, bothHands)
     return action.character == actor and action.item == item and action.primary == true
-        and not action.twoHands and not action.fromHotbar and not action.alwaysTurnOn
+        and (action.twoHands == true) == (bothHands == true) and not action.fromHotbar and not action.alwaysTurnOn
         and Toolkit.ActionQueuePolicy.matchesNative(action)
 end
 
@@ -84,15 +84,17 @@ function Razor.observe(episode, action)
                 and (value.item == canonical or isClient() and value.item == tool)
                 and isPrimaryEquip(value, actor, value.item)
         end
+        local intent = Toolkit.ActionQueueTidyIntent
+        local primaryRevision = intent.handRequestRevision(actor, false)
+        local bothRevision = intent.handRequestRevision(actor, true)
         episode.equipHandle = settlement.observePreparation(action, {
             guard = guard,
             capture = function()
-                local revision = Toolkit.ActionQueueTidyIntent.primaryRequestRevision(actor)
                 local before = Toolkit.ActionQueueEquip.restorationHands(actor)
-                if before and revision ~= nil then
-                    episode.revision = revision
-                    return before
-                end
+                if not before then return end
+                episode.bothHands = before.primary and before.secondary and before.primary.item == before.secondary.item
+                episode.revision = episode.bothHands and bothRevision or primaryRevision
+                if episode.revision ~= nil then return before end
             end,
             observed = function(_, before)
                 local after = Toolkit.ActionQueueEquip.restorationHands(actor)
@@ -112,9 +114,9 @@ local function restore(episode, parent)
     if not settlement.reserveClaimedReturn(parent, loan) then return end
     if not episode.source() or not episode.hand or not settlement.earned(episode.equipHandle) then return end
     local hands = Toolkit.ActionQueueEquip.restorationHands
-    local revision = Toolkit.ActionQueueTidyIntent.primaryRequestRevision
+    local revision = Toolkit.ActionQueueTidyIntent.handRequestRevision
     local function eligible()
-        return episode.source() and revision(actor) == episode.revision
+        return episode.source() and revision(actor, episode.bothHands) == episode.revision
     end
     if not eligible() then return end
     local proposal, plan = Hand.propose(episode.hand, hands(actor))
@@ -122,33 +124,34 @@ local function restore(episode, parent)
     local borrowed = currentTool(episode)
     if not borrowed then return end
     local previous = plan.incoming and plan.incoming.item
+    local bothHands = plan.mode == 'both'
     local action
     if plan.mode == 'unequip' then
         action = ISUnequipAction:new(actor, borrowed, 50)
     else
-        if not previous or not hands(actor, previous) then return end
-        action = ISEquipWeaponAction:new(actor, previous, 50, true, false)
+        if not previous or not hands(actor, previous, bothHands) then return end
+        action = ISEquipWeaponAction:new(actor, previous, 50, true, bothHands)
     end
     local token = parent.toolkitQueueOperation
     ops.adopt(action, token)
     if not settlement.inheritCleanup(action, parent) then return end
     local function bound(value)
         if value ~= action then return false end
-        if previous then return isPrimaryEquip(value, actor, previous) end
+        if previous then return isPrimaryEquip(value, actor, previous, bothHands) end
         return getmetatable(value) == ISUnequipAction and value.character == actor and value.item == borrowed
             and not value.fromHotbar and value.reason == nil and Toolkit.ActionQueuePolicy.matchesNative(value)
     end
     local effect = settlement.observeCleanupEffect(action, {
         guard = bound, sourceGuard = bound,
         admit = function(value)
-            return bound(value) and eligible() and Hand.consume(episode.hand, proposal, hands(actor, previous)) ~= nil
+            return bound(value) and eligible() and Hand.consume(episode.hand, proposal, hands(actor, previous, bothHands)) ~= nil
         end,
         capture = function() return hands(actor) end,
         observed = function(_, before)
             local after = hands(actor)
             return after and (after.primary and after.primary.item) == previous and before.primary
                 and before.primary.item == currentTool(episode)
-                and (after.secondary and after.secondary.item) == (before.secondary and before.secondary.item)
+                and (after.secondary and after.secondary.item) == (plan.expected.secondary and plan.expected.secondary.item)
         end,
     })
     if not effect then return end

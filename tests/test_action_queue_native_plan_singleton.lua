@@ -1056,7 +1056,7 @@ local function retainedFixture(waiting)
     local role={source=true,line=176,calls=0}
     local s=preparedFixture(true,function(proof)
         proof.matches=function(path,adler,mod,fresh)
-            check(path=='media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'and adler==716420265
+            check(path=='media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'and adler==120995603
                 and mod=='PZSurvivorToolkit'and fresh==true,'explicit getter source role loosened')
             return role.source
         end

@@ -11,13 +11,15 @@ TYPES = {'razor': 'Base.Razor', 'previous': 'Base.Hammer', 'replacement': 'Base.
 ACTION_TYPES = {'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEquipWeaponAction', 'trim': 'ISTrimBeard',
                 'restore': 'ISEquipWeaponAction', 'returned': 'ISInventoryTransferAction', 'tail': 'ISReadABook',
                 'explicitEquip': 'ISEquipWeaponAction', 'command': 'ISQueueActionsAction', 'approach': 'ISQueueActionsAction'}
-ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle')
-RETURNED_CASES = {'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors'}
+ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle', 'equipPrimary', 'equipTwoHands')
+RETURNED_CASES = {'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe'}
+AXE_CASES = {'two-handed-axe', 'two-handed-axe-new-primary-intent'}
+INTENT_CASES = {'new-primary-intent', 'two-handed-axe-new-primary-intent'}
 SCISSORS_CASES = {'trim-scissors', 'cut-hair-scissors'}
 
 
 def item_types(case):
-    return dict(TYPES, razor='Base.Scissors') if case in SCISSORS_CASES else TYPES
+    return dict(TYPES, razor='Base.Scissors') if case in SCISSORS_CASES else dict(TYPES, previous='Base.Axe') if case in AXE_CASES else TYPES
 
 
 def grooming(case):
@@ -40,7 +42,8 @@ def expected(ids, authority):
         row['appearance'].update(hair=ids['targetHair'], nonAttached=False)
     else:
         row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
-    row['primary'] = ids['items']['razor']['id'] if ids.get('handAckDelay') else False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] == 'new-primary-intent' else 'previous']['id']
+    row['primary'] = ids['items']['razor']['id'] if ids.get('handAckDelay') else False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] in INTENT_CASES else 'previous']['id']
+    if ids['case'] in AXE_CASES and ids['case'] in INTENT_CASES: row['secondary'] = False
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
     if ids.get('handAckDelay') or ids['case'] not in RETURNED_CASES:
         row['origin']['sourceCount'] = 0
@@ -94,7 +97,7 @@ def validate_prepared(ids, selection):
             or len([item for item in baseline['worn'] if item.get('id') == bag['id']]) != 1
             or baseline.get('case') != ids['case'] or baseline.get('male') is not True
             or (baseline.get('primary') is not False or baseline.get('secondary') != owned['previous']['id'] if ids['case'] == 'empty-primary'
-                else baseline.get('primary') != owned['previous']['id'] or baseline.get('secondary') is not False)
+                else baseline.get('primary') != owned['previous']['id'] or (baseline.get('secondary') != owned['previous']['id'] if ids['case'] in AXE_CASES else baseline.get('secondary') is not False))
             or baseline['appearance'].get('beard') != ids['initialBeard']):
         raise ValueError('authority seed equipment/appearance differs')
     if baseline.get('origin') != dict(id=bag['id'], type=bag['type'], container='root', worn=True, sourceCount=1):
@@ -204,6 +207,7 @@ def producer_errors(ev, roles, ids):
 
 def borrowed_snapshot(ids):
     row = copy.deepcopy(ids['baseline']); row['primary'] = ids['items']['razor']['id']
+    if ids['case'] in AXE_CASES: row['secondary'] = False
     row['origin']['sourceCount'] = 0
     for item in row['items']:
         if item['id'] == ids['items']['razor']['id']: item['container'] = 'root'
@@ -429,10 +433,10 @@ def lifecycle_errors(action, kind, canceled=False):
 
 
 def restore_boundary_errors(ev, roles, ids, kind):
-    """Empty-hand cleanup must earn its exact physical effect before returning the tool."""
+    """Native cleanup must earn its exact physical hand effect before returning the tool."""
     boundary = ev.get('restoreBoundary')
-    if ids['case'] != 'empty-primary':
-        return [] if boundary is None else ['Unexpected empty-primary restore boundary']
+    if ids['case'] not in ('empty-primary', 'two-handed-axe'):
+        return [] if boundary is None else ['Unexpected native restore boundary']
     try:
         restore, returned = roles['restore'][0], roles['returned'][0]
         wanted = expected(ids, kind == 'sp'); wanted.pop('authority')
@@ -444,15 +448,17 @@ def restore_boundary_errors(ev, roles, ids, kind):
                      if kind == 'sp' else [ack for ack in restore['ack'] if ack.get('state') == 'completed'])
         if (type(boundary) is not dict or boundary.get('actionRef') != restore['actionRef']
                 or boundary.get('nativeRef') != restore['nativeRef'] or boundary.get('returnRef') != returned['actionRef']
-                or boundary.get('snapshot') != wanted or boundary['snapshot'].get('primary') is not False
-                or type(boundary['snapshot'].get('secondary')) is not int or not number(boundary.get('at'))
+                or boundary.get('snapshot') != wanted or not number(boundary.get('at'))
+                or ids['case'] == 'empty-primary' and (boundary['snapshot'].get('primary') is not False or type(boundary['snapshot'].get('secondary')) is not int)
+                or ids['case'] == 'two-handed-axe' and (any(type(boundary['snapshot'].get(slot)) is not int for slot in ('primary', 'secondary'))
+                    or restore.get('equipPrimary') is not True or restore.get('equipTwoHands') is not True)
                 or not number(returned.get('admittedAt')) or not number(restore.get('startedAt'))
                 or not restore['startedAt'] <= returned['admittedAt'] <= boundary['at'] <= returned['startedAt']
                 or len(terminals) != 1 or not number(terminals[0].get('at'))
                 or not restore['startedAt'] <= terminals[0]['at'] <= returned['admittedAt']):
             raise ValueError('native completion/exact hand effect did not precede return admission')
     except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
-        return ['Empty-primary native restore boundary differs: ' + str(error)]
+        return ['Native hand restore boundary differs: ' + str(error)]
     return []
 
 
@@ -557,12 +563,38 @@ def hand_authority_errors(ev, roles, ids):
     return []
 
 
+def intent_errors(ev, roles, ids):
+    errors = []
+    try:
+        intent = ev.get('intent', {}); explicit = roles['explicitEquip'][0]
+        trim, tail = roles['trim'][0], roles['tail'][0]
+        token = operation_key(trim['operationRef']); debts = ev.get('debts')
+        snapshot = intent.get('snapshot', {})
+        during = borrowed_snapshot(ids)
+        if (not number(intent.get('at')) or not trim['startedAt'] <= intent['at'] <= tail['startedAt'] <= explicit['startedAt']
+                or not number(intent.get('trimDelta')) or not 0 < intent['trimDelta'] < 1
+                or type(intent.get('before')) is not int or type(intent.get('after')) is not int or intent['after'] <= intent['before']
+                or intent.get('before') != ev.get('initialRevision') or intent.get('trimRef') != trim['actionRef']
+                or intent.get('trimNative') != trim['nativeRef'] or intent.get('explicitActionRef') != explicit['actionRef']
+                or intent.get('explicitUnallocated') is not True or snapshot.get('primary') != ids['items']['razor']['id']
+                or snapshot != during
+                or operation_key(explicit['operationRef']) in (token, operation_key(tail['operationRef']))):
+            errors.append('Accepted newer native primary intent did not precede old cleanup while trim genuinely progressed')
+        if (type(debts) is not list or len(debts) != 1 or debts[0].get('itemId') != ids['items']['razor']['id']
+                or debts[0].get('itemType') != 'Base.Razor' or debts[0].get('state') != 'blocked'
+                or debts[0].get('reason') != 'cleanup-unresolved'):
+            errors.append('Superseded auto restore lost its exact unpaid razor debt')
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        errors.append('Malformed newer native intent: ' + str(error))
+    return errors
+
+
 def check_case(row, selection, prepared, verified):
     errors = []
     try:
         case = row['id']; ids = row['ids']; ev = row['evidence']; delayed = ids.get('handAckDelay') is True
         returned_case = case in RETURNED_CASES and not delayed
-        intent_case = case == 'new-primary-intent'; canceled = case == 'cancel-active'
+        intent_case = case in INTENT_CASES; canceled = case == 'cancel-active'
         if (ids != prepared or ids['case'] != case or row.get('status') != 'passed' or row.get('actor') != 'client1'
                 or row.get('kind') != selection['kind'] or row.get('mode') != 'toolkit'):
             raise ValueError('exact native case/process identity differs')
@@ -594,17 +626,21 @@ def check_case(row, selection, prepared, verified):
             raise ValueError('Action identity duplicated/missing')
         errors.extend(producer_errors(ev, roles, ids))
         seed = ev.get('handSeed')
-        wanted_seed = dict(type='Base.Hammer', requiresBoth=False, handWeapon=True, supportsTwo=False, ordinary=True)
+        wanted_seed = dict(type=item_types(case)['previous'], requiresBoth=False, handWeapon=True, supportsTwo=case in AXE_CASES, ordinary=True)
         wanted_seed.update(dict(primary=False, secondary=ids['items']['previous']['id']) if case == 'empty-primary'
                            else dict(id=ids['items']['previous']['id']))
+        if case in AXE_CASES: wanted_seed['secondary'] = ids['items']['previous']['id']
         if seed != wanted_seed:
-            errors.append('Initial primary lacks exact ordinary one-hand restoration proof')
+            errors.append('Initial hands lack exact ordinary restoration proof')
         for role, values in roles.items():
             for action in values:
                 if action.get('type') != (grooming(case)[1] if role == 'trim' else 'ISUnequipAction' if case == 'empty-primary' and role == 'restore' else ACTION_TYPES[role]):
                     raise ValueError('Action native class differs: ' + role)
                 if role in ('command', 'approach'):
                     continue
+                if case in AXE_CASES and action.get('type') == 'ISEquipWeaponAction':
+                    if action.get('equipPrimary') is not True or action.get('equipTwoHands', False) is not (role == 'restore'):
+                        errors.append('Native axe preparation/restoration/explicit hand mode differs: ' + role)
                 if role == 'returned' and case in ('full-origin', 'keep-return'):
                     errors.extend(denied_return_errors(action, ev, ids, selection['kind']))
                     duration = action.get('constructorDuration')
@@ -666,22 +702,7 @@ def check_case(row, selection, prepared, verified):
         elif delayed:
             errors.extend(hand_authority_errors(ev, roles, ids))
         elif intent_case:
-            intent = ev.get('intent', {}); explicit = get('explicitEquip')
-            snapshot = intent.get('snapshot', {})
-            during = borrowed_snapshot(ids)
-            if (not number(intent.get('at')) or not trim['startedAt'] <= intent['at'] <= tail['startedAt'] <= explicit['startedAt']
-                    or not number(intent.get('trimDelta')) or not 0 < intent['trimDelta'] < 1
-                    or type(intent.get('before')) is not int or type(intent.get('after')) is not int or intent['after'] <= intent['before']
-                    or intent.get('before') != ev.get('initialRevision') or intent.get('trimRef') != trim['actionRef']
-                    or intent.get('trimNative') != trim['nativeRef'] or intent.get('explicitActionRef') != explicit['actionRef']
-                    or intent.get('explicitUnallocated') is not True or snapshot.get('primary') != ids['items']['razor']['id']
-                    or snapshot != during
-                    or operation_key(explicit['operationRef']) in (token, operation_key(tail['operationRef']))):
-                errors.append('Accepted newer native primary intent did not precede old cleanup while trim genuinely progressed')
-            if (type(debts) is not list or len(debts) != 1 or debts[0].get('itemId') != ids['items']['razor']['id']
-                    or debts[0].get('itemType') != 'Base.Razor' or debts[0].get('state') != 'blocked'
-                    or debts[0].get('reason') != 'cleanup-unresolved'):
-                errors.append('Superseded auto restore lost its exact unpaid razor debt')
+            errors.extend(intent_errors(ev, roles, ids))
         elif case in ORIGIN_CASES:
             restore = get('restore')
             if (not trim['startedAt'] <= restore['startedAt'] <= tail['startedAt']

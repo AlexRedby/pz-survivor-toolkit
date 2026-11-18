@@ -10,7 +10,7 @@ local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mod
 local transfers=setmetatable({}, {__mode='k'})
 local scope, guard, wrappedUI, installed
 local serial=0
-local ownProvider, primaryRequests=false,{}
+local ownProvider, handRequests=false,{}
 local ownWaiting={}
 local ownPending={}
 local awaitOwn
@@ -554,8 +554,15 @@ local function wrap(owner,name,kind,hotbar)
             if result[1] and record.enqueued and (kind~='equip' or i==#current.records) then
                 local action=record.action;record.accepted=true
                 state(record.player,record).pending[action]=record
-                if ownProvider and kind=='equip' and (action.primary or action.twoHands) then
-                    primaryRequests[record.player:getPlayerNum()]={actor=record.player,serial=record.serial}
+                if ownProvider and kind=='equip' then
+                    local slot=record.player:getPlayerNum()
+                    local request=handRequests[slot]
+                    if not request or request.actor~=record.player then
+                        request={actor=record.player,primary=0}
+                        handRequests[slot]=request
+                    end
+                    request.any=record.serial
+                    if action.primary or action.twoHands then request.primary=record.serial end
                 end
                 if record.finished then confirm(record) end
             else watching[record.action]=nil end
@@ -801,9 +808,13 @@ end
 registerTransferListener()
 -- A newer accepted primary-hand menu request supersedes an older automatic
 -- restore even if the physical hand has not changed yet on Host.
-function Intent.primaryRequestRevision(player)
+function Intent.handRequestRevision(player, bothHands)
     if not ownProvider or not guard or not guard() then return end
-    local request=primaryRequests[player:getPlayerNum()]
-    return request and request.actor==player and request.serial or 0
+    local request=handRequests[player:getPlayerNum()]
+    if not request or request.actor~=player then return 0 end
+    return bothHands and request.any or request.primary
+end
+function Intent.primaryRequestRevision(player)
+    return Intent.handRequestRevision(player,false)
 end
 return Intent

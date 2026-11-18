@@ -29,6 +29,8 @@ def control_observation(case):
                *[dict(id=item['id'], type=item['type'], container=42 if name == 'razor' else 'root') for name, item in ids['items'].items()]],
         origin=dict(id=42, type='Base.Bag_Military', container='root', worn=True, sourceCount=1), worn=[dict(id=42, location='Back')],
         tail=dict(id=76, type='Base.BookCarpentry1', pages=8, characterPages=8, total=10))
+    if case in v.AXE_CASES:
+        ids['baseline']['secondary'] = ids['items']['previous']['id']
     if case == 'empty-primary':
         ids['baseline'].update(primary=False, secondary=ids['items']['previous']['id'])
     if case == 'cut-hair-scissors':
@@ -77,7 +79,8 @@ class RazorRestorationTests(unittest.TestCase):
 
     def test_ordered_subsets_preserve_old_and_individual_control_cases(self):
         self.assertEqual(a.CASES, ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active',
-                                  'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors'))
+                                  'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors',
+                                  'two-handed-axe', 'two-handed-axe-new-primary-intent'))
         for kind in ('sp', 'mp'):
             for cases in (list(a.CASES[:2]), *([case] for case in a.CASES), list(a.CASES[2:])):
                 value = selection(kind); value['cases'] = cases
@@ -530,6 +533,133 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
             changed = copy.deepcopy(action); mutate(changed)
             self.assertTrue(v.denied_return_errors(changed, ev, ids, 'mp'))
         self.assertTrue(v.denied_return_errors(action, ev, ids, 'sp'))
+
+    def test_two_handed_axe_cases_batch_in_sp_and_menu_host(self):
+        cases = ['two-handed-axe', 'two-handed-axe-new-primary-intent']
+        for kind in ('sp', 'mp'):
+            value = selection(kind); value['cases'] = cases
+            a.validate(value)
+        definitions = {row['id']: row for row in a.definitions()['razor-restoration']['cases']}
+        for case in cases:
+            self.assertEqual(definitions[case]['kinds'], ['sp', 'mp'])
+
+    def test_two_handed_axe_seed_and_exact_hands_follow_native_effects(self):
+        for case in v.AXE_CASES:
+            ids, _, _ = control_observation(case)
+            baseline = ids['baseline']; baseline['male'] = True
+            for item in baseline['items']:
+                item.update(canonical=True, condition=10, favorite=True, count=1)
+            target = dict(x=10, y=10, z=0)
+            ids['placement'] = target
+            ids['placementProof'] = dict(mode='replica', target=target,
+                actual=dict(x=10.5, y=10.5, z=0, square=target, currentSquare=target),
+                teleports=0, stableMs=500, quietMs=0, elapsedMs=500, centered=True, centers=0)
+            v.validate_prepared(ids, selection())
+            self.assertEqual(ids['items']['previous']['type'], 'Base.Axe')
+            self.assertEqual(baseline['primary'], ids['items']['previous']['id'])
+            self.assertEqual(baseline['secondary'], baseline['primary'])
+            borrowed = v.borrowed_snapshot(ids)
+            self.assertEqual(borrowed['primary'], ids['items']['razor']['id'])
+            self.assertIs(borrowed['secondary'], False)
+            final = v.expected(ids, True)
+            if case in v.INTENT_CASES:
+                self.assertEqual(final['primary'], ids['items']['replacement']['id'])
+                self.assertIs(final['secondary'], False)
+                self.assertEqual(final['items'][1]['container'], 'root')
+                self.assertEqual(final['origin']['sourceCount'], 0)
+            else:
+                self.assertEqual(final['primary'], ids['items']['previous']['id'])
+                self.assertEqual(final['secondary'], final['primary'])
+                self.assertEqual(final['items'][1]['container'], ids['bag']['id'])
+                self.assertEqual(final['origin']['sourceCount'], 1)
+            self.assertEqual(final['tail']['pages'], ids['items']['tail']['total'])
+            self.assertEqual(final['tail']['characterPages'], ids['items']['tail']['total'])
+            for mutate in (lambda i: i['baseline'].update(secondary=False),
+                           lambda i: i['baseline'].update(secondary=i['items']['replacement']['id']),
+                           lambda i: i['items']['previous'].update(type='Base.Hammer')):
+                changed = copy.deepcopy(ids); mutate(changed)
+                with self.assertRaises(ValueError): v.validate_prepared(changed, selection())
+
+    def test_two_handed_axe_native_restore_completes_both_hands_before_return(self):
+        # Receipt sub-schema checks do not constitute a native gameplay pass.
+        ids, _, _ = control_observation('two-handed-axe')
+        for kind in ('sp', 'mp'):
+            restore = dict(role='restore', type='ISEquipWeaponAction', actionRef='axe-equip', nativeRef='native',
+                operationRef='episode', startedAt=10, equipPrimary=True, equipTwoHands=True,
+                events=[dict(boundary=boundary, phase=phase, at=11 + index, nativeRef='native', succeeded=True)
+                        for index, (boundary, phase) in enumerate((('begin', 'perform'), ('finish', 'perform'),
+                             ('begin', 'complete'), ('finish', 'complete'))) if kind == 'sp' or phase == 'perform'], ack=[])
+            if kind == 'mp':
+                restore['ack'] = [dict(state='completed', at=14, kind='ISEquipWeaponAction', transaction=7,
+                    token='01234567-89ab-cdef-0123-456789abcdef', nativeRef='native', operationRef='episode',
+                    **{key: True for key in ('nativeSame', 'actorSame', 'queueSame', 'rootSame', 'itemSame', 'operationSame')})]
+            roles = dict(restore=[restore], returned=[dict(actionRef='return', admittedAt=15, startedAt=16)])
+            snapshot = v.expected(ids, kind == 'sp'); snapshot.pop('authority')
+            snapshot['origin']['sourceCount'] = 0; snapshot['items'][1]['container'] = 'root'
+            snapshot['tail'].update(pages=8, characterPages=8)
+            ev = dict(restoreBoundary=dict(at=15, actionRef='axe-equip', nativeRef='native', returnRef='return', snapshot=snapshot))
+            self.assertEqual(v.lifecycle_errors(restore, kind), [])
+            self.assertEqual(v.restore_boundary_errors(ev, roles, ids, kind), [])
+            for slot in ('primary', 'secondary'):
+                for invalid in (False, ids['items']['replacement']['id'], ids['items']['razor']['id']):
+                    changed = copy.deepcopy(ev); changed['restoreBoundary']['snapshot'][slot] = invalid
+                    self.assertTrue(v.restore_boundary_errors(changed, roles, ids, kind))
+            for mutate in (lambda r: r['restore'][0].update(equipTwoHands=False),
+                           lambda r: r['restore'][0].update(equipPrimary=False),
+                           lambda r: r['restore'][0].update(**{'events' if kind == 'sp' else 'ack': []}),
+                           lambda r: r['returned'][0].update(admittedAt=13)):
+                changed = copy.deepcopy(roles); mutate(changed)
+                self.assertTrue(v.restore_boundary_errors(ev, changed, ids, kind))
+
+    def test_two_handed_axe_new_intent_keeps_unpaid_exact_razor_debt(self):
+        ids, _, _ = control_observation('two-handed-axe-new-primary-intent')
+        roles = dict(trim=[dict(actionRef='trim', nativeRef='native-trim', operationRef='borrow', startedAt=1)],
+                     tail=[dict(operationRef='independent', startedAt=10)],
+                     explicitEquip=[dict(actionRef='explicit', operationRef='new-intent', startedAt=20)])
+        ev = dict(initialRevision=4, debts=[dict(itemId=73, itemType='Base.Razor', state='blocked', reason='cleanup-unresolved')],
+                  intent=dict(at=5, before=4, after=5, trimDelta=.4, trimRef='trim', trimNative='native-trim',
+                      explicitActionRef='explicit', explicitUnallocated=True, snapshot=v.borrowed_snapshot(ids)))
+        self.assertEqual(v.intent_errors(ev, roles, ids), [])
+        for mutate in (lambda e: e['intent']['snapshot'].update(secondary=74),
+                       lambda e: e['intent']['snapshot'].update(primary=75),
+                       lambda e: e['intent'].update(after=4),
+                       lambda e: e['intent'].update(explicitUnallocated=False),
+                       lambda e: e['intent'].update(trimDelta=0),
+                       lambda e: e.update(debts=[]),
+                       lambda e: e['debts'][0].update(itemId=75),
+                       lambda e: e['debts'][0].update(reason='admission')):
+            changed = copy.deepcopy(ev); mutate(changed)
+            self.assertTrue(v.intent_errors(changed, roles, ids))
+        for operation in ('borrow', 'independent'):
+            changed = copy.deepcopy(roles); changed['explicitEquip'][0]['operationRef'] = operation
+            self.assertTrue(v.intent_errors(ev, changed, ids))
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_native_fixture_expected_two_handed_axe_and_superseding_intent(self):
+        source = r"""
+package.preload.QueueEnergyPlacement=function()return {}end
+local F=dofile(arg[1])
+for _,case in ipairs({'two-handed-axe','two-handed-axe-new-primary-intent'})do
+ local ids={case=case,initialBeard='LongScruffy',targetBeard='Moustache',
+  items={razor={id=73},previous={id=74},replacement={id=75},tail={id=76,initial=8,total=10}},
+  baseline={appearance={beard='LongScruffy'},primary=74,secondary=74,
+   items={{id=73,container=42}},origin={sourceCount=1},tail={pages=8,characterPages=8}}}
+ local final=F.expected(ids)
+ assert(F.axeCase(case)and final.appearance.beard=='Moustache')
+ if F.intentCase(case)then
+  assert(not F.returnedCase(case)and final.primary==75 and final.secondary==false)
+  assert(final.items[1].container=='root'and final.origin.sourceCount==0)
+ else
+  assert(F.returnedCase(case)and final.primary==74 and final.secondary==74)
+  assert(final.items[1].container==42 and final.origin.sourceCount==1)
+ end
+ assert(final.tail.pages==10 and final.tail.characterPages==10)
+ assert(ids.baseline.primary==74 and ids.baseline.secondary==74 and ids.baseline.tail.pages==8)
+end
+"""
+        result = subprocess.run(['luajit', '-', str(PROJECT / 'tests/native_queue/razor-restoration/shared/QueueRazorRestoration.lua')],
+                                input=source, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_missing_live_logs_never_pass(self):
         with tempfile.TemporaryDirectory() as directory:

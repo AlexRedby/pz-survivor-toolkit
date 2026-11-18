@@ -5,7 +5,7 @@ import zipfile
 
 from .tv_controls import MODS as SELECTED_MODS
 
-CASES = ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active', 'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors')
+CASES = ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active', 'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'two-handed-axe-new-primary-intent')
 MODS = [identifier for identifier in SELECTED_MODS if identifier != 'P4TidyUpMeister']
 PREFIX = '[RAZOR_RESTORATION] '
 

@@ -10,6 +10,12 @@ local function prepared(editorEnabled,kind)
  local e,q,t=f.env,f.queue,f.env.PZSurvivorToolkit
  local previous,secondary
  if kind.empty then secondary=f.tool(810,'Base.Pen',f.inventory)
+ elseif kind.both then
+  previous=f.tool(810,'Base.Axe',f.inventory)
+  previous.class='HandWeapon'
+  previous.getSwingAnim=function()return 'Heavy'end
+  previous.isTwoHandWeapon=function()return true end
+  secondary=previous
  else previous=f.tool(810,'Base.Pen',f.inventory) end
  f.player.secondary=secondary
  local razor=f.tool(811,kind.tool)
@@ -40,6 +46,7 @@ local function prepared(editorEnabled,kind)
  return f,previous,razor,body,cleanup,secondary
 end
 for _,kind in ipairs({
+ {tool='Base.Razor',body='ISTrimBeard',style='Moustache',both=true},
  {tool='Base.Razor',body='ISTrimBeard',style='Moustache'},
  {tool='Base.Scissors',body='ISTrimBeard',style='Moustache'},
  {tool='Base.Scissors',body='ISCutHair',style='Bald',empty=true},
@@ -109,6 +116,22 @@ local remaining=assert(g.env.PZSurvivorToolkit.ActionQueueSettlement.operationSt
 assert(g.player.primary==selected and borrowed.container==g.inventory and #g.effects==1 and #g.queue.queue==0
  and remaining.borrowings[1].state=='active','later explicit choice replayed restoration or silently paid the unreturned loan')
 print('PASS native razor/scissors beard and scissors haircut borrowing, exact hand restoration and return, tool-less isolation, and later primary choice')
+
+-- A secondary-only request is still pending when the older cleanup runs.
+-- Restoring a shared grip would overwrite that later choice.
+local h,axe,razor,body,cleanup=prepared(true,{tool='Base.Razor',body='ISTrimBeard',style='Moustache',both=true})
+local pen=h.tool(813,'Base.Pen',h.inventory)
+local requests=h.env.PZSurvivorToolkit.ActionQueueTidyIntent
+local primaryRevision=requests.primaryRequestRevision(h.player)
+local bothRevision=requests.handRequestRevision(h.player,true)
+h.env.ISInventoryPaneContextMenu.OnSecondWeapon({pen},0)
+local choice=h.queue.queue[#h.queue.queue]
+assert(choice.item==pen and not choice.primary and requests.primaryRequestRevision(h.player)==primaryRevision
+ and requests.handRequestRevision(h.player,true)~=bothRevision)
+h.dispatch(body,'perform');h.start(cleanup);h.dispatch(cleanup,'perform')
+assert(h.queue.current==choice and #h.queue.queue==1)
+h.start(choice);h.dispatch(choice,'perform')
+assert(h.player.secondary==pen and h.player.primary==razor and razor.container==h.inventory and axe.container==h.inventory)
 
 -- Cancel after the real pickup/equip, while the native trim is active.
 -- The retained command gets a fresh operation and owns the single return.

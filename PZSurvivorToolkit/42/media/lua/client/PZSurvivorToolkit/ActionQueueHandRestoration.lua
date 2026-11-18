@@ -1,10 +1,13 @@
 -- Pure, one-shot scheduling obligation for an ordinary primary-hand tool.
+-- A prior ordinary weapon may occupy both slots as the exact same item; the
+-- native owner must additionally qualify its optional two-hand support.
 -- Rows have exactly Hands' item/requiresBoth/handWeapon/handgun fields; states
 -- have primary/secondary rows (or false). Item identities are opaque.
 --
 -- capture(before, after, tool) verifies the projected native preparation write.
 -- The caller must separately earn that exact native episode/hand outcome and
--- exclude heavy, worn, hotbar, optional two-hand, activation and other effects.
+-- exclude heavy, worn, hotbar, activation and other effects. A shared prior
+-- weapon is the sole supported secondary-slot delta and restores in both hands.
 -- Restoring an empty prior primary projects an exact-tool primary unequip;
 -- an independently held secondary remains unchanged.
 -- propose(handle, current) returns an opaque proposal and a detached plan DTO.
@@ -72,8 +75,18 @@ local function snapshot(value)
         end
     end
     if result.primary ~= false and result.secondary ~= false
-        and equal(result.primary.item, result.secondary.item) then return nil, 'overlapping_hands' end
+        and equal(result.primary.item, result.secondary.item)
+        and (not result.primary.handWeapon or not sameRow(result.primary, result.secondary)) then
+        return nil, 'overlapping_hands'
+    end
     return result
+end
+local function sharedWeapon(state)
+    return state.primary ~= false and state.secondary ~= false
+        and state.primary.handWeapon and sameRow(state.primary, state.secondary)
+end
+local function restoreMode(before)
+    return sharedWeapon(before) and 'both' or before.primary == false and 'unequip' or 'primary'
 end
 local function sameState(left, right)
     return sameRow(left.primary, right.primary) and sameRow(left.secondary, right.secondary)
@@ -101,7 +114,7 @@ local function facts(state)
     end
     return result
 end
-local function projects(key, before, incoming, expected)
+local function projects(key, before, incoming, expected, mode)
     local resource
     if incoming == false then
         -- The caller separately authenticates native unequip and excludes its
@@ -112,7 +125,7 @@ local function projects(key, before, incoming, expected)
             requires={{field='primary', equal=before.primary.item}}, effects={
                 {field='primary', set=false}, {field='primaryRequiresBoth', set=false},
                 {field='primaryHandWeapon', set=false}, {field='primaryHandgun', set=false}}}
-    else resource = equip(key, copyState(before), copyRow(incoming), 'primary') end
+    else resource = equip(key, copyState(before), copyRow(incoming), mode or 'primary') end
     if not trusted() then return nil, 'source_changed' end
     if kind(resource) ~= 'table' then return nil, 'assignment_refused' end
     local requires = {}
@@ -139,7 +152,7 @@ local function obligation(handle)
     if ok then return state end
 end
 local function plan(state)
-    return {mode=state.before.primary == false and 'unequip' or 'primary',
+    return {mode=restoreMode(state.before),
         incoming=copyRow(state.before.primary), expected=copyState(state.before)}
 end
 local function guarded(callback, ...)
@@ -158,9 +171,12 @@ local function captureState(before, after, tool)
     if not prepared then return nil, reason end
     local incoming; incoming, reason = row(tool)
     if not incoming then return nil, reason or 'invalid_input' end
+    if sharedWeapon(prepared) then return nil, 'overlapping_hands' end
     if sameRow(initial.primary, incoming) then return nil, 'unchanged_primary' end
     if initial.secondary ~= false and equal(initial.secondary.item, incoming.item) then return nil, 'overlapping_hands' end
-    if not sameRow(initial.secondary, prepared.secondary) then return nil, 'secondary_changed' end
+    if sharedWeapon(initial) then
+        if prepared.secondary ~= false then return nil, 'secondary_changed' end
+    elseif not sameRow(initial.secondary, prepared.secondary) then return nil, 'secondary_changed' end
     -- The same opaque item cannot acquire different native traits between rows.
     local rows = {incoming}
     if initial.primary ~= false then rows[#rows+1] = initial.primary end
@@ -174,7 +190,7 @@ local function captureState(before, after, tool)
     local key = {}
     local accepted; accepted, reason = projects(key, initial, incoming, prepared)
     if not accepted then return nil, reason end
-    accepted, reason = projects(key, prepared, initial.primary, initial)
+    accepted, reason = projects(key, prepared, initial.primary, initial, restoreMode(initial))
     if not accepted then return nil, reason end
     local handle = {}
     local state = {before=initial, after=prepared, key=key, phase='open'}
@@ -190,7 +206,7 @@ local function proposeState(handle, current)
     local observed, reason = snapshot(current)
     if not observed then return nil, reason end
     if not sameState(observed, state.after) then return nil, 'current_changed' end
-    local accepted; accepted, reason = projects(state.key, observed, state.before.primary, state.before)
+    local accepted; accepted, reason = projects(state.key, observed, state.before.primary, state.before, restoreMode(state.before))
     if not accepted then return nil, reason end
     local proposal = {}
     state.proposal, state.phase = proposal, 'proposed'

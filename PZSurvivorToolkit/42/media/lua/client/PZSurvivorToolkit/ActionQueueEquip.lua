@@ -283,20 +283,24 @@ end
 -- Exact current ordinary hand state at a native tool boundary. A held item
 -- must still be the same root inventory object; equipment with extra native
 -- side effects is outside the automatic primary-hand restoration contract.
-function Equip.restorationHands(actor, incoming)
+function Equip.restorationHands(actor, incoming, incomingBoth)
  local function read()
   if not actor or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead() or actor:isAsleep() then return end
   local root,back=actor:getInventory(),actor:getClothingItem_Back()
   if back and back:hasTag(ItemTag.REPLACE_PRIMARY) then return end
-  local function ordinary(item)
+  local function ordinary(item, sharedGrip)
    if not item then return false end
    local valid,both,weapon,handgun=itemFacts(actor,root,item)
-   if not valid or both or handgun or weapon and item:isTwoHandWeapon() then return end
+   if not valid or both or handgun then return end
+   if (weapon and item:isTwoHandWeapon())~=sharedGrip then return end
    return {item=item,requiresBoth=both,handWeapon=weapon,handgun=handgun}
   end
   local primary,secondary=actor:getPrimaryHandItem(),actor:getSecondaryHandItem()
-  local left,right=ordinary(primary),ordinary(secondary)
-  if incoming and not ordinary(incoming) or left==nil or right==nil or primary and primary==secondary
+  local shared=primary~=nil and primary==secondary
+  local left=ordinary(primary,shared)
+  local right
+  if shared then right=left else right=ordinary(secondary,false) end
+  if incoming and not ordinary(incoming,incomingBoth==true) or left==nil or right==nil
    or actor:getInventory()~=root or actor:getClothingItem_Back()~=back
    or actor:getPrimaryHandItem()~=primary or actor:getSecondaryHandItem()~=secondary then return end
   return {primary=left,secondary=right}

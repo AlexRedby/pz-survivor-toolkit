@@ -141,8 +141,8 @@ local function installOwnIntent(saved)
             and type(update)=='function'and origin(update,'ISInventoryPane.lua')and firstLine(update)==955
     end
     if not watch or not origin(install,"ActionQueueTidyIntent.lua") or not origin(poll,"ActionQueueTidyIntent.lua")
-        or firstLine(install) ~= 575 or firstLine(poll) ~= 444
-        or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua",716420265,"PZSurvivorToolkit",true)
+        or firstLine(install) ~= 582 or firstLine(poll) ~= 444
+        or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua",120995603,"PZSurvivorToolkit",true)
         or not selectorBinding()or not origin(actual,"ISInventoryPane.lua")or not selectedSelector()
         or not sourceMatches("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua",cleanContext and 1708080922 or 3980587789) then return end
     for name, entry in pairs(callbacks) do

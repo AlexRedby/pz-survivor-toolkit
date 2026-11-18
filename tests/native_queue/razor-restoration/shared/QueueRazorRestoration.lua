@@ -1,7 +1,9 @@
 -- Authority-only seeds/interventions; native queue work is never synthesized.
 local F={}
 local P=require 'QueueEnergyPlacement'
-function F.returnedCase(case)return case=='restore-success'or case=='empty-primary'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
+function F.axeCase(case)return case=='two-handed-axe'or case=='two-handed-axe-new-primary-intent'end
+function F.intentCase(case)return case=='new-primary-intent'or case=='two-handed-axe-new-primary-intent'end
+function F.returnedCase(case)return case=='restore-success'or case=='two-handed-axe'or case=='empty-primary'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
 local function id(item)return item and item:getID()or false end
 function F.same(a,b)
  if type(a)~=type(b)then return false end
@@ -87,7 +89,7 @@ end
 function F.prepare(player,case,target,proof,previous)
  assert(not isClient()and P.atCentered(player,target),'authority must be at the prepared square')
  assert(not player:isFemale(),'native male character creation required for beard trimming')
- assert(({['restore-success']=true,['empty-primary']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case],'unknown razor case')
+ assert(({['restore-success']=true,['two-handed-axe']=true,['two-handed-axe-new-primary-intent']=true,['empty-primary']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case],'unknown razor case')
  if previous then F.dispose(previous)end
  assert(not player:getPrimaryHandItem()and not player:getSecondaryHandItem(),'authority seed requires empty initial hands')
  local root=player:getInventory();local bag=assert(root:AddItem('Base.Bag_Military'));local source=bag:getItemContainer();source:setExplored(true)
@@ -98,7 +100,7 @@ function F.prepare(player,case,target,proof,previous)
  local cut=case=='cut-hair-scissors'
  if cut then ids.initialHair='Fabian';ids.targetHair='Bald' end
  local s={player=player,ids=ids,bag=bag}
- for name,kind in pairs({razor=(case=='trim-scissors'or cut)and'Base.Scissors'or'Base.Razor',previous='Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'})do
+ for name,kind in pairs({razor=(case=='trim-scissors'or cut)and'Base.Scissors'or'Base.Razor',previous=F.axeCase(case)and'Base.Axe'or'Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'})do
   local item=assert((name=='razor'and source or root):AddItem(kind));item:setFavorite(true)
   ids.items[name]={id=item:getID(),type=kind}
  end
@@ -107,7 +109,9 @@ function F.prepare(player,case,target,proof,previous)
  tail:setAlreadyReadPages(pages-2);player:setAlreadyReadPages(tail:getFullType(),pages-2);player:setPerkLevelDebug(Perks.Woodwork,0)
  player:setWornItem(bag:canBeEquipped(),bag)
  if case=='empty-primary'then player:setSecondaryHandItem(F.find(player,ids.items.previous.id))
- else player:setPrimaryHandItem(F.find(player,ids.items.previous.id))end
+ else player:setPrimaryHandItem(F.find(player,ids.items.previous.id))
+  if F.axeCase(case)then player:setSecondaryHandItem(F.find(player,ids.items.previous.id))end
+ end
  local visual=player:getHumanVisual();visual:setBeardModel(ids.initialBeard)
  if cut then
   -- Disposable fixture setup precedes the exact inventory/appearance baseline.
@@ -149,7 +153,8 @@ function F.expected(ids)
  if ids.case=='cut-hair-scissors'then row.appearance.hair=ids.targetHair;row.appearance.nonAttached=false
  else row.appearance.beard=ids.case=='cancel-active'and ids.initialBeard or ids.targetBeard end
  if ids.case=='empty-primary'then row.primary=false
- else row.primary=ids.items[ids.handAckDelay and'razor'or ids.case=='new-primary-intent'and'replacement'or'previous'].id end
+ else row.primary=ids.items[ids.handAckDelay and'razor'or F.intentCase(ids.case)and'replacement'or'previous'].id end
+ if F.axeCase(ids.case)and F.intentCase(ids.case)then row.secondary=false end
  row.tail.pages=ids.items.tail.total;row.tail.characterPages=ids.items.tail.total
  if ids.handAckDelay or not F.returnedCase(ids.case)then
   row.origin.sourceCount=0

@@ -96,11 +96,12 @@ local function track(action)
  local name=role(action);assert(name~='unknown','unexpected native producer action '..tostring(action.Type))
  if name~='command'then assert(not actions[name]or actions[name]==action,'duplicate exact native action '..name);actions[name]=action end
  local row={role=name,type=action.Type,actionRef=tostring(action),operationRef=tostring(action.toolkitQueueOperation),itemId=action.item and action.item:getID()or false,
+  equipPrimary=action.Type=='ISEquipWeaponAction'and action.primary or nil,equipTwoHands=action.Type=='ISEquipWeaponAction'and action.twoHands or nil,
   constructorDuration=action.maxTime,hairStyle=action.Type=='ISCutHair'and action.hairStyle or nil,sourceRef=action.srcContainer and tostring(action.srcContainer)or false,allocated=false,started=false,progress=false,events={},ack={},transfers={}}
  row.actor,row.queue,row.root,row.item,row.operation=action.character,q(),action.character:getInventory(),action.item,action.toolkitQueueOperation
  row.source,row.destination=action.srcContainer,action.destContainer
  tracks[action]=row;order[#order+1]=row
- raw('ACTION',{case=ids.case,action={role=name,type=row.type,actionRef=row.actionRef,itemId=row.itemId,constructorDuration=row.constructorDuration,hairStyle=row.hairStyle}})
+ raw('ACTION',{case=ids.case,action={role=name,type=row.type,actionRef=row.actionRef,itemId=row.itemId,constructorDuration=row.constructorDuration,hairStyle=row.hairStyle,equipPrimary=row.equipPrimary,equipTwoHands=row.equipTwoHands}})
  return row
 end
 local function itemIdentity(action,row,boundary)
@@ -166,11 +167,11 @@ assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
   if phase~='running'or action.character~=getPlayer()then return end
   if observeCancelStop then observeCancelStop('before-next-admission',action)end
   local row=track(action)
-  if ids.case=='empty-primary'and row.role=='returned'then
+  if(ids.case=='empty-primary'or ids.case=='two-handed-axe')and row.role=='returned'then
    local restore=assert(actions.restore);acknowledge(restore,assert(tracks[restore]))
   end
   row.admittedAt=getTimestampMs();observeEditor('native-admission',action)
-  if ids.case=='empty-primary'and row.role=='returned'then
+  if(ids.case=='empty-primary'or ids.case=='two-handed-axe')and row.role=='returned'then
    local restore=assert(actions.restore);local restored=assert(tracks[restore])
    evidence.restoreBoundary={at=getTimestampMs(),actionRef=restored.actionRef,nativeRef=tostring(restore.action),
     returnRef=row.actionRef,snapshot=F.snapshot(state)}
@@ -221,7 +222,7 @@ local function produce()
  if editorOff then evidence.editor={};editorTicks=0;observeEditor('before-producer')end
  assert(evidence.initialRevision~=nil,'own primary intent tracking unavailable')
  local previous=assert(F.find(getPlayer(),ids.items.previous.id))
- local hands=T.ActionQueueEquip.restorationHands(getPlayer(),previous)
+ local hands=T.ActionQueueEquip.restorationHands(getPlayer())
  if ids.case=='empty-primary'then
   evidence.handSeed={primary=false,secondary=previous:getID(),type=previous:getFullType(),requiresBoth=previous:isRequiresEquippedBothHands(),
    handWeapon=instanceof(previous,'HandWeapon'),supportsTwo=instanceof(previous,'HandWeapon')and previous:isTwoHandWeapon()or false,
@@ -230,9 +231,13 @@ local function produce()
  evidence.handSeed={id=previous:getID(),type=previous:getFullType(),requiresBoth=previous:isRequiresEquippedBothHands(),
   handWeapon=instanceof(previous,'HandWeapon'),supportsTwo=instanceof(previous,'HandWeapon')and previous:isTwoHandWeapon()or false,
   ordinary=hands~=nil and hands.primary~=nil and hands.primary.item==previous}
+  if F.axeCase(ids.case)then
+   evidence.handSeed.secondary=previous:getID()
+   evidence.handSeed.ordinary=evidence.handSeed.ordinary and hands.secondary and hands.secondary.item==previous
+  end
  end
- assert(evidence.handSeed.ordinary and not evidence.handSeed.requiresBoth and not evidence.handSeed.supportsTwo,
-  'authority initial primary is outside ordinary one-hand restoration')
+ assert(evidence.handSeed.ordinary and not evidence.handSeed.requiresBoth and evidence.handSeed.supportsTwo==F.axeCase(ids.case),
+  'authority initial primary is outside the exact ordinary restoration topology')
  phase='running'
  if cut then ISCharacterScreen.onCutHair(getPlayer(),ids.targetHair,300)
  else ISCharacterScreen.onTrimBeard(getPlayer(),ids.targetBeard)end
@@ -406,7 +411,7 @@ local function observe()
   raw('CONTROL',{case=ids.case,observation=evidence.control});raw('ORIGIN_CLIENT',originReceipt)
  end
  if originCase()then keepBlocked()end
- if ids.case=='new-primary-intent'and row.progress and q().current==trim and not evidence.explicitRequested then
+ if F.intentCase(ids.case)and row.progress and q().current==trim and not evidence.explicitRequested then
   assert(getPlayer():getPrimaryHandItem()==F.find(getPlayer(),ids.items.razor.id),'explicit request missed actual razor held during trim')
   local before=T.ActionQueueTidyIntent.primaryRequestRevision(getPlayer())
   local snapshot=F.snapshot(state);local count=#q().queue
@@ -465,7 +470,7 @@ require('QueuePreflight').onTick(Events,function()
    elseif F.returnedCase(ids.case)then
     assert(actions.restore and actions.returned and #debts==0 and not evidence.explicitRequested,'ordinary producer restore/return missing')
     if ids.case=='cancel-active'then assert(evidence.control and evidence.control.nativeStop and evidence.control.nativeStop.after,'exact native trim cancellation was not observed before cleanup')end
-   elseif ids.case=='new-primary-intent'then
+   elseif F.intentCase(ids.case)then
     assert(evidence.explicitRequested and actions.explicitEquip and not actions.restore and not actions.returned,
      'new primary intent allowed old restore or borrowed return construction')
     assert(#debts==1 and debts[1].itemId==ids.items.razor.id and debts[1].state=='blocked','new primary intent lost exact unpaid razor debt')

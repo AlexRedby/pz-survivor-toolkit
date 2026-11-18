@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.16
+
+- Opt-in grooming restoration returns an axe held in both hands to the same grip after shaving or cutting hair, then returns the borrowed tool to its bag. Choosing another item for either hand takes precedence.
+
 ### 0.2.15
 
 - In Craft Chains, you can cancel the pending return of an individual kept tool fetched from a carried bag. Other tools still return to their original bags after crafting. This integration applies with the queue enabled and P4 Tidy Up Meister absent.
