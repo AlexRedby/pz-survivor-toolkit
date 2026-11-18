@@ -71,7 +71,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.2.8
 
-- **Fix:** When Host confirms that an interrupted restoration failed, the queue updates the existing item-return notice with the confirmed outcome.
+- Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
 
 ### 0.2.7
 
@@ -1791,6 +1791,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.4
+
+- **Fixed:** The client renderer now remembers the south wall cutaway state when deciding whether the neighbouring chunk needs redrawing. Previously it stored the north edge in that slot and could repeatedly mark an unchanged neighbour for redraw.
 
 ### 0.2.3
 

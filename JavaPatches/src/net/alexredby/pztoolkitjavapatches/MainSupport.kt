@@ -357,6 +357,7 @@ internal object MainSupport {
         val itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED)
         val itemClock = ItemTransactionClock.install(ItemTransactionClock.SUPPORTED)
         val hostLoader = HostLoader.install()
+        val cutawaySouthEdge = !GameServer.server && CutawaySouthEdge.install()
         // Define before patch registration: recursive loads during another transform bypass
         // instrumentation.
         if (Main.CART_TRANSITION_SUPPORTED)
@@ -424,6 +425,8 @@ internal object MainSupport {
                 CraftBenchReferences.SUPPORTED +
                 ", barricadedDoors=" +
                 BarricadedDoorPaths.SUPPORTED +
+                ", cutawaySouthEdge=" +
+                cutawaySouthEdge +
                 ", hostLoader=" +
                 hostLoader,
         )

@@ -425,4 +425,55 @@ truck.__YourDashFamily='standard';D.bind(truck)
 assert(rocker.onclick==rocker.__toolkitBeamRotaryClick,'heavy to standard restores the rotary instead of nesting truck behavior')
 truck.__YourDashFamily='heavy';D.bind(truck)
 assert(rocker.onclick==rocker.__toolkitBeamRockerClick and rocker.__toolkitBeamRockerNative.click==nativeClick,'returning to truck wraps the native callback, never the rotary wrapper')
+-- The dashboard prerender runs before the child ISImage tooltip consumer.
+-- YourDash's compact wrapper positions that tooltip after the native update.
+do
+ local translations,language=0,'EN'
+ getText=function(key) translations=translations+1;return language..':'..key end
+ local control=image(48,33)
+ function control:updateTooltip()
+  self.tooltipText=self.mouseover and self.mouseovertext or nil
+ end
+ local originalPre=control.prerender
+ function control:prerender(...) originalPre(self,...);self:updateTooltip() end
+ local tooltipDash={vehicle=v,lightsTex=control,warnLightTex=image(21,16),
+  backgroundTex=image(745,172),__YourDashFamily='standard'}
+ local function frame()
+  ISVehicleDashboard.prerender(tooltipDash)
+  control:prerender()
+ end
+ local function expected(mode,hint)
+  return language..':UI_PZST_BeamDashboard_'..mode..' <LINE> '
+   ..language..':Tooltip_Dashboard_Headlights'
+   ..(hint and ' <LINE> '..language..':UI_PZST_BeamDashboard_'..hint or '')
+ end
+ start()
+ v.on=false;v.data.NepHB.highBeamsOn=false
+ for _,family in ipairs({'standard','sport','heavy'}) do
+  tooltipDash.__YourDashFamily=family
+  frame();frame()
+ end
+ assert(translations==0 and control.tooltipText==nil,'hidden headlights avoid tooltip translation work for every dashboard family')
+ control.mouseover=true;tooltipDash.__YourDashFamily='standard';frame()
+ assert(control.tooltipText==expected('off','Rotary'),'first hovered child frame receives current native and rotary tooltip')
+ v.on=true;frame()
+ assert(control.tooltipText==expected('low','Rotary'),'hovered tooltip follows external low-beam change')
+ v.data.NepHB.highBeamsOn=true;frame()
+ assert(control.tooltipText==expected('high','Rotary'),'hovered tooltip follows external high-beam change')
+ tooltipDash.__YourDashFamily='sport';frame()
+ assert(control.tooltipText==expected('high','Push'),'hovered tooltip follows sport family change')
+ tooltipDash.__YourDashFamily='heavy';frame()
+ assert(control.tooltipText==expected('high','Rocker'),'hovered tooltip follows heavy family change')
+ language='RU';frame()
+ assert(control.tooltipText==expected('high','Rocker'),'hovered tooltip follows language changes without a stale cache')
+ NepHBO7=nil;frame()
+ assert(control.tooltipText==expected('high'),'missing beam API removes the control hint immediately')
+ NepHBO7=originalApi;tooltipDash.warnLightTex=nil;frame()
+ assert(control.tooltipText==expected('high'),'native dashboard retains its headlight text without authored-control hints')
+ local before=translations
+ control.mouseover=false;v.on=false;language='EN';frame()
+ assert(translations==before and control.tooltipText==nil,'leaving hover hides the native tooltip without rebuilding its text')
+ control.mouseover=true;frame()
+ assert(control.tooltipText==expected('off'),'returning hover refreshes mode and language on its first frame')
+end
 print('PASS beam dashboard: native soft indicators, standard rotary, sport push cycle, truck rocker at four scales, native power ACK/guards/alarm, external state and family/API fallback')

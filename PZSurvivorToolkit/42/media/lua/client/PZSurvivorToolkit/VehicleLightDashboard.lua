@@ -349,7 +349,10 @@ function D.bind(dash)
             end
         end
     end
-    if dash.lightsTex then
+    -- ISImage reads this text only while hovered, including YourDash's compact
+    -- tooltip wrapper. Refresh before the child prerender so first hover and
+    -- live mode/family/language changes use the current text without a cache.
+    if dash.lightsTex and dash.lightsTex.mouseover then
         dash.lightsTex.mouseovertext = getText("UI_PZST_BeamDashboard_"..mode)
             .. " <LINE> " .. getText("Tooltip_Dashboard_Headlights")
         if realistic and rotaryAvailable(dash) then

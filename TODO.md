@@ -1,3 +1,8 @@
+# Driving performance on 42.22.2
+
+- [ ] On an isolated full-pack run, check wall cutaway visibility and frame times through town with the current renderer fix. Use this build as the common baseline for subsequent loot comparisons.
+- [ ] Before comparing deferred loot, qualify its automatic-load and first-access paths on the current game and menu Host with current mod sources. Compare equivalent saves on the same route and include the first on-foot approach. Keep the 42.21 optimizer overlay out of this baseline.
+
 # Game 42.22.2 migration
 
 - [ ] Requalify current Project Cook evolved-recipe edits against `PJCK_EvoPanel` strict-instance/physical-ID versus logical-group selection and the current ingredient, first-addition and return protocol. Preserve the independently verified HandCraftPanel start/stop balance repair and native execution while the full edit gate remains closed.
