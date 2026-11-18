@@ -97,6 +97,42 @@ once at the end of the central neighbor loop, preserving the other pair
 updates. Alternating JVMs on restored dense and mixed layouts showed no
 consistent speedup. The current gameplay profile retains native behavior.
 
+## Measured Lua work on arrival
+
+A full-throttle Muldraugh SP drive on macOS recorded the actual callback
+closures in the two native chunk-loading events. The measured phase used the
+same selected sources, order and fresh starting world as the preceding drive.
+The car reached 122 km/h with no contacts. Source paths and closure lines
+were resolved against the effective selected mod files.
+
+| Direct LoadGridsquare listener | Whole measured road (ms) | Ten longest game intervals (ms) |
+| --- | ---: | ---: |
+| PlumbedSinkMainsFix | 117.61 | 5.17 |
+| GasPumpIndicator | 106.13 | 3.97 |
+| BetterGeneratorInfo | 89.83 | 3.41 |
+| damnlib | 68.95 | 2.68 |
+
+The ten intervals totaled 467.45 ms. Both Lua events together took 19.00 ms
+inside 95.80 ms of synchronous chunk admission. The longest interval was
+64.41 ms with 0.87 ms in Lua and 2.01 ms in chunk admission. These inclusive
+wall times include observer overhead. The chunk event's Toolkit
+`loadWithContext` time also includes the upstream SaucedCarts callback.
+Skipping generator discovery when the overlay is disabled loses registry
+entries. Filtering sink discovery on a square's water flag misses objects
+whose saved plumbing state still requires an update.
+
+The historical Windows 42.21 JFR and its matching optimizer class locate
+360 main-thread samples in the per-square event and 40 in the end-of-chunk
+event. Using the JFR clock and the retained ETL switches, the main thread
+was running for most of eight of the ten longest renderer waits for game
+state. Of the 70 main-thread samples in those eight waits, 21 included
+`ItemPickerJava.fillContainer` below chunk admission and 19 included
+`FBORenderCell.renderInternal` below world rendering. Two included direct
+arrival Lua dispatch. These are sampled stacks inside wait windows, not
+exclusive durations or presentation-frame boundaries. The old ETL reports
+event loss. The source, game version and workloads differ from the current
+macOS route.
+
 ## Checking the profiler locally
 
 ```sh
