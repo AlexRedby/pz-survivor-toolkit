@@ -356,6 +356,46 @@ for _,client in ipairs({false,true}) do
     debt(f);tail(f)
     assert(not f.t.ActionQueueSettlement.earned(f.restoreHandle),'native stop earned a hand restoration')
 end
+-- A real Host lag window can expose the unpaid item before the authenticated
+-- canceled terminal arrives. Refine the existing notice rather than preserving
+-- the early unknown label or publishing another debt for the same native stop.
+for _,cancelBeforeExpansion in ipairs({false,true}) do
+    local f=fixture(true,{cancelBeforeExpansion=cancelBeforeExpansion})
+    local settlement=f.t.ActionQueueSettlement
+    f.start(f.restore);f.restore:forceStop();f.stop(f.restore,true)
+    local waiting=debt(f);local before=settlement.blockedReturnInfo(f.player)
+    assert(waiting.reason=='cleanup-unresolved' and f.queue.current==f.restore,
+        'Host lag did not preserve the unresolved exact cleanup notice')
+    f.queue:tick()
+    assert(settlement.blockedReturnInfo(f.player).revision==before.revision,
+        'repeated pending observations revised unchanged cleanup debt')
+    f.acknowledge(f.restore,'canceled');f.queue:tick()
+    local confirmed=debt(f);local after=settlement.blockedReturnInfo(f.player)
+    assert(confirmed.id==waiting.id and confirmed.itemId==waiting.itemId and confirmed.state=='blocked'
+        and confirmed.reason=='cleanup-outcome' and after.count==before.count and after.revision==before.revision+1,
+        'exact Host terminal did not refine the same live cleanup notice once')
+    f.queue:tick()
+    assert(settlement.blockedReturnInfo(f.player).revision==after.revision,
+        'settled cleanup terminal repeatedly revised its existing notice')
+    tail(f)
+end
+do
+    local f=fixture(true)
+    local settlement=f.t.ActionQueueSettlement
+    f.start(f.restore);f.restore:forceStop();f.stop(f.restore,true)
+    local waiting=debt(f)
+    settlement.resetReturnFailures(f.queue)
+    local revoked=settlement.blockedReturns(f.player)
+    assert(#revoked==1 and revoked[1].id==waiting.id and revoked[1].state=='revoked')
+    assert(settlement.keepReturn(f.player,waiting.id),'revoked cleanup notice could not be explicitly forgotten')
+    local forgottenRevision=settlement.blockedReturnInfo(f.player).revision
+    f.acknowledge(f.restore,'canceled');f.queue:tick()
+    assert(#settlement.blockedReturns(f.player)==0
+        and settlement.blockedReturnInfo(f.player).revision==forgottenRevision
+        and f.queue.current==f.tail and allocations(f,f.continuation)==0,
+        'late terminal recreated or revised an explicitly forgotten cleanup notice')
+    tail(f)
+end
 do
     local f=fixture(false)
     f.start(f.restore);f.phase(f.restore,'perform')
@@ -379,10 +419,12 @@ do
     local notice=debt(f)
     assert(f.queue.current==f.restore and f.queue:indexOf(f.tail)>1)
     assert(f.t.ActionQueueSettlement.keepReturn(f.player,notice.id))
+    local keptRevision=f.t.ActionQueueSettlement.blockedReturnInfo(f.player).revision
     assert(loanState(f)=='waived' and not f.t.ActionQueueSettlement.earned(f.restoreHandle))
     f.acknowledge(f.restore,'rejected');f.queue:tick()
     assert(f.queue.current==f.tail and allocations(f,f.continuation)==0
-        and #f.t.ActionQueueSettlement.blockedReturns(f.player)==0,
+        and #f.t.ActionQueueSettlement.blockedReturns(f.player)==0
+        and f.t.ActionQueueSettlement.blockedReturnInfo(f.player).revision==keptRevision,
         'explicit Keep while waiting made retired publication block the later exact terminal')
     tail(f)
 end
@@ -421,11 +463,14 @@ do
     assert(f.queue.current==f.restore and f.queue:indexOf(f.tail)>1 and allocations(f,f.continuation)==0)
     f.advance(30001);f.queue:tick()
     local notice=debt(f)
+    local expiredRevision=f.t.ActionQueueSettlement.blockedReturnInfo(f.player).revision
     assert(f.queue.current==f.restore and f.queue:indexOf(f.tail)>1,
         'expired unknown Host outcome discarded protected head/tail')
     assert(f.restore:complete());f.acknowledge(f.restore,'completed')
     f.queue:tick();f.queue:tick()
-    assert(debt(f).id==notice.id and f.queue.current==f.restore and f.queue:indexOf(f.tail)>1
+    assert(debt(f).id==notice.id and debt(f).reason=='cleanup-unresolved'
+        and f.t.ActionQueueSettlement.blockedReturnInfo(f.player).revision==expiredRevision
+        and f.queue.current==f.restore and f.queue:indexOf(f.tail)>1
         and not f.t.ActionQueueSettlement.earned(f.restoreHandle),
         'late terminal/effect revived cleanup after its native authority deadline')
 end

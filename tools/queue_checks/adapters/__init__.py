@@ -16,6 +16,9 @@ MODULES = {'magazine-unload': 'magazine_unload', 'wring-clothing': 'wring_clothi
            'animal-terminal': 'animal_terminal', 'grooming-cancel': 'grooming_cancel', 'grooming-recovery': 'grooming_recovery', 'cleanup-cancel': 'cleanup_cancel', 'book-controls': 'book_controls', 'approach-queue': 'approach_queue', 'queue-recovery': 'queue_recovery', 'tv-controls': 'tv_controls', 'shelf-book-tv': 'shelf_book_tv', 'bulk-reading': 'bulk_reading', 'radio-settings': 'radio_settings'}
 
 
+MODULES['claimed-return'] = 'claimed_return'
+
+
 def get(suite):
     if suite == 'health' or suite not in MODULES:
         return None

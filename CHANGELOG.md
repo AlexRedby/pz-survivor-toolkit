@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.8
+
+- **Fix:** When Host confirms that an interrupted restoration failed, the queue updates the existing item-return notice with the confirmed outcome.
+
 ### 0.2.7
 
 - **Internal:** A retained cleanup command can take responsibility for returning a borrowed item when its group is canceled. This prevents an early duplicate transfer and records an unresolved return when the command finishes without scheduling its cleanup.

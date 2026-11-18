@@ -3459,9 +3459,34 @@ function Settlement.requireBorrowedReturnSuccess(...)
     if candidate.returnSuccess == returnSuccessEnrolling then candidate.returnSuccess = reservation end
     return ok and accepted == true
 end
-returnSuccessBlocked = function(plan, reason)
+returnSuccessBlocked = function(plan, reason, terminal)
     if plan.state == "retired" then return false end
-    if plan.failure then plan.state = "blocked"; return true end
+    if plan.failure then
+        -- A stop may publish debt while its exact Host terminal is still in
+        -- flight. Refine that same visible notice only at the authenticated
+        -- terminal boundary; this neither republishes nor retires an outcome.
+        if terminal == true and reason == "cleanup-outcome" and plan.failure.reason == "cleanup-unresolved" then
+            local failure = plan.failure
+            local live = operationLive(plan.record) and operationLive(plan.loan.operation) and borrowingLive(plan.scope)
+            if plan.state == "retired" then return false end
+            local bucket = returnFailures[plan.actor]
+            if live and bucket and plan.failure == failure and failure.state == "blocked" and plan.state == "blocked"
+                and failure.plan == plan and failure.candidate == plan.candidate and plan.candidate.returnSuccess == plan
+                and plan.candidate.phase == "active" and not plan.candidate.ambiguous
+                and ISTimedActionQueue.queues[plan.actor] == plan.queue and plan.queue.character == plan.actor
+                and plan.queue.queue == plan.list and (plan.queue.toolkitOperationGeneration or 0) == plan.generation then
+                for _, entry in ipairs(bucket.entries) do
+                    if entry == failure then
+                        failure.reason = reason
+                        bucket.revision = bucket.revision + 1
+                        break
+                    end
+                end
+            end
+        end
+        plan.state = "blocked"
+        return true
+    end
     plan.state = "blocked"
     local liveOwner = ISTimedActionQueue.queues[plan.actor] == plan.queue
         and plan.queue.queue == plan.list and (plan.queue.toolkitOperationGeneration or 0) == plan.generation
@@ -3811,7 +3836,7 @@ function Settlement.cleanupFailureState(queue, action, native, reason)
                 or plan.candidate.returnSuccess ~= plan then return "refused" end
             local waived = plan.state == "retired" and plan.candidate.phase == "waived"
                 and plan.failure and plan.failure.plan == plan and plan.failure.candidate == plan.candidate
-            if not waived and not returnSuccessBlocked(plan, terminal and "cleanup-outcome" or "cleanup-unresolved") then published = false end
+            if not waived and not returnSuccessBlocked(plan, terminal and "cleanup-outcome" or "cleanup-unresolved", terminal) then published = false end
         end
         if not published then return "debt_unavailable" end
         if not terminal then return "waiting" end
