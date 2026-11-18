@@ -60,6 +60,20 @@ advice inside that method. Measure with a minimal unchanged frame collector, or
 explicitly verify a composed transform before adding richer instrumentation; do
 not weaken the guards merely to admit an unknown combination.
 
+## First access from two Host players
+
+Use suite `loot-demand-peers`, case `same-bin`, with two local clients, the
+ordered pack from `SurvivorQoL-selected.ini` and the Host opt-ins above.
+Both clients must see one pending world bin before a common release and send
+native item requests before either observes its contents. The authority must
+fill once. The original root sentinel, bag and child must appear under the
+same parents with the same IDs on both clients. The comparison covers first
+delivery. It does not exercise simultaneous pickups.
+
+On macOS with 42.22.2, the clients sent their requests 4 ms apart and all three recursive item trees matched. The overall run remained
+`needs-review` because the guest logged a native player lookup error during
+connection, before the fixture created its bin.
+
 ## Natural map containers on Build 42.22.2
 
 For a menu Host choose the `natural` case and set `loot_demand_arm` to

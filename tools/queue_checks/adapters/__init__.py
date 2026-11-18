@@ -18,6 +18,7 @@ MODULES = {'loot-demand-drive': 'loot_demand_drive', 'loot-demand': 'loot_demand
 
 MODULES['claimed-return'] = 'claimed_return'
 MODULES['razor-restoration'] = 'razor_restoration'
+MODULES['loot-demand-peers'] = 'loot_demand_peers'
 
 
 def get(suite):

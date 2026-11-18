@@ -41,7 +41,7 @@ public final class Main {
         if(!expected.matches("[0-9a-f]{32}") || !Files.isRegularFile(marker,LinkOption.NOFOLLOW_LINKS)
             || !Files.isRegularFile(token,LinkOption.NOFOLLOW_LINKS)
             || !Files.readString(token).trim().equals(expected)
-            || !Files.readString(marker).trim().matches("client1|server"))
+            || !Files.readString(marker).trim().matches("client1|client2|server"))
             throw new IllegalStateException("Loot demand requires an authorized isolated profile");
         Instrumentation inst=Accessor.tryGet(Loader.class,"g_instrumentation",null);
         System.setProperty("pz.lootDemand.enabled","true");
