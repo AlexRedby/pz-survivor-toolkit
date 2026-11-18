@@ -1,0 +1,2 @@
+Target: Project Zomboid 42.22.2, game revision 3d39148846.
+Both trial arms use the same Toolkit, Java Patches and selected mod list. The client-only experimental upstream changes are listed in current-trial-manifest.json. The launcher checks native resources and the official archive before staging. TrialProbe observes the initial definitions handed to the JVM after the optional optimizer and before ZombieBuddy. A run without the requested arm's effective-byte and pack readiness evidence is incomplete.

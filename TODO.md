@@ -3,7 +3,7 @@
 - [ ] On an isolated full-pack run, check wall cutaway visibility and frame times through town with the current renderer fix. Use this build as the common baseline for subsequent loot comparisons.
 - [ ] Before comparing deferred loot, qualify its automatic-load and first-access paths on the current game and menu Host with current mod sources. Compare equivalent saves on the same route and include the first on-foot approach. Keep the 42.21 optimizer overlay out of this baseline.
 
-- [ ] Requalify the legacy IsoLot, translucent-square, pending world-item texture and outline-shader experiments separately on current native inputs before activating them or preparing a new Windows optimizer pack. Keep the pinned 42.21 overlay and its previous measurements as historical controls.
+- [ ] Requalify the legacy IsoLot, translucent-square, pending world-item texture and outline-shader experiments separately on current native inputs before adding them to the current Windows optimizer profile. Keep the pinned 42.21 overlay and its previous measurements as historical controls.
 
 # Follow up the recorded Optimized run
 

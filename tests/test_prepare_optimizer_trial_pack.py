@@ -104,7 +104,7 @@ class LocalCandidatePackage(unittest.TestCase):
                     path.write_bytes(b'fixture bridge')
                 return mod
             with mock.patch('tools.prepare_optimizer_trial.build_bridge', side_effect=fixture_bridge):
-                output, archive = prepare(base / 'package', base / 'game', base / 'jdk', root=repo)
+                output, archive = prepare(base / 'package', base / 'game', base / 'jdk', root=repo, current=False)
             pack = json.loads((output / 'pack-manifest.json').read_text())
             receipt = json.loads((output / 'build-receipt.json').read_text())
             effective_mods = ['PZSurvivorToolkit', 'NewMusic', 'PZToolkitJavaPatches']

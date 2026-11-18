@@ -3,7 +3,7 @@ param([string]$ControlCapture, [string]$OptimizedCapture, [string]$PackageRoot,
       [ValidateSet('Auto','Comparison','Control','Optimized')][string]$RunMode = 'Auto')
 
 $script:TrialCollectorPath = $PSCommandPath
-$script:TrialCollectorRevision = '3.5'
+$script:TrialCollectorRevision = '3.6'
 
 # This collector reads receipts only. It never starts or stops a game process.
 function Assert-TrialResultPath([string]$Path) {
@@ -664,7 +664,8 @@ function New-TrialResultsBundle {
             } catch { $settingsComparison.reason='Saved option comparison unavailable; preserve and inspect capture-readiness.json.' }
         }
         if ($scope -eq 'Comparison' -and $settingsComparison.status -ne 'Matches') { $comparisonWarnings += ('Control/Optimized saved game settings comparison: '+$settingsComparison.status+'. '+$settingsComparison.reason) }
-        foreach ($name in @('pack-manifest.json', 'build-receipt.json', 'candidate-manifest.json', 'verification.txt')) {
+        $manifestName = if (Test-Path -LiteralPath (Join-Path $root 'current-trial-manifest.json') -PathType Leaf) { 'current-trial-manifest.json' } else { 'candidate-manifest.json' }
+        foreach ($name in @('pack-manifest.json', 'build-receipt.json', $manifestName, 'verification.txt')) {
             $source = Join-Path $root $name
             if (Test-Path -LiteralPath $source -PathType Leaf) { Copy-TrialResultFile $source (Join-Path $stage $name) }
             else { $missingPackage += $name }

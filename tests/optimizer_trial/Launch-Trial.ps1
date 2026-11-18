@@ -26,6 +26,8 @@ if (-not (Test-Path -LiteralPath $jfrHelper)) { $jfrHelper = Join-Path $PSScript
 . (Join-Path $PSScriptRoot 'TrialDownload.ps1')
 . (Join-Path $PSScriptRoot 'TrialProcess.ps1')
 . (Join-Path $PSScriptRoot 'TrialStorage.ps1')
+$currentHelper = Join-Path $PSScriptRoot 'TrialCurrent.ps1'
+if (Test-Path -LiteralPath $currentHelper -PathType Leaf) { . $currentHelper }
 
 function Assert-TrialStrings($Values, [string]$Name) {
     if ($Values -isnot [Array]) { throw "$Name must be an array of strings." }
@@ -502,8 +504,8 @@ function Test-TrialWorldReady([string]$Text) {
     return $Text.Contains('[PZDrivingBench] READY driver=true engine=true')
 }
 
-function New-TrialSessionLogs([string]$Cache) {
-    $directory = Join-Path $Cache ('TrialRuns/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N'))
+function New-TrialSessionLogs([string]$Cache, [string]$RunRoot = $Cache) {
+    $directory = Join-Path $RunRoot ('TrialRuns/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N'))
     Assert-NoReparsePoint $directory
     [IO.Directory]::CreateDirectory($directory) | Out-Null
     $console = Join-Path $Cache 'console.txt'
@@ -626,12 +628,16 @@ function Invoke-OptimizerTrial {
     $windowsVersion = Get-TrialWindowsVersion
     $config = Read-TrialLaunchConfig (Join-Path $game 'ProjectZomboid64.json') -WindowsVersion $windowsVersion
     Assert-TrialGame $game $config
-    $manifest = Read-TrialManifest (Join-Path $package 'candidate-manifest.json')
+    $currentPath = Join-Path $package 'current-trial-manifest.json'
+    $current = Test-Path -LiteralPath $currentPath -PathType Leaf
+    $probe = if ($current) { Get-CurrentTrialProbe $package } else { $null }
+    $manifest = if ($current) { Read-CurrentTrialManifest $currentPath } else { Read-TrialManifest (Join-Path $package 'candidate-manifest.json') }
     # This happens before any foreign Java code, including the bridge or optimizer, can initialize.
     Assert-TrialNativeGuards (Join-Path $game 'projectzomboid.jar') $manifest.native_guards
     Assert-TrialClasspathGuards $game $config.Classpath $manifest.native_guards
-    Assert-TrialNativeAbsences $game $config.Classpath $manifest.native_absences
-    $cache = Join-Path $package 'Profiles/OptimizerTrial'
+    if (-not $current) { Assert-TrialNativeAbsences $game $config.Classpath $manifest.native_absences }
+    $cacheRoot = Join-Path $package 'Profiles/OptimizerTrial'
+    $cache = if ($current) { Get-CurrentTrialCache $cacheRoot $Mode -SessionType $Session } else { $cacheRoot }
     Assert-SeparatePaths $game $cache
     Assert-SeparatePaths (Get-FullPath $SourceProfile) $cache
     $workshop = $WorkshopRoot
@@ -643,13 +649,20 @@ function Invoke-OptimizerTrial {
         $jfrTools = Resolve-TrialJfrTools $package $game $JdkDir
         $frameClient = Get-TrialCapFrameX $CapFrameXPort -Directory $CapFrameXDir
     }
-    $lock = Get-ProfileLock $cache
+    # One root lock keeps Control and Optimized sequential even with separate caches.
+    $lock = Get-ProfileLock $cacheRoot
     try {
+        if ($current) {
+            $modeLock = Get-ProfileLock $cache
+            $modeLock.Dispose() # Root lock owns the full launch lifecycle.
+        }
         Initialize-TrialProfile $cache (Get-FullPath $SourceProfile) $package $resolved
         Assert-TrialNoHarness $cache
         $candidate = $null
-        if ($Mode -eq 'Optimized') { $candidate = Get-TrialCandidate $package $manifest -SourceZip $OptimizerZip }
-        $plan = New-TrialPlan $game $cache $Mode $config $candidate -SessionType $Session
+        if ($Mode -eq 'Optimized') {
+            $candidate = if ($current) { Get-CurrentTrialCandidate $package $manifest -SourceZip $OptimizerZip } else { Get-TrialCandidate $package $manifest -SourceZip $OptimizerZip }
+        }
+        $plan = if ($current) { New-CurrentTrialPlan $game $cache $Mode $config $candidate -SessionType $Session -Manifest $manifest -Package $package -Probe $probe } else { New-TrialPlan $game $cache $Mode $config $candidate -SessionType $Session }
         $plan.automaticCapFrameX = -not $Menu
         $plan | Add-Member -NotePropertyName Pack -NotePropertyValue ([pscustomobject]@{ MainRevision = $resolved.Pack.main_revision; ModIds = $resolved.Ids; Sources = @($resolved.Sources | Select-Object Id, Kind, Root, Info, Version, WorkshopId) })
         Write-Host ("Pinned candidate pack {0}: {1} active mods; session={2}." -f $resolved.Pack.main_revision, $resolved.Ids.Count, $Session)
@@ -678,14 +691,14 @@ function Invoke-OptimizerTrial {
         $plan.TrialWorld = $contextId
         [IO.File]::WriteAllText((Join-Path $lua 'OptimizerTrial-context-id.txt'), $contextId + "`n", $script:Utf8)
         [IO.File]::WriteAllText((Join-Path $lua 'DrivingBench-run.txt'), $run + "`n", $script:Utf8)
-        $sessionLogs = New-TrialSessionLogs $cache
+        $sessionLogs = New-TrialSessionLogs $cache -RunRoot $cacheRoot
         $plan.Logs = $sessionLogs
         $plan.Activation = 'Pending'
         Save-TrialPlan $plan $log
         $capture = $null; $logsFinalized = $false
         $previousPath = $env:PATH; $previousApp = $env:SteamAppId; $previousGame = $env:SteamGameId
         try {
-            $env:PATH = $game + ';' + (Join-Path $game 'win64') + ';' + (Join-Path $game 'jre64/bin') + ';' + $previousPath
+            $env:PATH = $game + ';' + (Join-Path $game 'win64') + ';' + (Join-Path $game 'jre64/bin') + ';' + (Join-Path $game 'jre64/bin/server') + ';' + $previousPath
             $env:SteamAppId = '108600'; $env:SteamGameId = '108600'
             $capture = Start-TrialProcess $plan $sessionLogs
             $process = $capture.Process
@@ -713,7 +726,7 @@ function Invoke-OptimizerTrial {
                 # Stop reading full logs after READY so the launcher adds no polling I/O during capture.
                 if (-not $readyAnnounced -and -not $failureAnnounced) {
                     $sessionText = Read-TrialSessionText $sessionLogs
-                    $state = Get-TrialRunReadiness $sessionText $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session -ContextId $contextId -Menu:$Menu -PreviousFailure $failureAnnounced
+                    $state = if ($current) { Get-CurrentTrialReadiness $sessionText $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session $contextId -Menu:$Menu -PreviousFailure $failureAnnounced -Manifest $manifest } else { Get-TrialRunReadiness $sessionText $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session -ContextId $contextId -Menu:$Menu -PreviousFailure $failureAnnounced }
                     $plan.Readiness = $state
                     if ($state.Failed) {
                         $failureAnnounced = $true; $plan.Activation = 'Incomplete'
@@ -722,7 +735,10 @@ function Invoke-OptimizerTrial {
                     } elseif ($state.Ready) {
                         $readyAnnounced = $true; $plan.Activation = 'Ready'
                         Save-TrialPlan $plan $log
-                        if ($Mode -eq 'Optimized') { Write-Host "READY: full pack + bounded render/chunk profile + cache/preloads verified; $($state.HandedOff)/$($state.ActionGroups) action groups accounted for. Client and optimizer ready." }
+                        if ($Mode -eq 'Optimized') {
+                            if ($current) { Write-Host 'READY: current full pack + pinned B42.22.2 upstream runtime verified. Client ready.' }
+                            else { Write-Host "READY: full pack + bounded render/chunk profile + cache/preloads verified; $($state.HandedOff)/$($state.ActionGroups) action groups accounted for. Client and optimizer ready." }
+                        }
                         else { Write-Host 'READY CONTROL: full pinned candidate modpack activation verified. Client ready.' }
                         if (-not $Menu -and -not $exited) {
                             $plan.Diagnostics = Invoke-TrialDiagnostics $process $plan $jfrTools -FrameClient $frameClient -SkipWpr:$SkipWpr
@@ -741,7 +757,8 @@ function Invoke-OptimizerTrial {
             Write-Host 'LOGS SAVED: stdout/stderr drained and closed.'
             $process.Refresh()
             $plan.JavaExitCode = $process.ExitCode
-            $plan.Readiness = Get-TrialRunReadiness (Read-TrialSessionText $sessionLogs) $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session -ContextId $contextId -Menu:$Menu -PreviousFailure $failureAnnounced
+            $finalText = Read-TrialSessionText $sessionLogs
+            $plan.Readiness = if ($current) { Get-CurrentTrialReadiness $finalText $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session $contextId -Menu:$Menu -PreviousFailure $failureAnnounced -Manifest $manifest } else { Get-TrialRunReadiness $finalText $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session -ContextId $contextId -Menu:$Menu -PreviousFailure $failureAnnounced }
             if ($Mode -eq 'Optimized') {
                 if (-not $plan.Readiness.Ready) {
                     $plan.Activation = 'Incomplete'; Save-TrialPlan $plan $log

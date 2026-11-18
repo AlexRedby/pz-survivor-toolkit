@@ -21,6 +21,10 @@ function Get-TrialModInfo([string]$Root) {
     # B42 ignores legacy root metadata. The engine defaults to 42.0, picks
     # the greatest compatible major/minor, and ignores patch components.
     $selected = Join-Path $Root '42.0'; $minimum = 42000
+    $supported = 42021
+    if (Get-Variable -Name TrialGameVersion -Scope Script -ErrorAction SilentlyContinue) {
+        $supported = $script:TrialGameVersion.Major * 1000 + $script:TrialGameVersion.Minor
+    }
     foreach ($child in @(Get-ChildItem -LiteralPath $Root -Directory -Force)) {
         Assert-NoReparsePoint $child.FullName
         if ($child.Name -notmatch '^\d+(?:\.\d+)*$') { continue }
@@ -28,7 +32,7 @@ function Get-TrialModInfo([string]$Root) {
         $minor = 0
         if ($parts.Count -gt 1) { $minor = [Math]::Min([int]$parts[1], 999) }
         $value = [int]$parts[0] * 1000 + $minor
-        if ($value -ge $minimum -and $value -le 42021) { $selected = $child.FullName; $minimum = $value }
+        if ($value -ge $minimum -and $value -le $supported) { $selected = $child.FullName; $minimum = $value }
     }
     foreach ($layer in @($selected, (Join-Path $Root 'common'))) {
         $info = Join-Path $layer 'mod.info'
@@ -38,6 +42,21 @@ function Get-TrialModInfo([string]$Root) {
         }
     }
     return $null
+}
+
+function Assert-TrialCurrentModCompatibility($SourceMod) {
+    if (-not (Get-Variable -Name TrialGameVersion -Scope Script -ErrorAction SilentlyContinue)) { return }
+    $current = $script:TrialGameVersion.Major * 1000 + $script:TrialGameVersion.Minor
+    foreach ($key in @('versionMin', 'versionMax')) {
+        if ($SourceMod.Metadata.Keys -cnotcontains $key -or -not $SourceMod.Metadata[$key]) { continue }
+        $value = $SourceMod.Metadata[$key]
+        # GameVersion compares major/minor only; the patch suffix is descriptive.
+        if ($value -notmatch '^(\d+)\.(\d+)') { throw "Invalid $key for selected mod $($SourceMod.Id): $value" }
+        $bound = [int]$Matches[1] * 1000 + [Math]::Min([int]$Matches[2], 999)
+        if (($key -eq 'versionMin' -and $bound -gt $current) -or ($key -eq 'versionMax' -and $bound -lt $current)) {
+            throw "Selected mod $($SourceMod.Id) does not support Build $script:TrialGameVersion ($key=$value): $($SourceMod.Info)"
+        }
+    }
 }
 
 function Get-TrialTreeFiles([string]$Root) {
@@ -137,9 +156,10 @@ function Resolve-TrialPack([string]$Package, [string]$Source, [string]$Workshop,
     }
     if ($missing.Count) {
         $links = @($absentItems | ForEach-Object { "https://steamcommunity.com/sharedfiles/filedetails/?id=$_" })
-        throw "Missing compatible Build 42.21 Mod IDs: $($missing -join ', '). Missing Workshop item IDs: $($absentItems -join ', '). Install/update the required items through Steam, or supply their local sources. Workshop links: $($links -join ' ')"
+        throw "Missing compatible current-build Mod IDs: $($missing -join ', '). Missing Workshop item IDs: $($absentItems -join ', '). Install/update the required items through Steam, or supply their local sources. Workshop links: $($links -join ' ')"
     }
     foreach ($sourceMod in $sources) {
+        Assert-TrialCurrentModCompatibility $sourceMod
         if ($sourceMod.Id -cnotin $ids) { continue }
         if (-not $sourceMod.Metadata.ContainsKey('require')) { continue }
         foreach ($dependency in $sourceMod.Metadata['require'].Split(',')) {

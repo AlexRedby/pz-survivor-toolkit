@@ -311,8 +311,9 @@ $ready=Get-TrialReadiness ({ps(base)}+"`n[OptimizerTrial] bridge ready mode=mult
 
     def test_final_classification_uses_live_readiness_helper_with_prior_failure(self):
         source = LAUNCHER.read_text()
-        self.assertEqual(source.count('= Get-TrialRunReadiness '), 2)
-        self.assertEqual(source.count('-PreviousFailure $failureAnnounced'), 2)
+        self.assertEqual(source.count('Get-TrialRunReadiness $'), 2)
+        self.assertEqual(source.count('Get-CurrentTrialReadiness $'), 2)
+        self.assertEqual(source.count('-PreviousFailure $failureAnnounced'), 4)
         final = source[source.index('$plan.JavaExitCode = $process.ExitCode'):]
         self.assertNotIn('$plan.Readiness = Get-TrialReadiness ', final)
         self.assertNotIn('$plan.Readiness = Get-TrialPackActivation ', final)

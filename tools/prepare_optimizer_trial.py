@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -296,9 +297,48 @@ def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path
     return manifest
 
 
+def build_current_bridge(stage: Path, game: Path, jdk: Path, source: Path, manifest: dict) -> Path:
+    """Build the diagnostic mod and the read-only JVM observer from the same profile."""
+    guards = manifest['native_guards']
+    lifecycle = {'zombie/GitVersion.class', 'zombie/gameStates/IngameState.class',
+                 'zombie/gameStates/ServerDisconnectState.class', 'zombie/Lua/LuaManager.class'}
+    if not lifecycle <= guards.keys():
+        raise ValueError('Current trial is missing a native lifecycle guard')
+    with zipfile.ZipFile(game / 'projectzomboid.jar') as native:
+        for name, expected in guards.items():
+            if hashlib.sha256(native.read(name)).hexdigest() != expected:
+                raise ValueError('Game does not match the reviewed trial input: ' + name)
+    prefix = 'pzopt/overrides/'
+    targets = {name[len(prefix):]: digest for name, digest in manifest['selected_files'].items()
+               if name.startswith(prefix) and name.endswith('.class')}
+    if not targets or any(name not in guards or targets[name] == guards[name] for name in targets):
+        raise ValueError('The paired JVM observer needs distinct native and optimized class fingerprints')
+    bridge = stage / 'mods' / BRIDGE
+    (bridge / 'common').mkdir(parents=True)
+    jar_dir = bridge / '42/media/java'
+    jar_dir.mkdir(parents=True)
+    shutil.copy2(source / 'mod.info.template', bridge / '42/mod.info')
+    classpath = os.pathsep.join(str(game / f) for f in ('projectzomboid.jar', 'ZombieBuddy.jar'))
+    with tempfile.TemporaryDirectory(prefix='trial-observer-') as temp:
+        classes = Path(temp)
+        subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+                        str(source / 'Main.java'), str(source / 'TrialProbe.java')], check=True)
+        with zipfile.ZipFile(jar_dir / (BRIDGE + '.jar'), 'x', zipfile.ZIP_DEFLATED) as jar:
+            for file in sorted((classes / 'net/alexredby/optimizertrial').glob('*.class')):
+                jar.write(file, file.relative_to(classes).as_posix())
+        package = 'net/alexredby/trialprobe/'
+        with zipfile.ZipFile(stage / 'TrialProbe.jar', 'x', zipfile.ZIP_DEFLATED) as jar:
+            jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nPremain-Class: net.alexredby.trialprobe.TrialProbe\n\n')
+            jar.write(classes / package / 'TrialProbe.class', package + 'TrialProbe.class')
+            for arm, hashes in [('Control', guards), ('Optimized', targets)]:
+                jar.writestr(package + arm + '.properties', properties_resource(
+                    {name.removesuffix('.class'): hashes[name] for name in targets}, hashes=True))
+    return bridge
+
+
 def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
             pack_ref: str = 'HEAD', kotlin_home: Path | None = None,
-            java_source: Path | None = None, base_ref: str = 'origin/main') -> tuple[Path, Path]:
+            java_source: Path | None = None, base_ref: str = 'origin/main', *, current: bool = True) -> tuple[Path, Path]:
     root, output, game, jdk = (p.absolute() for p in (root, output, game, jdk))
     archive = output.with_suffix('.zip')
     if output.exists() or archive.exists():
@@ -307,16 +347,24 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         raise ValueError('Linked output is not supported')
     source = root / 'tests/optimizer_trial'
     base = root / 'tests/driving_benchmark'
-    for name in LAUNCHERS:
-        regular(source / name)
+    inputs = {name: source / name for name in LAUNCHERS}
+    manifest_name = 'candidate-manifest.json'
+    if current:
+        manifest_name = 'current-trial-manifest.json'
+        for name in ('candidate-manifest.json', 'PERFORMANCE-PLAN.md'):
+            del inputs[name]
+        inputs.update({name: source / 'current' / name for name in ('README.txt', 'verification.txt', manifest_name)})
+        inputs['TrialCurrent.ps1'] = source / 'TrialCurrent.ps1'
+    for file in inputs.values():
+        regular(file)
     for name in ('Launch.ps1', 'Record-JFR.ps1', 'Record-JFR.cmd'):
         regular(base / name)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.optimizer-trial-', dir=output.parent) as temp:
         stage = Path(temp) / PACKAGE
         stage.mkdir()
-        for name in LAUNCHERS:
-            shutil.copy2(source / name, stage / name)
+        for name, file in inputs.items():
+            shutil.copy2(file, stage / name)
         for name in ('Launch.ps1', 'Record-JFR.ps1', 'Record-JFR.cmd'):
             shutil.copy2(base / name, stage / name)
         from tools.prepare_driving_benchmark import _regular_tree, HOST_INI
@@ -325,7 +373,12 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         shutil.copytree(starter, stage / 'mods/PZDrivingBench')
         (stage / 'Server').mkdir()
         (stage / 'Server/PZDrivingBench.ini').write_text(HOST_INI)
-        bridge = build_bridge(stage / 'mods', game, jdk, root, stage / 'candidate-manifest.json')
+        candidate = stage / manifest_name
+        candidate_data = json.loads(candidate.read_text(encoding='utf-8'))
+        if current:
+            bridge = build_current_bridge(stage, game, jdk, source / 'current', candidate_data)
+        else:
+            bridge = build_bridge(stage / 'mods', game, jdk, root, candidate)
         pack_source = Path(temp) / 'candidate-source'
         revision = snapshot_pack(root, pack_source, pack_ref)
         provenance = pack_provenance(root, revision, base_ref)
@@ -340,16 +393,16 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
                    'bridge_jar_sha256': hashlib.sha256(
                        (bridge / f'42/media/java/{BRIDGE}.jar').read_bytes()).hexdigest(),
                    'dashboard_sha256': hashlib.sha256((stage / 'mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua').read_bytes()).hexdigest()}
-        receipt['diagnostics_files_sha256'] = {name: hashlib.sha256((stage / name).read_bytes()).hexdigest() for name in LAUNCHERS}
+        receipt['diagnostics_files_sha256'] = {name: hashlib.sha256((stage / name).read_bytes()).hexdigest() for name in inputs}
         receipt['wpr_profile'] = {'file': 'PZTrial.wprp', 'selector': 'PZTrial.light',
             'sha256': hashlib.sha256((stage / 'PZTrial.wprp').read_bytes()).hexdigest()}
-        candidate = stage / 'candidate-manifest.json'
         receipt['candidate_manifest_sha256'] = hashlib.sha256(candidate.read_bytes()).hexdigest()
-        candidate_data = json.loads(candidate.read_text(encoding='utf-8'))
+        if current:
+            receipt['trial_probe_sha256'] = hashlib.sha256((stage / 'TrialProbe.jar').read_bytes()).hexdigest()
         receipt['optimizer_candidate'] = {'format': candidate_data['format'],
             'release_sha256': candidate_data.get('release_sha256'),
-            'profile_id': candidate_data.get('profile', {}).get('id'),
-            'profile_source_revision': candidate_data.get('toolkit_source_revision')}
+            'profile_id': candidate_data.get('profile_id') if current else candidate_data.get('profile', {}).get('id'),
+            'profile_source_revision': candidate_data.get('upstream_revision' if current else 'toolkit_source_revision')}
         if java_identity is not None:
             receipt['java_source'] = java_identity
         (stage / 'build-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
@@ -375,8 +428,10 @@ def main() -> None:
     p.add_argument('--base-ref', default='origin/main', help='Fetched main ref used to record the candidate merge base')
     p.add_argument('--kotlin-home', type=Path, help='Pinned Kotlin compiler required by the snapshotted candidate builder')
     p.add_argument('--java-source', type=Path, help='Explicit reviewed JavaPatches working-source directory; Toolkit and mod selection stay pinned to --pack-ref')
+    p.add_argument('--historical-42.21', action='store_true', dest='historical',
+                   help='Package the archived classpath comparison using matching historical game and Toolkit inputs')
     a = p.parse_args()
-    for value in prepare(a.output, a.game, a.jdk, pack_ref=a.pack_ref, kotlin_home=a.kotlin_home, java_source=a.java_source, base_ref=a.base_ref):
+    for value in prepare(a.output, a.game, a.jdk, pack_ref=a.pack_ref, kotlin_home=a.kotlin_home, java_source=a.java_source, base_ref=a.base_ref, current=not a.historical):
         print(value)
 
 

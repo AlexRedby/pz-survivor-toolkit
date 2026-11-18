@@ -809,7 +809,7 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
         self.assertEqual([run["mode"] for run in summary["runs"]], [mode])
         self.assertEqual(summary["settingsComparison"]["status"], "NotApplicable")
         self.assertTrue(summary["settingsComparison"]["reason"])
-        self.assertEqual(summary["collector"]["revision"], "3.5")
+        self.assertEqual(summary["collector"]["revision"], "3.6")
         self.assertEqual(summary["collector"]["scriptFile"], SCRIPT.name)
         self.assertEqual(summary["collector"]["sha256"], hashlib.sha256(script.read_bytes()).hexdigest())
 
@@ -841,6 +841,18 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
             self.assertFalse(any(name.startswith("Runs/Control/") for name in archive.namelist()))
         self.assertEqual(original, {path: path.read_bytes() for path in self.runs.rglob("*") if path.is_file()})
         self.assertFalse((foreign_cwd / "Diagnostics").exists())
+
+    def test_current_manifest_single_optimized_preserves_current_metadata(self):
+        shutil.rmtree(self.runs / "control-run")
+        self.automatic_fixture("Optimized")
+        (self.root / "candidate-manifest.json").unlink()
+        current = self.root / "current-trial-manifest.json"
+        current.write_text(json.dumps({"format": 1, "game_version": "42.22.2"}))
+        result = self.collect(automatic=True)
+        self.assert_single_summary(result["Summary"], "Optimized")
+        with zipfile.ZipFile(result["Path"]) as archive:
+            self.assertEqual(archive.read(current.name), current.read_bytes())
+            self.assertNotIn("candidate-manifest.json", archive.namelist())
 
     def test_auto_control_only_is_labelled_single_control(self):
         shutil.rmtree(self.runs / "optimized-run")

@@ -1,0 +1,10 @@
+name=Driving trial observations
+id=PZDrivingOptimizerBridge
+version=0.1.0
+versionMin=42.22
+versionMax=42.22
+require=\ZombieBuddy
+javaJarFile=media/java/PZDrivingOptimizerBridge.jar
+javaPkgName=net.alexredby.optimizertrial
+ZBVersionMin=2.3.4
+description=Flushes client driving observations before leaving an isolated diagnostic session.

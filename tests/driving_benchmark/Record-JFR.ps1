@@ -120,7 +120,7 @@ function Start-JfrDrivingCapture([string]$Jcmd, [int]$TargetId, [string]$RunDire
     [IO.Directory]::CreateDirectory($RunDirectory) | Out-Null
     $version = Invoke-JfrTool $Jcmd @([string]$TargetId, 'VM.version')
     Require-JfrToolSuccess $version 'Cannot attach to the selected game'
-    if ($version.Output -notmatch '(?:JDK|VM) version 25[.]') { throw ("Expected the Build 42.21 Java 25 runtime. " + $version.Output) }
+    if ($version.Output -notmatch '(?:JDK|VM) version 25[.]') { throw ("Expected the game Java 25 runtime. " + $version.Output) }
     [IO.File]::WriteAllText((Join-Path $RunDirectory 'java-version.txt'), $version.Output, $script:JfrUtf8)
     $recording = Join-Path $RunDirectory 'drive.jfr'
     $commandFile = Join-Path $RunDirectory 'start-command.txt'
