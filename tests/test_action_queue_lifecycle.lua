@@ -81,6 +81,48 @@ enabled = false
 assert(not Lifecycle.begin(action, "perform"))
 assert(not Lifecycle.deferCompletion(queue, action))
 assert(Lifecycle.flush(queue) == nil)
+-- Enrolled editor-off restoration uses the common native boundary only for
+-- its exact live member. SP complete and Host settlement remain independent
+-- gates; unrelated off actions still run without Toolkit scheduling ownership.
+do
+    local toolkit = PZSurvivorToolkit
+    local previous = toolkit.ActionQueueSettlement
+    local enrolled, outcome
+    toolkit.ActionQueueSettlement = {
+        restorationActive = function(candidate) return candidate == enrolled end,
+        drainingAction = function() return false end,
+        completionState = function(_, candidate)
+            assert(candidate == enrolled, "unrelated action entered restoration settlement")
+            return outcome
+        end,
+    }
+    for _, multiplayer in ipairs({false, true}) do
+        client = multiplayer
+        queue, action, present = fixture()
+        enrolled, outcome = action, "waiting"
+        local unrelatedQueue, unrelated = fixture()
+        assert(not Lifecycle.begin(unrelated, "perform"), "unrelated disabled action acquired restoration")
+        assert(not Lifecycle.deferCompletion(unrelatedQueue, unrelated))
+        assert(Lifecycle.begin(action, "perform"))
+        queue:onCompleted(action)
+        Lifecycle.finish(action, "perform", true)
+        present[action.action] = nil
+        assert(Lifecycle.flush(queue) == "waiting" and queue.started == 0)
+        if not multiplayer then
+            assert(Lifecycle.begin(action, "complete"))
+            table.insert(queue.queue, {character = action.character, restored = true})
+            Lifecycle.finish(action, "complete", true)
+        end
+        assert(Lifecycle.flush(queue) == "waiting" and queue.started == 0,
+            "native removal advanced before enrolled receipt/effect settlement")
+        outcome = "ready"
+        assert(Lifecycle.flush(queue) == "completed" and queue.started == 1)
+        if not multiplayer then assert(queue.current.restored, "SP restoration child lost its parent boundary") end
+        assert(Lifecycle.flush(queue) == nil, "disabled restoration completion replayed")
+    end
+    toolkit.ActionQueueSettlement = previous
+    client = true
+end
 enabled = true
 assert(not Lifecycle.begin(action, "complete"), "standalone complete acquired unrelated queue")
 assert(not Lifecycle.begin({}, "perform"))
@@ -549,7 +591,7 @@ if NativeActionRoot then
     local update=assert(source:match('(local function updateOperationState%(queue%).-Queue.updateOperationState = updateOperationState)'))
     local completed=assert(source:match('(local completed = ISTimedActionQueue.onCompleted.-\nend)\n\nfunction Queue.move'))
     local tick=assert(source:match('(local tick = ISTimedActionQueue.tick.-\nend)\n\nQueue.label'))
-    assert(loadstring('local Toolkit=...;local Settlement=Toolkit.ActionQueueSettlement or {};local Queue,Operations,Policy={},{},{skipUnavailableHygiene=function()end};local Batch;'
+    assert(loadstring('local Toolkit=...;local Settlement=Toolkit.ActionQueueSettlement or {};local Queue,Operations,Policy={},{},{skipUnavailableHygiene=function()end,adoptBegin=function()end};local Batch;'
         ..'local function live(q)return not q.character:isDead()end;local function processPriority()end;'
         ..'local function clearStop()end;local function craft()return false end;'
         ..update..'\n'..completed..'\n'..tick))(toolkit)

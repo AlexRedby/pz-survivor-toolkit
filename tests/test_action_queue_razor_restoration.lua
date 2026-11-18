@@ -2,22 +2,28 @@
 -- the shared fixture. This does not establish live Host transport or rendering.
 if not NativeActionRoot then return end
 local create=assert(loadfile(ProjectRoot..'/tests/support/borrowing_composition.lua'))()
-local function prepared()
- local f=create(false,{p4=false,carried=true,razor=true})
+local function prepared(editorEnabled)
+ local f=create(false,{p4=false,carried=true,razor=true,queue=editorEnabled})
  local e,q,t=f.env,f.queue,f.env.PZSurvivorToolkit
  local previous=f.tool(810,'Base.Pen',f.inventory)
  local razor=f.tool(811,'Base.Razor')
  f.player.primary=previous
  e.ISCharacterScreen.onTrimBeard(f.player,'Moustache')
- assert(#q.queue==5,'native razor chain must enqueue approach/pickup/equip/trim/owned restoration')
- local approach,pickup,equip,body,cleanup=unpack(q.queue)
- assert(t.ActionQueueApproach.isContainer(approach,f.source,f.player))
+ local approach,pickup,equip,body,cleanup
+ if editorEnabled == false then
+  assert(#q.queue==4,'editor-off native pickup/equip/trim/restore expected; got '..#q.queue)
+  pickup,equip,body,cleanup=unpack(q.queue)
+ else
+  assert(#q.queue==5,'native razor chain must enqueue approach/pickup/equip/trim/owned restoration')
+  approach,pickup,equip,body,cleanup=unpack(q.queue)
+  assert(t.ActionQueueApproach.isContainer(approach,f.source,f.player))
+ end
  assert(pickup.Type=='ISInventoryTransferAction'and equip.Type=='ISEquipWeaponAction'and body.Type=='ISTrimBeard')
  assert(pickup.toolkitQueueOperation==equip.toolkitQueueOperation and equip.toolkitQueueOperation==body.toolkitQueueOperation
   and body.toolkitQueueOperation==cleanup.toolkitQueueOperation,'native operation lost its single ownership token')
  local state=assert(t.ActionQueueSettlement.operationState(pickup))
  assert(#state.borrowings==1 and state.borrowings[1].state=='prepare','menu production earned a physical loan')
- f.start(approach);f.dispatch(approach,'perform')
+ if approach then f.start(approach);f.dispatch(approach,'perform') end
  f.start(pickup);f.dispatch(pickup,'perform')
  f.start(equip);f.dispatch(equip,'perform')
  assert(f.player.primary==razor and razor.container==f.inventory,'native preparation did not put the razor in the primary hand')
@@ -26,24 +32,26 @@ local function prepared()
  f.start(body)
  return f,previous,razor,body,cleanup
 end
-local f,previous,razor,body,cleanup=prepared()
-local q,t=f.queue,f.env.PZSurvivorToolkit
-f.dispatch(body,'perform')
-assert(f.player:getHumanVisual().beard=='Moustache'and q.current==cleanup,'native beard effect or owned cleanup order changed')
-f.start(cleanup);f.dispatch(cleanup,'perform')
-local restored=q.current
-assert(#q.queue==2 and restored.Type=='ISEquipWeaponAction'and restored.item==previous,'owned cleanup must issue one native prior-primary restore')
-f.start(restored);f.dispatch(restored,'perform')
-assert(f.player.primary==previous and razor.container==f.inventory,'native hand restoration changed the borrowed item location')
-local returnCommand=q.current
-f.start(returnCommand);f.dispatch(returnCommand,'perform')
-local returned=q.current
-assert(#q.queue==1 and returned.Type=='ISInventoryTransferAction'and returned.item==razor
- and returned.srcContainer==f.inventory and returned.destContainer==f.source,'earned native restore must precede the exact borrowed return')
-f.start(returned);f.dispatch(returned,'perform')
-local state=assert(t.ActionQueueSettlement.operationState(body))
-assert(#q.queue==0 and razor.container==f.source and f.player.primary==previous and #f.effects==2
- and state.borrowings[1].state=='completed','native return failed to settle exactly one earned tool loan')
+for _, editorEnabled in ipairs({true, false}) do
+ local f,previous,razor,body,cleanup=prepared(editorEnabled)
+ local q,t=f.queue,f.env.PZSurvivorToolkit
+ f.dispatch(body,'perform')
+ assert(f.player:getHumanVisual().beard=='Moustache'and q.current==cleanup,'native beard effect or owned cleanup order changed')
+ f.start(cleanup);f.dispatch(cleanup,'perform')
+ local restored=q.current
+ assert(#q.queue==2 and restored.Type=='ISEquipWeaponAction'and restored.item==previous,'owned cleanup must issue one native prior-primary restore')
+ f.start(restored);f.dispatch(restored,'perform')
+ assert(f.player.primary==previous and razor.container==f.inventory,'native hand restoration changed the borrowed item location')
+ local returnCommand=q.current
+ f.start(returnCommand);f.dispatch(returnCommand,'perform')
+ local returned=q.current
+ assert(#q.queue==1 and returned.Type=='ISInventoryTransferAction'and returned.item==razor
+  and returned.srcContainer==f.inventory and returned.destContainer==f.source,'earned native restore must precede the exact borrowed return')
+ f.start(returned);f.dispatch(returned,'perform')
+ local state=assert(t.ActionQueueSettlement.operationState(body))
+ assert(#q.queue==0 and razor.container==f.source and f.player.primary==previous and #f.effects==2
+  and state.borrowings[1].state=='completed','native return failed to settle exactly one earned tool loan')
+end
 
 local g,old,borrowed,trim,parent=prepared()
 local selected=g.tool(812,'Base.Pencil',g.inventory)

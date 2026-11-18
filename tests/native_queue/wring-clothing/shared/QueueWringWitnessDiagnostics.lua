@@ -90,7 +90,7 @@ function D.setup()
   end
   local value=fresh();value.roles=metadata();value.metadataReadersPresent=type(filenameReader)=='function'and type(lineReader)=='function'
   value.sourceChecks={
-   {role='Lifecycle',file='ActionQueueLifecycle.lua',checksumMatch=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',705616907,'PZSurvivorToolkit',true)==true},
+   {role='Lifecycle',file='ActionQueueLifecycle.lua',checksumMatch=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',577778495,'PZSurvivorToolkit',true)==true},
    {role='Acks',file='ActionQueueAcknowledgements.lua',checksumMatch=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua',392308481,'PZSurvivorToolkit',true)==true}}
   output('setup',value)
  end)

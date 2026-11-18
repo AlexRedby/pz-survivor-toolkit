@@ -203,9 +203,10 @@ end
 
 ISTimedActionQueue.onCompleted = function(queue, action)
     if Settlement.deferCleanupCompletion and Settlement.deferCleanupCompletion(queue, action) then return end
-    -- Enabled queue callbacks belong to their old episode, never a replacement
-    -- head. Disabled controls retain the native completion/retrigger behavior.
+    -- Editor callbacks and enrolled restoration belong to their exact episode.
+    -- Unrelated disabled controls retain native completion/retrigger behavior.
     local protectCompletion=Toolkit.Settings.actionQueue()
+        or Settlement.restorationActive and Settlement.restorationActive(action) == true
     if protectCompletion and (ISTimedActionQueue.queues[queue.character]~=queue
         or queue.current~=action or queue.queue[1]~=action)then return end
     local completionList=queue.queue
@@ -619,7 +620,8 @@ ISTimedActionQueue.tick = function(queue)
     end
     -- An admitted single earned return can fail before its native start. Its
     -- isolated admission result retains the exact item/debt, not a success.
-    if Toolkit.Settings.actionQueue() and live(queue) and queue.current == current and current.action
+    if (Toolkit.Settings.actionQueue() or Settlement.restorationActive and Settlement.restorationActive(current) == true)
+        and live(queue) and queue.current == current and current.action
         and not current:isStarted() and not queue.character:getCharacterActions():contains(current.action)
         and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false)
         and Execution and Execution.skipUnstarted(queue, current) then

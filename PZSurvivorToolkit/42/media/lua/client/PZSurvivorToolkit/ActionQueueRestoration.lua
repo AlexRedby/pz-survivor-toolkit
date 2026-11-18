@@ -80,7 +80,7 @@ local sourceMatches = Proof.matches
 local nativeOperations = Toolkit.ActionQueueOperations
 local nativeProducer = nativeOperations and nativeOperations.producer
 local nativeProducerVerified
-local ownIntentInstalled
+local ownIntentInstalled, independentHandIntent
 local selectorOwn,selectorMeta,selectorRaw,selectorEqual=Proof.own,toolkitLuaMetatableMatches,rawget,rawequal
 local function installOwnIntent(saved)
     if ownIntentInstalled then return end
@@ -152,7 +152,7 @@ local function installOwnIntent(saved)
     end
     for name, entry in pairs(callbacks) do if not selectorEqual(selectorRaw(menu,name),entry[1]) then return end end
     local function valid(action)
-        if not selectorBinding() or P4TidyUpMeister ~= nil or saved.enabled() ~= true then return false end
+        if not selectorBinding() or P4TidyUpMeister ~= nil or not independentHandIntent and saved.enabled() ~= true then return false end
         local ok,mods = pcall(activatedMods)
         if not ok or not mods or type(mods.contains) ~= "function" then return false end
         local checked,selected = pcall(mods.contains,mods,"P4TidyUpMeister")
@@ -240,6 +240,7 @@ end
 function Restoration.prepareOwnHandIntent()
     local watch,saved=nativeLease()
     if not watch or not selectMenuRoles(watch) then return false end
+    independentHandIntent = true
     installOwnIntent(saved)
     return ownIntentInstalled == true and watch()
 end

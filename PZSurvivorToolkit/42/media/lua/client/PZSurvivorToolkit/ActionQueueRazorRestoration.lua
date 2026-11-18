@@ -61,6 +61,7 @@ function Razor.observe(episode, action)
         if tool:getFullType() ~= 'Base.Razor' or not policy.matchesNative(action)
             or not policy.isOrdinaryTransfer(action) or not policy.isCarriedContainer(action.srcContainer, actor)
             or actor:isEquipped(tool) then return end
+        if not Toolkit.Settings.actionQueue() and not settlement.beginIndependentRestoration(episode, action) then return end
         local source, root = action.srcContainer, actor:getInventory()
         episode.itemId = tool:getID()
         episode.loan = settlement.observePreparation(action, {

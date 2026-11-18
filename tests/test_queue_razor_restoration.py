@@ -80,6 +80,55 @@ class RazorRestorationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 a.validate(value)
 
+    def test_editor_off_reuses_only_existing_restore_success_in_sp_and_host(self):
+        for kind in ('sp', 'mp'):
+            value = selection(kind)
+            value['cases'] = ['restore-success']
+            value['options']['queue_editor_enabled'] = False
+            a.validate(value)
+            for change in (lambda s: s.update(cases=['new-primary-intent']),
+                           lambda s: s.update(cases=list(a.CASES)),
+                           lambda s: s['mods'].append('P4TidyUpMeister')):
+                changed = copy.deepcopy(value); change(changed)
+                with self.assertRaises(ValueError):
+                    a.validate(changed)
+            for invalid in (None, 0, 1, 'false'):
+                value['options']['queue_editor_enabled'] = invalid
+                with self.assertRaises(ValueError):
+                    a.validate(value)
+        enabled = selection(); enabled['options']['queue_editor_enabled'] = True
+        a.validate(enabled)
+
+    def test_editor_off_receipts_cover_producer_native_admission_and_completion(self):
+        # Editor receipt sub-schema only: no fabricated successful native run.
+        actions = [dict(role=name, actionRef=name, admittedAt=2 + index, startedAt=3 + index,
+                        events=[dict(at=4 + index)])
+                   for index, name in enumerate(('pickup', 'preparationEquip', 'trim', 'restore', 'returned', 'tail'))]
+        samples = [dict(boundary='before-producer', at=1, ticks=0, actionRef=False, option=False, setting=False)]
+        samples.extend(dict(boundary='native-admission', at=action['admittedAt'], ticks=index,
+                            actionRef=action['actionRef'], option=False, setting=False)
+                       for index, action in enumerate(actions, 1))
+        samples.append(dict(boundary='after-completion', at=10, ticks=10, actionRef=False, option=False, setting=False))
+        # Host resolves item proxies between queue construction and native admission.
+        actions[1]['actionRef'] = 'ISEquipWeaponAction 0x42{ item=menu reference }'
+        samples[2]['actionRef'] = 'ISEquipWeaponAction 0x42{ item=native reference }'
+        ev = dict(actions=actions, editor=samples)
+        for kind in ('sp', 'mp'):
+            value = selection(kind); value['cases'] = ['restore-success']; value['options']['queue_editor_enabled'] = False
+            self.assertEqual(v.editor_errors(ev, value), [])
+            for mutate in (lambda e: e.pop('editor'), lambda e: e['editor'].pop(0),
+                           lambda e: e['editor'].pop(2), lambda e: e['editor'][-1].update(at=8),
+                           lambda e: e['editor'][1].update(actionRef='foreign'),
+                           lambda e: e['editor'][1].update(option=True),
+                           lambda e: e['editor'][1].update(setting=True),
+                           lambda e: e['editor'][-1].update(ticks=0),
+                           lambda e: e['actions'][0].pop('admittedAt'),
+                           lambda e: e['actions'][0]['events'][0].update(at=11)):
+                changed = copy.deepcopy(ev); mutate(changed)
+                self.assertTrue(v.editor_errors(changed, value))
+        self.assertEqual(v.editor_errors({}, selection()), [])
+        self.assertTrue(v.editor_errors(ev, selection()))
+
     def test_active_cancel_requires_native_stop_and_exact_canceled_host_ack(self):
         # Lifecycle sub-schema only: no fabricated successful native case/run.
         action = dict(role='trim', type='ISTrimBeard', nativeRef='native', operationRef='episode',

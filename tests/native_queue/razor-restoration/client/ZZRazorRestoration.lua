@@ -7,6 +7,8 @@ local P=require 'QueueEnergyPlacement'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit
+local editorOff=config.options and config.options.queue_editor_enabled==false
+local editorTicks=0
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 -- Select the fixture character before ZZStartup advances the creation menu.
 Events.OnPreUIDraw.Add(function()
@@ -37,6 +39,19 @@ local function emit(row)row.suite='razor-restoration';row.actor='client1';row.ki
 local function fail(reason)
  if done then return end;done=true;raw('FAILED',{phase=phase,error=tostring(reason)})
  print('[QUEUE_TEST] FAIL razor-restoration '..tostring(reason));emit({event='failure',id=config.cases[index],error=tostring(reason)})
+end
+local function checkEditor()
+ if not editorOff then return end
+ local option=PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):getValue()
+ local setting=T.Settings.actionQueue()
+ assert(option==false and setting==false,'queue editor enabled during editor-off native restore')
+ return option,setting
+end
+local function observeEditor(boundary,action)
+ if not editorOff then return end
+ local option,setting=checkEditor()
+ local observation={boundary=boundary,at=getTimestampMs(),option=option,setting=setting,ticks=editorTicks,actionRef=action and tostring(action)or false}
+ evidence.editor[#evidence.editor+1]=observation;raw('EDITOR',{case=ids.case,observation=observation})
 end
 local function exactApproach(action)
  assert(T.ActionQueueApproach==Approach and Approach.isContainer==isContainerApproach
@@ -147,19 +162,19 @@ assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
  started=function(action)
   if phase~='running'or action.character~=getPlayer()then return end
   if observeCancelStop then observeCancelStop('before-next-admission',action)end
-  local row=track(action);row.admittedAt=getTimestampMs()
+  local row=track(action);row.admittedAt=getTimestampMs();observeEditor('native-admission',action)
   if row.role=='tail'then evidence.tailBoundary={at=getTimestampMs(),snapshot=F.snapshot(state),debts=T.ActionQueueSettlement.blockedReturns(getPlayer())}end
  end,
  begin=function(action,boundary)
   if phase~='running'or action.character~=getPlayer()then return end
-  local row=track(action);if not row.native then row.native=action.action end
+  checkEditor();local row=track(action);if not row.native then row.native=action.action end
   transferObservation(action,row,'begin-'..boundary)
   row.events[#row.events+1]={boundary='begin',phase=boundary,at=getTimestampMs(),nativeRef=tostring(action.action)}
   return true
  end,
  finish=function(action,boundary,succeeded)
   if phase~='running'or action.character~=getPlayer()then return end
-  local row=track(action);if not row.native then row.native=action.action end
+  checkEditor();local row=track(action);if not row.native then row.native=action.action end
   transferObservation(action,row,'finish-'..boundary)
   row.events[#row.events+1]={boundary='finish',phase=boundary,succeeded=succeeded==true,at=getTimestampMs(),nativeRef=tostring(action.action)}
   acknowledge(action,row)
@@ -189,6 +204,7 @@ local function produce()
  actions,tracks,order={},{},{}
  evidence={before=F.snapshot(state),producer='ISCharacterScreen.onTrimBeard',target=ids.targetBeard,installed=Razor.enabled()==true,
   explicitRequested=false,initialRevision=T.ActionQueueTidyIntent.primaryRequestRevision(getPlayer())}
+ if editorOff then evidence.editor={};editorTicks=0;observeEditor('before-producer')end
  assert(evidence.initialRevision~=nil,'own primary intent tracking unavailable')
  local previous=assert(F.find(getPlayer(),ids.items.previous.id))
  local hands=T.ActionQueueEquip.restorationHands(getPlayer(),previous)
@@ -382,7 +398,7 @@ require('QueuePreflight').onTick(Events,function()
    if isClient()~=(config.kind=='mp')or isClient()and(player:getOnlineID()<0 or player:getUsername()~='client1')then return end
    assert(config.mode=='toolkit'and not player:isTimedActionInstant(),'ordinary Toolkit native durations required')
    assert(not P4TidyUpMeister and not getActivatedMods():contains('P4TidyUpMeister'),'native own return provider required')
-   PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(true)
+   PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not editorOff)
    assert(Razor.install()and Razor.enabled(),'real Razor.install consumer did not install')
    player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false);getCore():setOptionAutoDrink(false);getCore():setOptionPauseOnFocusloss(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
@@ -393,6 +409,7 @@ require('QueuePreflight').onTick(Events,function()
    end
    ready=true;emit({event='setup',cases=config.cases,nativeDurations=true,provider='native-returns',installed=true});since=getTimestampMs()
   end
+  checkEditor();if editorOff and phase=='running'then editorTicks=editorTicks+1 end
   assert(getTimestampMs()-since<120000,'razor restoration timeout '..phase)
   if authority and not isClient()then
    local transfer=F.observeTransferAuthority(authority);if transfer then raw('TRANSFER_AUTHORITY',transfer)end
@@ -432,7 +449,7 @@ require('QueuePreflight').onTick(Events,function()
     local copy={};for key,value in pairs(row)do if key~='native'and key~='item'and key~='operation'and key~='receipt'and key~='lastAck'and key~='actor'and key~='queue'and key~='root'and key~='source'and key~='destination'and key~='transferDone'and key~='boundItem'then copy[key]=value end end
     published[#published+1]=copy
    end
-   evidence.actions=published;evidence.after=client
+   evidence.actions=published;evidence.after=client;observeEditor('after-completion')
    emit({event='case',id=ids.case,status='passed',ids=ids,clientPlacement=placementProof,client=client,server=receipt,evidence=evidence})
    if not isClient()then previous=authority end
    index=index+1

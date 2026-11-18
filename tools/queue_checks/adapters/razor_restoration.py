@@ -18,6 +18,9 @@ def definitions():
 
 def validate(selection):
     cases = selection.get('cases')
+    editor = selection.get('options', {}).get('queue_editor_enabled', True)
+    if type(editor) is not bool or not editor and cases != ['restore-success']:
+        raise ValueError('queue_editor_enabled must be boolean; editor-off reuses only restore-success')
     if (type(cases) is not list or not cases or cases != [case for case in CASES if case in cases]
             or selection.get('kind') not in ('sp', 'mp') or selection.get('mode') != 'toolkit'
             or selection.get('languages') != ['EN'] or type(selection.get('clients')) is not int

@@ -67,6 +67,10 @@ local function draining(action)
     local settlement = Toolkit.ActionQueueSettlement
     return settlement and settlement.drainingAction(action)
 end
+local function restoring(action)
+    local settlement = Toolkit.ActionQueueSettlement
+    return settlement and settlement.restorationActive and settlement.restorationActive(action) == true
+end
 local function generationMatches(queue, action, generation)
     local settlement = Toolkit.ActionQueueSettlement
     return (queue.toolkitOperationGeneration or 0) == generation
@@ -132,7 +136,7 @@ local function nativeCompletionState(action, nativeAction, waiting)
         return false
     end
     local editing = Toolkit.Settings.actionQueue()
-    local admitted = draining(action)
+    local admitted = draining(action) or restoring(action)
     if not editing and not admitted and queue then finishStepCancellations[queue] = nil end
     local finishing = (editing or admitted) and queue and finishingCanceledStep(queue, action, nativeAction)
     if not owned(queue,action)or action.action~=nativeAction or character:isDead()or character:isAsleep()
@@ -344,7 +348,7 @@ function Lifecycle.begin(action, phase)
     local queue = action and ISTimedActionQueue.queues[action.character]
     local state = queue and owned(queue, action) and pending[queue]
     if state and (state.action ~= action or not episodeOwned(queue, state)) then pending[queue] = nil; state = nil end
-    if not state and phase == "perform" and (enabled(action) or draining(action)) and owned(queue, action) and action.action
+    if not state and phase == "perform" and (enabled(action) or draining(action) or restoring(action)) and owned(queue, action) and action.action
         and not (action.character.isDead and action.character:isDead()) then
         state = {action = action, native = action.action, generation = queue.toolkitOperationGeneration or 0,
             depth = 0, needsComplete = not isClient()}

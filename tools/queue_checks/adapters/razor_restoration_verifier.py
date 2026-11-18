@@ -409,6 +409,48 @@ def lifecycle_errors(action, kind, canceled=False):
     return errors
 
 
+def editor_errors(ev, selection):
+    """Additional editor-off receipts; all existing native/physical gates still apply."""
+    samples = ev.get('editor')
+    if selection.get('options', {}).get('queue_editor_enabled', True):
+        return [] if samples is None else ['Unexpected editor-off observations in enabled baseline']
+    try:
+        actions = ev['actions']
+        admitted = {action_key(action['actionRef']): action for action in actions if 'admittedAt' in action}
+        if len(admitted) != sum('admittedAt' in action for action in actions):
+            raise ValueError('duplicate native action identity')
+        if any(action_key(action['actionRef']) not in admitted for action in actions if action['role'] not in ('command', 'approach')):
+            raise ValueError('native action admission missing')
+        if type(samples) is not list or len(samples) != len(admitted) + 2:
+            raise ValueError('editor boundaries missing/duplicated')
+        before, after = samples[0], samples[-1]
+        if (before.get('boundary') != 'before-producer' or after.get('boundary') != 'after-completion'
+                or before.get('actionRef') is not False or after.get('actionRef') is not False
+                or before.get('ticks') != 0 or type(after.get('ticks')) is not int or after['ticks'] <= 0):
+            raise ValueError('editor producer/completion boundaries differ')
+        observed = samples[1:-1]
+        if (any(sample.get('boundary') != 'native-admission' for sample in observed)
+                or {action_key(sample.get('actionRef')) for sample in observed} != set(admitted)):
+            raise ValueError('editor native action identities differ')
+        for sample in samples:
+            if (sample.get('option') is not False or sample.get('setting') is not False
+                    or not number(sample.get('at')) or type(sample.get('ticks')) is not int or sample['ticks'] < 0):
+                raise ValueError('editor option/setting observation differs')
+        if (list(sample['at'] for sample in samples) != sorted(sample['at'] for sample in samples)
+                or list(sample['ticks'] for sample in samples) != sorted(sample['ticks'] for sample in samples)):
+            raise ValueError('editor observation order differs')
+        for sample in observed:
+            action = admitted[action_key(sample['actionRef'])]
+            if (not number(action['admittedAt']) or not before['at'] <= action['admittedAt'] <= sample['at']
+                    or action['role'] not in ('command', 'approach') and not sample['at'] <= action['startedAt'] <= after['at']):
+                raise ValueError('editor observation escaped native admission/completion')
+        if any(event['at'] > after['at'] for action in actions for event in action.get('events', [])):
+            raise ValueError('editor completion preceded native lifecycle completion')
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        return ['Editor-off native evidence differs: ' + str(error)]
+    return []
+
+
 def check_case(row, selection, prepared, verified):
     errors = []
     try:
@@ -428,6 +470,7 @@ def check_case(row, selection, prepared, verified):
         if any(ev.get(key) != value for key, value in {'producer': 'ISCharacterScreen.onTrimBeard', 'target': 'Moustache',
                 'installed': True, 'explicitRequested': intent_case, 'nativeCallbacksUntouched': True, 'queueIdle': True}.items()):
             errors.append('Real install/menu producer or native callback integrity differs')
+        errors.extend(editor_errors(ev, selection))
         actions = ev['actions']; roles = {}
         for action in actions:
             roles.setdefault(action['role'], []).append(action)
@@ -583,6 +626,15 @@ def verify(root, selection, catalog):
                 index = cases.index(value['case'])
                 if not placements[index][0] < position < rows[index][0]:
                     issues.append('Raw live control escaped its exact case publication boundaries')
+        editor_rows = records(client, PREFIX + 'EDITOR ')
+        expected_editor = [dict(case=row['id'], observation=sample)
+                           for _, row in rows for sample in row['evidence'].get('editor', [])]
+        if [value for _, value in editor_rows] != expected_editor:
+            issues.append('Raw editor option/setting observations differ from published exact native boundaries')
+        for position, value in editor_rows:
+            index = cases.index(value['case'])
+            if not placements[index][0] < position < rows[index][0]:
+                issues.append('Editor observation escaped exact case boundaries')
         native_cancels = records(client, PREFIX + 'CANCEL_NATIVE ')
         wanted_cancels = [dict(case=row['id'], observation=row['evidence']['control']['nativeStop'])
                           for _, row in rows if row['id'] == 'cancel-active']
@@ -603,7 +655,7 @@ def verify(root, selection, catalog):
         if [value for _, value in origins] != wanted_origins or [value for _, value in client_origins] != wanted_origins:
             issues.append('Independent raw authority/client origin intervention observations differ')
         if selection['kind'] == 'mp' and (records(client, PREFIX + 'ORIGIN ') or records(authority, PREFIX + 'ORIGIN_CLIENT ')
-                or any(records(authority, PREFIX + marker + ' ') for marker in ('CONTROL', 'BLOCKED', 'KEEP', 'RETOKEN', 'CANCEL_NATIVE', 'ORIGIN_REPLICA'))):
+                or any(records(authority, PREFIX + marker + ' ') for marker in ('CONTROL', 'BLOCKED', 'KEEP', 'RETOKEN', 'CANCEL_NATIVE', 'ORIGIN_REPLICA', 'EDITOR'))):
             issues.append('Live razor control/origin evidence emitted by wrong process')
         for position, value in origins:
             index = cases.index(value['case'])

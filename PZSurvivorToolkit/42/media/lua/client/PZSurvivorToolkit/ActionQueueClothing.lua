@@ -209,7 +209,7 @@ adoptBase=function(name,previous,replacement)
   or ISBaseTimedAction~=base or base[name]~=replacement or baseMethods[name]~=nil and baseMethods[name]~=previous
   or inherited[name]~=nil and inherited[name]~=previous
   or not Proof.closure(previous,'ISBaseTimedAction.lua')or not Proof.closure(replacement,'ActionQueue.lua')then return false end
- if queueSourceSafe==nil then queueSourceSafe=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',3587091554,'PZSurvivorToolkit',true)end
+ if queueSourceSafe==nil then queueSourceSafe=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',735505805,'PZSurvivorToolkit',true)end
  if not queueSourceSafe then return false end
  if baseMethods[name]~=nil then baseMethods[name]=replacement end
  if inherited[name]~=nil then inherited[name]=replacement end
@@ -617,10 +617,10 @@ installObserver=function()
  if kind(firstLine)~='function'or getFirstLineOfClosure~=firstLine then bootstrapFailure=bootstrapFailure or 'bootstrap:metadata';return false end
  local roles={{lifecycle.registerObserver,39,'ActionQueueLifecycle.lua','registerObserver'},
   {lifecycle.started,60,'ActionQueueLifecycle.lua','started'},
-  {lifecycle.begin,339,'ActionQueueLifecycle.lua','begin'},
-  {lifecycle.finish,364,'ActionQueueLifecycle.lua','finish'},
-  {lifecycle.flush,425,'ActionQueueLifecycle.lua','flush'},
-  {lifecycle.reset,402,'ActionQueueLifecycle.lua','reset'},
+  {lifecycle.begin,343,'ActionQueueLifecycle.lua','begin'},
+  {lifecycle.finish,368,'ActionQueueLifecycle.lua','finish'},
+  {lifecycle.flush,429,'ActionQueueLifecycle.lua','flush'},
+  {lifecycle.reset,406,'ActionQueueLifecycle.lua','reset'},
   {acks.capture,316,'ActionQueueAcknowledgements.lua','ack-capture'},
   {acks.observe,358,'ActionQueueAcknowledgements.lua','ack-observe'},
   {acks.reset,302,'ActionQueueAcknowledgements.lua','ack-reset'}}
@@ -632,7 +632,7 @@ installObserver=function()
  if witnessSourceTrusted==nil then
   witnessSourceTrusted=Proof.closure(registerObserver,'ActionQueueLifecycle.lua')
    and Proof.closure(captureAck,'ActionQueueAcknowledgements.lua')and Proof.closure(observeAck,'ActionQueueAcknowledgements.lua')
-   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',705616907,'PZSurvivorToolkit',true)
+   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',577778495,'PZSurvivorToolkit',true)
    and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua',392308481,'PZSurvivorToolkit',true)
  end
  if not witnessSourceTrusted then bootstrapFailure=bootstrapFailure or 'bootstrap:source';return false end

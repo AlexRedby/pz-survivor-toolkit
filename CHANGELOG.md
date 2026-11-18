@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.11
+
+- With Toolkit razor restoration enabled and P4 absent, shaving can restore the previous hand item and return the borrowed razor to its bag while the queue editor is turned off.
+
 ### 0.2.10
 
 - **Fix:** In the opt-in tool restoration, a full bag after restoring the previous hand item could clear unrelated queued actions. The blocked tool now stays in inventory with an explicit Keep option.

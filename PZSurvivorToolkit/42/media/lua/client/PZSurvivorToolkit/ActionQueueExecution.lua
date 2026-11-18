@@ -193,7 +193,10 @@ function Execution.admitEditMember(action)
         and accepted(dependencies.methods.authorizeReturnRetention,action,Execution.matches)or false
 end
 function Execution.begin(action)
-    if not returnShape(action)or episodes[action]or not enabled()or not Execution.matches(action)or not guarded(action)then return false end
+    if not returnShape(action) or episodes[action] or not ready() then return false end
+    local active = dependencies.settlement.restorationActive
+    if not dependencies.enabled() and not (owned(active, 'ActionQueueSettlement.lua') and active(action)) then return false end
+    if not Execution.matches(action) or not guarded(action) then return false end
     local actor=action.character
     local queue=ISTimedActionQueue.queues[actor]
     if not live(queue,actor)or queue.current~=action or queue.queue[1]~=action

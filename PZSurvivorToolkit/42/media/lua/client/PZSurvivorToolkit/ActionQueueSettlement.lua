@@ -92,7 +92,7 @@ local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
 local cleanupMarker = {}
 local cleanupAdmissionMarker = {}
 
-local operationMarker, stepMarker = {}, {}
+local operationMarker, stepMarker, restorationMarker = {}, {}, {}
 -- An accepted cancellation owns only its current native episode and earned
 -- cleanup. Editor invalidation still revokes all optional continuations.
 local cancellations = {}
@@ -188,7 +188,7 @@ local function operationLive(record)
     return record and record.queue == ISTimedActionQueue.queues[record.character]
         and record.queue.character == record.character and not record.character:isDead()
         and ((record.queue.toolkitOperationGeneration or 0) == record.generation
-            and Toolkit.Settings and Toolkit.Settings.actionQueue() or cancellationRecord(record))
+            and (Toolkit.Settings and Toolkit.Settings.actionQueue() or record.restoration and not record.token.toolkitCancelled) or cancellationRecord(record))
 end
 
 -- Operation seals capture actors/queues. Check their live native filename
@@ -217,7 +217,7 @@ local function operationSealTrusted(token,seal)
     return settlementSealTrusted(token,operationMarker,seal)
 end
 
-local function operation(character, token, create)
+local function operation(character, token, create, restoration)
     local api=retainedBindingSource
     if api.checkingSeal or api.kind(token)~="table" or api.meta(token)~=nil or not character then return end
     local seal=api.raw(token,operationMarker)
@@ -231,11 +231,39 @@ local function operation(character, token, create)
     end
     local queue = ISTimedActionQueue.queues[character]
     if not create or not queue then return end
-    local record = {character = character, token = token, queue = queue,
+    local record = {character = character, token = token, queue = queue, restoration = restoration,
         generation = queue.toolkitOperationGeneration or 0, phase = "prepare", steps = {}, actions = {}, borrowings = {}}
     if not operationLive(record) then return end
     token[operationMarker] = function(value) if value == token then return record end end
     return record
+end
+
+-- The native producer owns this pickup only while its menu callback runs.
+-- Bind restoration to that episode before the first native begin.
+function Settlement.beginIndependentRestoration(episode, action)
+    local producer = Toolkit.ActionQueueRazorProducer
+    if not producer or not executionProof.closure(producer.owns, "ActionQueueRazorProducer.lua")
+        or not producer.owns(episode) or action ~= episode.pickup or action ~= episode.currentAction
+        or action.character ~= episode.actor then return false end
+    local token = action.toolkitQueueOperation
+    local queue = ISTimedActionQueue.getTimedActionQueue(episode.actor)
+    Toolkit.ActionQueue.updateOperationState(queue)
+    if type(token) ~= "table" or token.toolkitCancelled then return false end
+    local record = operation(episode.actor, token, true, episode)
+    if not record or record.restoration ~= episode then return false end
+    token[restorationMarker] = true
+    return true
+end
+
+function Settlement.restorationActive(action)
+    local token = action and action.toolkitQueueOperation
+    if type(token) ~= "table" or not rawget(token, restorationMarker) then return false end
+    local record = operation(action.character, token)
+    local episode = record and record.restoration
+    if not episode then return false end
+    local step = record.actions[action]
+    return action == episode.pickup or action == episode.equip or action == episode.body
+        or step ~= nil and step.phase == "cleanup" and (step.returnClaim ~= nil or step.required == true or step.returning ~= nil)
 end
 
 function Settlement.admitCancellation(queue, request, decision)
@@ -1239,8 +1267,10 @@ local function borrowingLive(scope)
     if not deferred(scope) or scope.character:isDead()
         or ISTimedActionQueue.queues[scope.character] ~= scope.queue then return false end
     if cancellationScope(scope) then return true end
-    return scope.phase ~= "retired" and Toolkit.Settings and Toolkit.Settings.actionQueue()
-        and (scope.queue.toolkitOperationGeneration or 0) == scope.generation
+    if scope.phase == "retired" or (scope.queue.toolkitOperationGeneration or 0) ~= scope.generation then return false end
+    if Toolkit.Settings and Toolkit.Settings.actionQueue() then return true end
+    local ledger = borrowing(scope)
+    return ledger and ledger.restoration and operationLive(ledger.restoration) or false
 end
 
 -- The exact native pickup proves its original owner without relying on the
@@ -1976,6 +2006,7 @@ function Settlement.observePreparation(action, specification)
         else
             record.preparationScope = record.preparationScope or Settlement.deferred(action.character, record.token)
             scope = record.preparationScope
+            if record.restoration and record.restoration.pickup == action then borrowing(scope).restoration = record end
             Settlement.remember(scope, action, {knownInputs = true, items = {[action.item:getID()] = true}})
             if not Settlement.preparePickup(scope, action) then step.preparation.failed = true; return end
         end
