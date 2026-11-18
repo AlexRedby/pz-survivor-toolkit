@@ -9,6 +9,8 @@ local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit
 local editorOff=config.options and config.options.queue_editor_enabled==false
 local editorTicks=0
+local handDelay=config.options and config.options.razor_hand_ack_delay_ms~=nil
+local handAuthority
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 -- Select the fixture character before ZZStartup advances the creation menu.
 Events.OnPreUIDraw.Add(function()
@@ -270,6 +272,15 @@ local function ownedPanel()
  panel.queue,panel.playerNum=q(),getPlayer():getPlayerNum();panel:initialise();panel:addToUIManager();panel:update()
  return panel
 end
+handAuthority=require('QueueRazorHandAuthority').install(config,{
+ current=function()
+  local action=actions.restore
+  if not action then return end
+  return action,assert(tracks[action]),actions.tail,assert(tracks[actions.tail]),state
+ end,
+ queue=q,snapshot=function()return F.snapshot(state)end,panel=ownedPanel,evidence=function()return evidence end,
+ emit=function(marker,row)raw(marker,{case=ids.case,observation=row})end,
+})
 local function cancellationState(trim,row,boundary)
  local player=getPlayer()
  return{at=getTimestampMs(),boundary=boundary,actionRef=row.actionRef,nativeRef=tostring(trim.action),
@@ -364,6 +375,7 @@ local function observe()
    acknowledge(action,row)
   end
  end
+ if handAuthority then handAuthority.poll()end
  local trim=actions.trim;local row=tracks[trim]
  -- Local animation can advance before Host admits the timed action.
  -- Use the same current Started receipt required by the grooming cancel policy.
@@ -447,7 +459,10 @@ require('QueuePreflight').onTick(Events,function()
    assert(actions.trim and tracks[actions.trim].started and tracks[actions.trim].progress,'real native trim did not progress')
    assert(actions.tail and tracks[actions.tail].started and tracks[actions.tail].progress,'independent native reader did not progress')
    local debts=T.ActionQueueSettlement.blockedReturns(player)
-   if F.returnedCase(ids.case)then
+   if handDelay then
+    evidence.handAuthority=handAuthority.complete()
+    assert(actions.restore and not actions.returned and #debts==0,'hand Keep constructed a location return or lost debt retirement')
+   elseif F.returnedCase(ids.case)then
     assert(actions.restore and actions.returned and #debts==0 and not evidence.explicitRequested,'ordinary producer restore/return missing')
     if ids.case=='cancel-active'then assert(evidence.control and evidence.control.nativeStop and evidence.control.nativeStop.after,'exact native trim cancellation was not observed before cleanup')end
    elseif ids.case=='new-primary-intent'then

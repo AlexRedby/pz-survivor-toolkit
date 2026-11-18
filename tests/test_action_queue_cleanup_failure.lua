@@ -445,6 +445,8 @@ for _,cancelBeforeExpansion in ipairs({false,true}) do
     local settlement=f.t.ActionQueueSettlement
     f.start(f.restore);f.restore:forceStop();f.stop(f.restore,true)
     local waiting=debt(f);local before=settlement.blockedReturnInfo(f.player)
+    local visible,status=settlement.waitingForHandAuthority(f.queue,f.restore)
+    assert(visible and status=='waiting' and not settlement.waitingForHandAuthority(f.queue,f.tail))
     assert(waiting.reason=='cleanup-unresolved' and f.queue.current==f.restore,
         'Host lag did not preserve the unresolved exact cleanup notice')
     f.queue:tick()
@@ -502,7 +504,10 @@ do
     assert(f.t.ActionQueueSettlement.keepReturn(f.player,notice.id))
     local keptRevision=f.t.ActionQueueSettlement.blockedReturnInfo(f.player).revision
     assert(loanState(f)=='waived' and not f.t.ActionQueueSettlement.earned(f.restoreHandle))
+    local visible,status=f.t.ActionQueueSettlement.waitingForHandAuthority(f.queue,f.restore)
+    assert(visible and status=='waiting' and allocations(f,f.tail)==0, 'Keep dismissed the unresolved hand episode')
     f.acknowledge(f.restore,'rejected');f.queue:tick()
+    assert(not f.t.ActionQueueSettlement.waitingForHandAuthority(f.queue,f.restore))
     assert(f.queue.current==f.tail and allocations(f,f.continuation)==0
         and #f.t.ActionQueueSettlement.blockedReturns(f.player)==0
         and f.t.ActionQueueSettlement.blockedReturnInfo(f.player).revision==keptRevision,
@@ -542,9 +547,13 @@ do
     local f=fixture(true)
     f.start(f.restore);f.phase(f.restore,'perform');f.remove(f.restore);f.queue:tick()
     assert(f.queue.current==f.restore and f.queue:indexOf(f.tail)>1 and allocations(f,f.continuation)==0)
+    local pending,reason=f.t.ActionQueueSettlement.waitingForHandAuthority(f.queue,f.restore)
+    assert(pending and reason=='waiting','local completion hid the pending Host outcome')
     f.advance(30001);f.queue:tick()
     local notice=debt(f)
     local expiredRevision=f.t.ActionQueueSettlement.blockedReturnInfo(f.player).revision
+    local visible,status=f.t.ActionQueueSettlement.waitingForHandAuthority(f.queue,f.restore)
+    assert(visible and status=='unknown','expired authority still advertised a pending confirmation')
     assert(f.queue.current==f.restore and f.queue:indexOf(f.tail)>1,
         'expired unknown Host outcome discarded protected head/tail')
     assert(f.restore:complete());f.acknowledge(f.restore,'completed')

@@ -40,9 +40,9 @@ def expected(ids, authority):
         row['appearance'].update(hair=ids['targetHair'], nonAttached=False)
     else:
         row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
-    row['primary'] = False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] == 'new-primary-intent' else 'previous']['id']
+    row['primary'] = ids['items']['razor']['id'] if ids.get('handAckDelay') else False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] == 'new-primary-intent' else 'previous']['id']
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
-    if ids['case'] not in RETURNED_CASES:
+    if ids.get('handAckDelay') or ids['case'] not in RETURNED_CASES:
         row['origin']['sourceCount'] = 0
         for item in row['items']:
             if item['id'] == ids['items']['razor']['id']:
@@ -60,6 +60,8 @@ def validate_prepared(ids, selection):
     if (ids.get('case') not in selection['cases'] or ids.get('initialBeard') != 'LongScruffy'
             or ids.get('targetBeard') != 'Moustache' or set(ids.get('items', {})) != set(TYPES)):
         raise ValueError('prepared native beard/item topology differs')
+    if ids.get('handAckDelay', False) is not (selection.get('options', {}).get('razor_hand_ack_delay_ms') is not None):
+        raise ValueError('hand authority prepared flag differs from explicit selection')
     owned = ids['items']; baseline = ids['baseline']; bag = ids['bag']
     if ids['case'] == 'cut-hair-scissors' and (ids.get('initialHair') != 'Fabian' or ids.get('targetHair') != 'Bald'
             or baseline['appearance'].get('hair') != ids['initialHair'] or baseline['appearance'].get('nonAttached') is not False):
@@ -154,7 +156,7 @@ def transfer_errors(action, ids, kind):
 
 
 def authority_transfer_errors(receipt, ids):
-    values = receipt.get('transfers'); expected_roles = ['pickup', 'returned'] if ids['case'] in RETURNED_CASES else ['pickup']
+    values = receipt.get('transfers'); expected_roles = ['pickup', 'returned'] if ids['case'] in RETURNED_CASES and not ids.get('handAckDelay') else ['pickup']
     if type(values) is not list or [value.get('role') for value in values] != expected_roles:
         return ['Independent authority physical transfer transitions missing/reordered']
     errors = []
@@ -496,10 +498,70 @@ def editor_errors(ev, selection):
     return []
 
 
+def hand_restore_lifecycle_errors(action):
+    errors = lifecycle_errors(dict(action, events=[]), 'mp', True)
+    events = action.get('events', [])
+    if ([(event.get('boundary'), event.get('phase')) for event in events] not in ([], [('begin', 'stop'), ('finish', 'stop')])
+            or any(event.get('nativeRef') != action['nativeRef'] or not number(event.get('at'))
+                   or event.get('boundary') == 'finish' and event.get('succeeded') is not True for event in events)):
+        errors.append('Stopped hand restoration replayed native effects or changed callback identity')
+    return errors
+
+
+def hand_authority_errors(ev, roles, ids):
+    try:
+        samples = ev['handAuthority']; stop = ev['handStop']; restore = roles['restore'][0]; tail = roles['tail'][0]
+        if [row['phase'] for row in samples] != ['pending', 'kept', 'held', 'released', 'duplicate', 'finished']:
+            raise ValueError('pending/Keep/late receipt/duplicate sequence differs')
+        pending, kept, held, released, duplicate, finished = samples
+        started = [ack for ack in restore['ack'] if ack['state'] == 'started']
+        terminal = [ack for ack in restore['ack'] if ack['state'] == 'canceled']
+        if len(started) != 1 or len(terminal) != 1:
+            raise ValueError('exact stopped native Started/terminal missing')
+        ack = started[0]
+        # The online actor is carried in the intercepted packet fingerprint; all
+        # other fields bind back to the sealed Started captured before forceStop.
+        parts = pending['signature'].split('|')
+        if (len(parts) != 6 or parts[0] != '1' or not re.fullmatch(r'-?\d+', parts[1])
+                or int(parts[1]) != stop['player'] or parts[2:] != list(map(str, (stop['transaction'], 'ISEquipWeaponAction', stop['token'], 'canceled')))
+                or stop['transaction'] != ack['transaction'] or stop['kind'] != ack['kind'] or stop['token'] != ack['token']
+                or stop['actionRef'] != restore['actionRef'] or stop['nativeRef'] != restore['nativeRef']
+                or not ack['at'] <= stop['at'] <= pending['at'] <= kept['at'] <= held['at'] <= released['at'] <= duplicate['at'] <= finished['at']
+                or not 1000 <= released['at'] - kept['at'] < 30000):
+            raise ValueError('native stop or late exact packet identity/deadline differs')
+        if (any(row['actionRef'] != restore['actionRef'] or row['nativeRef'] != restore['nativeRef']
+                or row['signature'] != pending['signature'] or row['packetRef'] != pending['packetRef']
+                or row['nativeAbsent'] is not True for row in samples)
+                or not pending['packetRef'] or not restore['startedAt'] <= stop['at'] <= tail['startedAt']):
+            raise ValueError('retained genuine packet/native episode changed')
+        before = expected(ids, False); before.pop('authority')
+        before['tail']['pages'] = before['tail']['characterPages'] = ids['items']['tail']['initial']
+        for row in (pending, kept, held):
+            if (any(row.get(key) is not True for key in ('current', 'head', 'waiting', 'tailUnallocated'))
+                    or row.get('tailStarted') is not False or row.get('tailProgress') is not False
+                    or row['ack'] != 'started' or row['snapshot'] != before or row['tailPages'] != ids['items']['tail']['initial']):
+                raise ValueError('Keep or elapsed time waived hand authority/advanced independent reader')
+        debts = pending['debts']; final = expected(ids, False); final.pop('authority')
+        keep = kept.get('keep', {})
+        if (keep.get('source') != 'ActionQueuePanel.KeepReturn' or keep.get('id') != debts[0]['id']
+                or any(keep.get(key) is not True for key in ('visible', 'pressCaptured', 'accepted'))):
+            raise ValueError('actual Keep footer did not retire exact location debt')
+        if (len(debts) != 1 or debts[0].get('itemId') != ids['items']['razor']['id'] or debts[0].get('state') != 'blocked'
+                or any(row['debts'] != [] for row in samples[1:]) or ev['debts'] != []
+                or any(row['ack'] != 'canceled' for row in samples[3:])
+                or not released['at'] <= tail['admittedAt'] <= tail['startedAt'] <= finished['at']
+                or finished['current'] or finished['waiting'] or finished['snapshot'] != final):
+            raise ValueError('late receipt/duplicate did not resume independent tail exactly once')
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        return ['Delayed hand authority evidence differs: ' + str(error)]
+    return []
+
+
 def check_case(row, selection, prepared, verified):
     errors = []
     try:
-        case = row['id']; ids = row['ids']; ev = row['evidence']; returned_case = case in RETURNED_CASES
+        case = row['id']; ids = row['ids']; ev = row['evidence']; delayed = ids.get('handAckDelay') is True
+        returned_case = case in RETURNED_CASES and not delayed
         intent_case = case == 'new-primary-intent'; canceled = case == 'cancel-active'
         if (ids != prepared or ids['case'] != case or row.get('status') != 'passed' or row.get('actor') != 'client1'
                 or row.get('kind') != selection['kind'] or row.get('mode') != 'toolkit'):
@@ -521,7 +583,7 @@ def check_case(row, selection, prepared, verified):
             roles.setdefault(action['role'], []).append(action)
         required = {'pickup', 'preparationEquip', 'trim', 'tail', 'command'}
         required.update({'explicitEquip'} if intent_case else {'restore'})
-        if case in RETURNED_CASES or case in ('full-origin', 'keep-return'): required.add('returned')
+        if not delayed and (case in RETURNED_CASES or case in ('full-origin', 'keep-return')): required.add('returned')
         if 'approach' in roles: required.add('approach')
         command_count = len(roles.get('command', []))
         if (set(roles) != required or command_count != (1 if intent_case else 2)
@@ -561,7 +623,10 @@ def check_case(row, selection, prepared, verified):
                     errors.append('Empty-primary restore does not use ordinary native unequip duration')
                 if not number(duration) or (duration != -1 if selection['kind'] == 'mp' and role in ('pickup', 'returned') else duration <= 1):
                     errors.append('Original native constructor duration differs: ' + role)
-                errors.extend(lifecycle_errors(action, selection['kind'], case == 'cancel-active' and role == 'trim'))
+                if delayed and role == 'restore':
+                    errors.extend(hand_restore_lifecycle_errors(action))
+                else:
+                    errors.extend(lifecycle_errors(action, selection['kind'], case == 'cancel-active' and role == 'trim'))
                 if role in ('pickup', 'returned'):
                     errors.extend(transfer_errors(action, ids, selection['kind']))
         get = lambda name: roles[name][0]
@@ -598,6 +663,8 @@ def check_case(row, selection, prepared, verified):
                     or not canceled and any(operation_key(action['operationRef']) != token for action in (restore, returned))
                     or debts != [] or 'intent' in ev):
                 errors.append('Ordinary native restore/return effects or debt differ')
+        elif delayed:
+            errors.extend(hand_authority_errors(ev, roles, ids))
         elif intent_case:
             intent = ev.get('intent', {}); explicit = get('explicitEquip')
             snapshot = intent.get('snapshot', {})
@@ -678,6 +745,15 @@ def verify(root, selection, catalog):
                 index = cases.index(value['case'])
                 if not placements[index][0] < position < rows[index][0]:
                     issues.append('Raw live control escaped its exact case publication boundaries')
+        hand_rows = records(client, PREFIX + 'HAND_AUTHORITY ')
+        wanted_hand = [dict(case=row['id'], observation=sample) for _, row in rows
+                       for sample in row['evidence'].get('handAuthority', [])]
+        if [value for _, value in hand_rows] != wanted_hand:
+            issues.append('Raw hand authority packet/Keep observations differ from published case')
+        for position, value in hand_rows:
+            index = cases.index(value['case'])
+            if not placements[index][0] < position < rows[index][0]:
+                issues.append('Hand authority observation escaped exact case boundaries')
         editor_rows = records(client, PREFIX + 'EDITOR ')
         expected_editor = [dict(case=row['id'], observation=sample)
                            for _, row in rows for sample in row['evidence'].get('editor', [])]
@@ -707,7 +783,7 @@ def verify(root, selection, catalog):
         if [value for _, value in origins] != wanted_origins or [value for _, value in client_origins] != wanted_origins:
             issues.append('Independent raw authority/client origin intervention observations differ')
         if selection['kind'] == 'mp' and (records(client, PREFIX + 'ORIGIN ') or records(authority, PREFIX + 'ORIGIN_CLIENT ')
-                or any(records(authority, PREFIX + marker + ' ') for marker in ('CONTROL', 'BLOCKED', 'KEEP', 'RETOKEN', 'CANCEL_NATIVE', 'ORIGIN_REPLICA', 'EDITOR', 'RESTORE_BOUNDARY'))):
+                or any(records(authority, PREFIX + marker + ' ') for marker in ('CONTROL', 'BLOCKED', 'KEEP', 'RETOKEN', 'CANCEL_NATIVE', 'ORIGIN_REPLICA', 'EDITOR', 'RESTORE_BOUNDARY', 'HAND_AUTHORITY'))):
             issues.append('Live razor control/origin evidence emitted by wrong process')
         for position, value in origins:
             index = cases.index(value['case'])

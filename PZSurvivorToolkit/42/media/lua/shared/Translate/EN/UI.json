@@ -343,6 +343,8 @@
   "UI_PZST_CraftChainAvailability": "Need %1 / Have %2",
   "UI_PZST_CraftChainChoiceScope": "Click to choose a material. Applies to this ingredient in every use of this recipe in the plan. Missing materials may need prerequisite crafting.",
   "UI_PZST_CraftChainAdjustChoices": "Adjust ingredient choices",
+  "UI_PZSurvivorToolkit_queue_outcome_unconfirmed": "Outcome unconfirmed",
+  "UI_PZSurvivorToolkit_queue_waiting_server": "Waiting for server",
   "UI_PZSurvivorToolkit_queue_move_craft_inputs": "This operation chooses ingredients when it runs. Reordering could change which items are consumed.",
   "UI_PZSurvivorToolkit_queue_native_ISAttachTrailerToVehicle": "Attach trailer to vehicle",
   "UI_PZSurvivorToolkit_queue_native_ISCloseVehicleDoor": "Close vehicle door",

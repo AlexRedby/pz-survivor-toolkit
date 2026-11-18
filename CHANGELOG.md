@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.14
+
+- The action queue shows when automatic hand restoration is waiting for Host confirmation and when its outcome can no longer be confirmed. Keeping a borrowed item in inventory leaves that status visible until the hand action settles.
+
 ### 0.2.13
 
 - When the primary hand starts empty, opt-in grooming restoration puts away the borrowed tool, leaves the secondary hand as it was, and returns the tool to its bag after the unequip is confirmed.

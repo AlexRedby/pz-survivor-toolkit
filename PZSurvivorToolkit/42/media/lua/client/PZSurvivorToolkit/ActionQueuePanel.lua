@@ -365,7 +365,15 @@ function Panel.drawRow(list, y, row, alt)
         moveReason and 0.2 or 0.8, 1, 1, 1)
     list:drawTextureScaledAspect(description.icon(), iconX, y + (row.height - 24) / 2, 24, 24, 1, 1, 1, 1)
     local prefix = tostring(row.first) .. ". "
-    if current and action.action then
+    local settlement = Toolkit.ActionQueueSettlement
+    local waiting, outcome
+    if current and settlement and settlement.waitingForHandAuthority then
+        waiting, outcome = settlement.waitingForHandAuthority(queue, action)
+    end
+    if waiting then
+        local status = outcome == "unknown" and "outcome_unconfirmed" or "waiting_server"
+        prefix = "[" .. getText("UI_PZSurvivorToolkit_queue_" .. status) .. "] "
+    elseif current and action.action then
         local fitness = Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.progress(action)
         local fraction = fitness and fitness.fraction or action:getJobDelta()
         prefix = fitness and fitness.stopping and "[...] " or "[" .. tostring(math.floor(fraction * 100)) .. "%] "

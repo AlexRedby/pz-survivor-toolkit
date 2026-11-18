@@ -343,6 +343,8 @@
   "UI_PZST_CraftChainAvailability": "Нужно %1 / Есть %2",
   "UI_PZST_CraftChainChoiceScope": "Нажмите, чтобы выбрать материал. Выбор действует для этого ингредиента во всех повторах данного рецепта в плане. Недостающие материалы могут требовать предварительного крафта.",
   "UI_PZST_CraftChainAdjustChoices": "Изменить выбор ингредиентов",
+  "UI_PZSurvivorToolkit_queue_outcome_unconfirmed": "Статус не подтверждён",
+  "UI_PZSurvivorToolkit_queue_waiting_server": "Ждём сервер",
   "UI_PZSurvivorToolkit_queue_move_craft_inputs": "Эта операция выбирает материалы при выполнении. Перестановка может изменить, какие предметы будут израсходованы.",
   "UI_PZSurvivorToolkit_queue_native_ISAttachTrailerToVehicle": "Прицепить прицеп к автомобилю",
   "UI_PZSurvivorToolkit_queue_native_ISCloseVehicleDoor": "Закрыть дверь автомобиля",

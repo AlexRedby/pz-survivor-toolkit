@@ -83,6 +83,7 @@ local completedReturnDebt
 local returnSuccessState, returnSuccessBlocked, keepReturnSuccess
 local returnSuccessEnrolling = {}
 local cleanupFailureIssued = false
+local handStatusMarker = {} -- Presentation only. Scheduling never reads this entry.
 local cleanupWatchMarker = {} -- Negative lookup hint only; private step/frame checks grant authority.
 local cleanupContinuationMarker, cleanupContinuationsIssued = {}, false
 local bindCleanupNative, observeCleanupReceipt
@@ -758,6 +759,7 @@ function Settlement.effectState(handle, observed)
     if not proof.receipt then proof.receipt = proof.capture(action) end
     if proof.receipt then
         local state = proof.observe(action, proof.receipt)
+        proof.authorityState = state
         if state == "canceled" or state == "rejected" then return effectTerminal(proof, state) end
         if state == nil then return effectTerminal(proof, "unavailable") end
         if state == "completed" and observed == true then return "completed" end
@@ -1825,6 +1827,37 @@ local function preparationGuard(action)
     if not ok or valid ~= true then step.preparation.failed = true; return false end
     return true
 end
+-- Publish from the existing completion poll. Row draws must not poll receipts,
+-- trigger an effect observer, or depend on the lifetime of a Keep notice.
+local function showHandStatus(step, status)
+    local frame = step.preparation.nativeFailure
+    if not frame or not frame.client or (frame.kind ~= "ISEquipWeaponAction" and frame.kind ~= "ISUnequipAction") then return end
+    local action = step.action
+    if not status then
+        action[handStatusMarker] = nil
+    else
+        local view = frame.handStatus
+        if not view then
+            view = {action=action, queue=frame.queue, list=frame.list, token=frame.token,
+                generation=frame.generation, native=frame.native}
+            frame.handStatus = view
+        end
+        rawset(view, "status", status)
+        action[handStatusMarker] = view
+    end
+end
+
+function Settlement.waitingForHandAuthority(queue, action)
+    if type(action) ~= "table" then return false end
+    local view = rawget(action, handStatusMarker)
+    if not view or type(view) ~= "table" or getmetatable(view) ~= nil or not queue
+        or view.action ~= action or view.queue ~= queue or queue.current ~= action or queue.queue ~= view.list
+        or view.list[1] ~= action or queue.character ~= action.character or ISTimedActionQueue.queues[action.character] ~= queue
+        or action.action ~= view.native or action.toolkitQueueOperation ~= view.token
+        or (queue.toolkitOperationGeneration or 0) ~= view.generation then return false end
+    return view.status == "waiting" or view.status == "unknown", view.status
+end
+
 local function preparationState(step)
     local watch = step.preparation
     if step.state == "earned" or step.failureDisposition then return "ready" end
@@ -1845,6 +1878,10 @@ local function preparationState(step)
     local ok, observed = pcall(watch.observed, step.action, watch.before)
     if not ok then watch.failed = true; return "failed" end
     local state = Settlement.effectState(step.receipt, observed == true)
+    if watch.nativeFailure and watch.nativeFailure.client then
+        local proof = effectProof(step.receipt)
+        showHandStatus(step, state == "waiting" and proof and proof.authorityState ~= "completed" and "waiting" or nil)
+    end
     if state == "completed" then
         return Settlement.earn(step.handle, step.receipt, observed == true) and "ready" or "failed"
     end
@@ -3979,6 +4016,7 @@ function Settlement.cleanupFailureState(queue, action, native, reason)
             local state = not frame.expired and frame.receipt and frame.observe(action, frame.receipt)
             terminal = state == "completed" or state == "canceled" or state == "rejected"
             if not terminal and frame.clock() >= frame.deadline then frame.expired = true end
+            showHandStatus(step, not terminal and (frame.expired and "unknown" or "waiting") or nil)
         end
         local published = true
         for _, plan in ipairs(step.returnSuccessPlans) do

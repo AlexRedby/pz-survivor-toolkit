@@ -66,7 +66,7 @@ end
 function F.observeTransferAuthority(s)
  if not s or s.returnObserved then return end
  local role=s.pickupObserved and'returned'or'pickup'
- if role=='returned'and not F.returnedCase(s.ids.case)then return end
+ if role=='returned'and(s.ids.handAckDelay or not F.returnedCase(s.ids.case))then return end
  local row=F.transferSnapshot(s,role)
  if row.sourceCount~=0 or row.destinationCount~=1 or not row.canonical or not row.bagCanonical then return end
  if role=='pickup'then s.pickupObserved=true else s.returnObserved=true end
@@ -93,6 +93,8 @@ function F.prepare(player,case,target,proof,previous)
  local root=player:getInventory();local bag=assert(root:AddItem('Base.Bag_Military'));local source=bag:getItemContainer();source:setExplored(true)
  assert(not player:getWornItem(bag:canBeEquipped()),'authority bag slot occupied')
  local ids={case=case,placement=P.target(target),placementProof=proof,bag={id=bag:getID(),type=bag:getFullType()},items={},initialBeard='LongScruffy',targetBeard='Moustache'}
+ local config=require 'QueueTestSelection'
+ if config.options and config.options.razor_hand_ack_delay_ms~=nil then ids.handAckDelay=true end
  local cut=case=='cut-hair-scissors'
  if cut then ids.initialHair='Fabian';ids.targetHair='Bald' end
  local s={player=player,ids=ids,bag=bag}
@@ -147,9 +149,9 @@ function F.expected(ids)
  if ids.case=='cut-hair-scissors'then row.appearance.hair=ids.targetHair;row.appearance.nonAttached=false
  else row.appearance.beard=ids.case=='cancel-active'and ids.initialBeard or ids.targetBeard end
  if ids.case=='empty-primary'then row.primary=false
- else row.primary=ids.items[ids.case=='new-primary-intent'and'replacement'or'previous'].id end
+ else row.primary=ids.items[ids.handAckDelay and'razor'or ids.case=='new-primary-intent'and'replacement'or'previous'].id end
  row.tail.pages=ids.items.tail.total;row.tail.characterPages=ids.items.tail.total
- if not F.returnedCase(ids.case)then
+ if ids.handAckDelay or not F.returnedCase(ids.case)then
   row.origin.sourceCount=0
   for _,item in ipairs(row.items)do if item.id==ids.items.razor.id then item.container='root'end end
  end
