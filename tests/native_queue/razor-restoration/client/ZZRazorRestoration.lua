@@ -231,13 +231,18 @@ local function produce()
  evidence.handSeed={id=previous:getID(),type=previous:getFullType(),requiresBoth=previous:isRequiresEquippedBothHands(),
   handWeapon=instanceof(previous,'HandWeapon'),supportsTwo=instanceof(previous,'HandWeapon')and previous:isTwoHandWeapon()or false,
   ordinary=hands~=nil and hands.primary~=nil and hands.primary.item==previous}
-  if F.axeCase(ids.case)then
+  if F.equipmentCase(ids.case)then
    local secondary=assert(F.find(getPlayer(),(ids.items.secondary or ids.items.previous).id))
    evidence.handSeed.secondary=secondary:getID()
    evidence.handSeed.ordinary=evidence.handSeed.ordinary and hands.secondary and hands.secondary.item==secondary
   end
  end
- assert(evidence.handSeed.ordinary and not evidence.handSeed.requiresBoth and evidence.handSeed.supportsTwo==F.axeCase(ids.case),
+ if F.mandatoryCase(ids.case)then
+  evidence.handSeed.forceDropHeavy=previous:isForceDropHeavyItem()
+  assert(evidence.handSeed.forceDropHeavy==false,'mandatory item would force-drop during native equip')
+ end
+ local weapon=F.axeCase(ids.case)or F.mandatoryType(ids.case)=='Base.WoodAxe'
+ assert(evidence.handSeed.ordinary and evidence.handSeed.requiresBoth==F.mandatoryCase(ids.case)and evidence.handSeed.supportsTwo==weapon,
   'authority initial primary is outside the exact ordinary restoration topology')
  phase='running'
  if cut then ISCharacterScreen.onCutHair(getPlayer(),ids.targetHair,300)
@@ -387,7 +392,7 @@ local function observe()
  -- Use the same current Started receipt required by the grooming cancel policy.
  if row.progress and q().current==trim and (not isClient() or row.receipt
   and T.ActionQueueAcknowledgements.state(trim,row.receipt)=='started') then
-  if F.oneHandedCase(ids.case)and not evidence.preparationBoundary then
+  if(F.oneHandedCase(ids.case)or F.mandatoryCase(ids.case))and not evidence.preparationBoundary then
    local prepared=assert(actions.preparationEquip);local equipped=assert(tracks[prepared])
    evidence.preparationBoundary={at=getTimestampMs(),actionRef=equipped.actionRef,nativeRef=tostring(prepared.action),
     groomingRef=row.actionRef,groomingNative=tostring(trim.action),groomingDelta=trim:getJobDelta(),snapshot=F.snapshot(state)}

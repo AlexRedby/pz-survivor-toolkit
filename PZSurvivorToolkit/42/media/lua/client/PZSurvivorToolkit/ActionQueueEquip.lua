@@ -291,8 +291,8 @@ function Equip.restorationHands(actor, incoming, incomingBoth)
   local function ordinary(item, sharedGrip)
    if not item then return false end
    local valid,both,weapon,handgun=itemFacts(actor,root,item)
-   if not valid or both or handgun then return end
-   if sharedGrip and not (weapon and item:isTwoHandWeapon()==true) then return end
+   if not valid or handgun or both and not sharedGrip then return end
+   if sharedGrip and not (both or weapon and item:isTwoHandWeapon()==true) then return end
    return {item=item,requiresBoth=both,handWeapon=weapon,handgun=handgun}
   end
   local primary,secondary=actor:getPrimaryHandItem(),actor:getSecondaryHandItem()

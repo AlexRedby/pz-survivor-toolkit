@@ -12,12 +12,18 @@ ACTION_TYPES = {'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEq
                 'restore': 'ISEquipWeaponAction', 'returned': 'ISInventoryTransferAction', 'tail': 'ISReadABook',
                 'explicitEquip': 'ISEquipWeaponAction', 'command': 'ISQueueActionsAction', 'approach': 'ISQueueActionsAction'}
 ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle', 'equipPrimary', 'equipTwoHands')
-RETURNED_CASES = {'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'one-handed-axe'}
+RETURNED_CASES = {'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'one-handed-axe', 'mandatory-both-stone-wheel'}
 TWO_HANDED_AXE_CASES = {'two-handed-axe', 'two-handed-axe-new-primary-intent'}
 ONE_HANDED_AXE_CASES = {'one-handed-axe', 'one-handed-axe-new-primary-intent'}
 AXE_CASES = TWO_HANDED_AXE_CASES | ONE_HANDED_AXE_CASES
-INTENT_CASES = {'new-primary-intent', 'two-handed-axe-new-primary-intent', 'one-handed-axe-new-primary-intent'}
-RESTORE_BOUNDARY_CASES = {'empty-primary'} | (AXE_CASES - INTENT_CASES)
+MANDATORY_BOTH_TYPES = {'mandatory-both-stone-wheel': 'Base.StoneWheelSmall',
+                        'mandatory-both-wood-axe-new-primary-intent': 'Base.WoodAxe'}
+MANDATORY_BOTH_CASES = set(MANDATORY_BOTH_TYPES)
+SHARED_HAND_CASES = TWO_HANDED_AXE_CASES | MANDATORY_BOTH_CASES
+EQUIPMENT_CASES = AXE_CASES | MANDATORY_BOTH_CASES
+PREPARATION_BOUNDARY_CASES = ONE_HANDED_AXE_CASES | MANDATORY_BOTH_CASES
+INTENT_CASES = {'new-primary-intent', 'two-handed-axe-new-primary-intent', 'one-handed-axe-new-primary-intent', 'mandatory-both-wood-axe-new-primary-intent'}
+RESTORE_BOUNDARY_CASES = {'empty-primary'} | (EQUIPMENT_CASES - INTENT_CASES)
 SCISSORS_CASES = {'trim-scissors', 'cut-hair-scissors'}
 
 
@@ -25,6 +31,7 @@ def item_types(case):
     values = dict(TYPES)
     if case in SCISSORS_CASES: values['razor'] = 'Base.Scissors'
     if case in AXE_CASES: values['previous'] = 'Base.Axe'
+    if case in MANDATORY_BOTH_CASES: values['previous'] = MANDATORY_BOTH_TYPES[case]
     if case in ONE_HANDED_AXE_CASES: values['secondary'] = 'Base.Pen'
     return values
 
@@ -50,7 +57,7 @@ def expected(ids, authority):
     else:
         row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
     row['primary'] = ids['items']['razor']['id'] if ids.get('handAckDelay') else False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] in INTENT_CASES else 'previous']['id']
-    if ids['case'] in TWO_HANDED_AXE_CASES and ids['case'] in INTENT_CASES: row['secondary'] = False
+    if ids['case'] in SHARED_HAND_CASES and ids['case'] in INTENT_CASES: row['secondary'] = False
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
     if ids.get('handAckDelay') or ids['case'] not in RETURNED_CASES:
         row['origin']['sourceCount'] = 0
@@ -70,16 +77,29 @@ def seed_hands(ids):
     owned = ids['items']; case = ids['case']
     return dict(primary=False if case == 'empty-primary' else owned['previous']['id'],
                 secondary=owned['secondary']['id'] if case in ONE_HANDED_AXE_CASES else
-                owned['previous']['id'] if case in TWO_HANDED_AXE_CASES or case == 'empty-primary' else False)
+                owned['previous']['id'] if case in SHARED_HAND_CASES or case == 'empty-primary' else False)
 
 
 def equip_mode_errors(action, ids):
-    if ids['case'] not in AXE_CASES or action.get('type') != 'ISEquipWeaponAction': return []
-    two = action.get('role') == 'restore' and ids['case'] in TWO_HANDED_AXE_CASES
+    if ids['case'] not in EQUIPMENT_CASES or action.get('type') != 'ISEquipWeaponAction': return []
+    two = action.get('role') == 'restore' and ids['case'] in SHARED_HAND_CASES
     flag = action.get('equipTwoHands', False) if ids['case'] in TWO_HANDED_AXE_CASES else action.get('equipTwoHands')
     if action.get('equipPrimary') is not True or flag is not two:
-        return ['Native axe preparation/restoration/explicit hand mode differs: ' + str(action.get('role'))]
+        return ['Native preparation/restoration/explicit hand mode differs: ' + str(action.get('role'))]
     return []
+
+
+def hand_seed_errors(seed, ids):
+    case = ids['case']; previous_type = item_types(case)['previous']
+    wanted = dict(type=previous_type, requiresBoth=case in MANDATORY_BOTH_CASES,
+                  handWeapon=previous_type != 'Base.StoneWheelSmall',
+                  supportsTwo=previous_type in ('Base.Axe', 'Base.WoodAxe'), ordinary=True)
+    wanted.update(dict(primary=False, secondary=ids['items']['previous']['id']) if case == 'empty-primary'
+                  else dict(id=ids['items']['previous']['id']))
+    if case in EQUIPMENT_CASES: wanted['secondary'] = seed_hands(ids)['secondary']
+    if case in MANDATORY_BOTH_CASES: wanted['forceDropHeavy'] = False
+    valid = type(seed) is dict and seed == wanted and all(type(seed[key]) is type(value) for key, value in wanted.items())
+    return [] if valid else ['Initial hands lack exact ordinary restoration proof']
 
 
 def validate_prepared(ids, selection):
@@ -229,7 +249,7 @@ def producer_errors(ev, roles, ids):
 
 def borrowed_snapshot(ids):
     row = copy.deepcopy(ids['baseline']); row['primary'] = ids['items']['razor']['id']
-    if ids['case'] in TWO_HANDED_AXE_CASES: row['secondary'] = False
+    if ids['case'] in SHARED_HAND_CASES: row['secondary'] = False
     row['origin']['sourceCount'] = 0
     for item in row['items']:
         if item['id'] == ids['items']['razor']['id']: item['container'] = 'root'
@@ -456,7 +476,7 @@ def lifecycle_errors(action, kind, canceled=False):
 
 def preparation_boundary_errors(ev, roles, ids, kind):
     boundary = ev.get('preparationBoundary')
-    if ids['case'] not in ONE_HANDED_AXE_CASES:
+    if ids['case'] not in PREPARATION_BOUNDARY_CASES:
         return [] if boundary is None else ['Unexpected native preparation boundary']
     try:
         prepared, trim = roles['preparationEquip'][0], roles['trim'][0]
@@ -466,7 +486,7 @@ def preparation_boundary_errors(ev, roles, ids, kind):
                 or boundary.get('groomingNative') != trim['nativeRef'] or boundary.get('snapshot') != wanted
                 or not number(boundary.get('at')) or not prepared['startedAt'] <= trim['startedAt'] <= boundary['at']
                 or not number(boundary.get('groomingDelta')) or not 0 < boundary['groomingDelta'] < 1):
-            return ['Native primary-only preparation physical hands during grooming differ']
+            return ['Native preparation physical hands during grooming differ']
         # Host terminal identity/result is required, but packet arrival may trail grooming admission.
         return equip_mode_errors(prepared, ids) + lifecycle_errors(prepared, kind)
     except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
@@ -663,13 +683,7 @@ def check_case(row, selection, prepared, verified):
         if any(type(ref) is not str or not ref for ref in refs) or len(set(refs)) != len(refs):
             raise ValueError('Action identity duplicated/missing')
         errors.extend(producer_errors(ev, roles, ids))
-        seed = ev.get('handSeed')
-        wanted_seed = dict(type=item_types(case)['previous'], requiresBoth=False, handWeapon=True, supportsTwo=case in AXE_CASES, ordinary=True)
-        wanted_seed.update(dict(primary=False, secondary=ids['items']['previous']['id']) if case == 'empty-primary'
-                           else dict(id=ids['items']['previous']['id']))
-        if case in AXE_CASES: wanted_seed['secondary'] = seed_hands(ids)['secondary']
-        if seed != wanted_seed:
-            errors.append('Initial hands lack exact ordinary restoration proof')
+        errors.extend(hand_seed_errors(ev.get('handSeed'), ids))
         for role, values in roles.items():
             for action in values:
                 if action.get('type') != (grooming(case)[1] if role == 'trim' else 'ISUnequipAction' if case == 'empty-primary' and role == 'restore' else ACTION_TYPES[role]):

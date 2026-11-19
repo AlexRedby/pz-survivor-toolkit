@@ -1,13 +1,13 @@
 -- Pure, one-shot scheduling obligation for an ordinary primary-hand tool.
--- A prior ordinary weapon may occupy both slots as the exact same item; the
--- native owner must additionally qualify its optional two-hand support.
+-- A shared grip can hold an item that requires both hands or a weapon that
+-- supports both hands. The native caller verifies that it stays in inventory.
 -- Rows have exactly Hands' item/requiresBoth/handWeapon/handgun fields; states
 -- have primary/secondary rows (or false). Item identities are opaque.
 --
 -- capture(before, after, tool) verifies the projected native preparation write.
 -- The caller must separately earn that exact native episode/hand outcome and
 -- exclude heavy, worn, hotbar, activation and other effects. A shared prior
--- weapon is the sole supported secondary-slot delta and restores in both hands.
+-- grip is the sole supported secondary-slot delta and restores in both hands.
 -- Restoring an empty prior primary projects an exact-tool primary unequip;
 -- an independently held secondary remains unchanged.
 -- propose(handle, current) returns an opaque proposal and a detached plan DTO.
@@ -50,8 +50,8 @@ local function row(value)
         or kind(raw(value, 'requiresBoth')) ~= 'boolean'
         or kind(raw(value, 'handWeapon')) ~= 'boolean'
         or kind(raw(value, 'handgun')) ~= 'boolean' then return end
-    if value.requiresBoth or value.handgun then return nil, 'unsupported_traits' end
-    return {item=item, requiresBoth=false, handWeapon=value.handWeapon, handgun=false}
+    if value.handgun then return nil, 'unsupported_traits' end
+    return {item=item, requiresBoth=value.requiresBoth, handWeapon=value.handWeapon, handgun=false}
 end
 local function copyRow(value)
     if value == false then return false end
@@ -61,6 +61,9 @@ local function sameRow(left, right)
     if left == false or right == false then return left == right end
     return equal(left.item, right.item) and left.requiresBoth == right.requiresBoth
         and left.handWeapon == right.handWeapon and left.handgun == right.handgun
+end
+local function sharedGrip(state)
+    return state.primary and state.secondary and equal(state.primary.item, state.secondary.item)
 end
 local function snapshot(value)
     if not plain(value, stateFields) then return nil, 'invalid_input' end
@@ -74,19 +77,18 @@ local function snapshot(value)
             result[side] = saved
         end
     end
-    if result.primary ~= false and result.secondary ~= false
-        and equal(result.primary.item, result.secondary.item)
-        and (not result.primary.handWeapon or not sameRow(result.primary, result.secondary)) then
-        return nil, 'overlapping_hands'
+    local primary, secondary = result.primary, result.secondary
+    if sharedGrip(result) then
+        if not sameRow(primary, secondary) or not (primary.requiresBoth or primary.handWeapon) then
+            return nil, 'overlapping_hands'
+        end
+    elseif (primary and primary.requiresBoth) or (secondary and secondary.requiresBoth) then
+        return nil, 'unsupported_traits'
     end
     return result
 end
-local function sharedWeapon(state)
-    return state.primary ~= false and state.secondary ~= false
-        and state.primary.handWeapon and sameRow(state.primary, state.secondary)
-end
 local function restoreMode(before)
-    return sharedWeapon(before) and 'both' or before.primary == false and 'unequip' or 'primary'
+    return sharedGrip(before) and 'both' or before.primary == false and 'unequip' or 'primary'
 end
 local function sameState(left, right)
     return sameRow(left.primary, right.primary) and sameRow(left.secondary, right.secondary)
@@ -171,10 +173,11 @@ local function captureState(before, after, tool)
     if not prepared then return nil, reason end
     local incoming; incoming, reason = row(tool)
     if not incoming then return nil, reason or 'invalid_input' end
-    if sharedWeapon(prepared) then return nil, 'overlapping_hands' end
+    if incoming.requiresBoth then return nil, 'unsupported_traits' end
+    if sharedGrip(prepared) then return nil, 'overlapping_hands' end
     if sameRow(initial.primary, incoming) then return nil, 'unchanged_primary' end
     if initial.secondary ~= false and equal(initial.secondary.item, incoming.item) then return nil, 'overlapping_hands' end
-    if sharedWeapon(initial) then
+    if sharedGrip(initial) then
         if prepared.secondary ~= false then return nil, 'secondary_changed' end
     elseif not sameRow(initial.secondary, prepared.secondary) then return nil, 'secondary_changed' end
     -- The same opaque item cannot acquire different native traits between rows.

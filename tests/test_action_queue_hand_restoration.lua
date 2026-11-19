@@ -140,8 +140,8 @@ do
     refused('not_open',case.planner.propose(pending,after))
 end
 
--- The exception is only the exact shared prior weapon. It never accepts
--- unrelated secondary effects, a shared preparation tool or nonweapon overlap.
+-- A shared grip needs matching rows and two-hand eligibility. Grooming itself
+-- still requires a primary-only tool and the exact native secondary effect.
 do
     local case=setup()
     local previous,tool=row(true),row()
@@ -158,7 +158,15 @@ do
     local different=copyRow(previous);different.handWeapon=false
     refused('overlapping_hands',case.planner.capture(state(previous,different),after,tool))
     local required=copyRow(previous);required.requiresBoth=true
-    refused('unsupported_traits',case.planner.capture(state(required,required),after,tool))
+    for _,weapon in ipairs({true,false}) do
+        required.handWeapon=weapon
+        local origin=state(required,copyRow(required))
+        local handle=capture(case,origin,after,tool)
+        local proposal,plan=case.planner.propose(handle,after)
+        assert(plan.mode=='both' and plan.incoming.requiresBoth)
+        same(case.planner.consume(handle,proposal,after).expected,origin)
+        refused('unsupported_traits',case.planner.capture(state(false,required),after,tool))
+    end
     local handgun=copyRow(previous);handgun.handgun=true
     refused('unsupported_traits',case.planner.capture(state(handgun,handgun),after,tool))
     -- An opaque item shared with the incoming tool cannot become a loan.

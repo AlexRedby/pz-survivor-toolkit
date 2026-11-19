@@ -92,7 +92,8 @@ class RazorRestorationTests(unittest.TestCase):
         self.assertEqual(a.CASES, ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active',
                                   'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors',
                                   'two-handed-axe', 'two-handed-axe-new-primary-intent',
-                                  'one-handed-axe', 'one-handed-axe-new-primary-intent'))
+                                  'one-handed-axe', 'one-handed-axe-new-primary-intent',
+                                  'mandatory-both-stone-wheel', 'mandatory-both-wood-axe-new-primary-intent'))
         for kind in ('sp', 'mp'):
             for cases in (list(a.CASES[:2]), *([case] for case in a.CASES), list(a.CASES[2:])):
                 value = selection(kind); value['cases'] = cases
@@ -546,8 +547,8 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
             self.assertTrue(v.denied_return_errors(changed, ev, ids, 'mp'))
         self.assertTrue(v.denied_return_errors(action, ev, ids, 'sp'))
 
-    def test_axe_cases_batch_in_sp_and_menu_host(self):
-        cases = [case for case in a.CASES if case in v.AXE_CASES]
+    def test_equipment_cases_batch_in_sp_and_menu_host(self):
+        cases = [case for case in a.CASES if case in v.EQUIPMENT_CASES]
         for kind in ('sp', 'mp'):
             value = selection(kind); value['cases'] = cases
             a.validate(value)
@@ -555,8 +556,8 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
         for case in cases:
             self.assertEqual(definitions[case]['kinds'], ['sp', 'mp'])
 
-    def test_axe_seed_and_exact_hands_follow_native_effects(self):
-        for case in v.AXE_CASES:
+    def test_equipment_seed_and_exact_hands_follow_native_effects(self):
+        for case in v.EQUIPMENT_CASES:
             ids, _, _ = control_observation(case)
             baseline = ids['baseline']; baseline['male'] = True
             for item in baseline['items']:
@@ -567,7 +568,9 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
                 actual=dict(x=10.5, y=10.5, z=0, square=target, currentSquare=target),
                 teleports=0, stableMs=500, quietMs=0, elapsedMs=500, centered=True, centers=0)
             v.validate_prepared(ids, selection())
-            self.assertEqual(ids['items']['previous']['type'], 'Base.Axe')
+            expected_type = {'mandatory-both-stone-wheel': 'Base.StoneWheelSmall',
+                             'mandatory-both-wood-axe-new-primary-intent': 'Base.WoodAxe'}.get(case, 'Base.Axe')
+            self.assertEqual(ids['items']['previous']['type'], expected_type)
             self.assertEqual(baseline['primary'], ids['items']['previous']['id'])
             held_secondary = ids['items']['secondary']['id'] if case in v.ONE_HANDED_AXE_CASES else baseline['primary']
             borrowed_secondary = held_secondary if case in v.ONE_HANDED_AXE_CASES else False
@@ -596,11 +599,11 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
                 changed = copy.deepcopy(ids); mutate(changed)
                 with self.assertRaises(ValueError): v.validate_prepared(changed, selection())
 
-    def test_axe_native_restore_completes_exact_hands_before_return(self):
+    def test_equipment_native_restore_completes_exact_hands_before_return(self):
         # Receipt sub-schema checks do not constitute a native gameplay pass.
-        for case, kind in ((case, kind) for case in ('two-handed-axe', 'one-handed-axe') for kind in ('sp', 'mp')):
+        for case, kind in ((case, kind) for case in ('two-handed-axe', 'one-handed-axe', 'mandatory-both-stone-wheel') for kind in ('sp', 'mp')):
             ids, _, _ = control_observation(case)
-            two = case in v.TWO_HANDED_AXE_CASES
+            two = case in v.SHARED_HAND_CASES
             restore = native_equip_observation('restore', kind, two=two)
             roles = dict(restore=[restore], returned=[dict(actionRef='return', admittedAt=15, startedAt=16)])
             snapshot = v.expected(ids, kind == 'sp'); snapshot.pop('authority')
@@ -620,8 +623,8 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
                 changed = copy.deepcopy(roles); mutate(changed)
                 self.assertTrue(v.restore_boundary_errors(ev, changed, ids, kind))
 
-    def test_axe_new_intent_keeps_unpaid_exact_razor_debt(self):
-        for case in ('two-handed-axe-new-primary-intent', 'one-handed-axe-new-primary-intent'):
+    def test_equipment_new_intent_keeps_unpaid_exact_razor_debt(self):
+        for case in ('two-handed-axe-new-primary-intent', 'one-handed-axe-new-primary-intent', 'mandatory-both-wood-axe-new-primary-intent'):
             ids, _, _ = control_observation(case)
             roles = dict(trim=[dict(actionRef='trim', nativeRef='native-trim', operationRef='borrow', startedAt=1)],
                          tail=[dict(operationRef='independent', startedAt=10)],
@@ -645,11 +648,11 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
                 self.assertTrue(v.intent_errors(ev, changed, ids))
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
-    def test_native_fixture_expected_axe_hands_and_superseding_intent(self):
+    def test_native_fixture_expected_equipment_hands_and_superseding_intent(self):
         source = r"""
 package.preload.QueueEnergyPlacement=function()return {}end
 local F=dofile(arg[1])
-for _,case in ipairs({'two-handed-axe','two-handed-axe-new-primary-intent','one-handed-axe','one-handed-axe-new-primary-intent'})do
+for _,case in ipairs({'two-handed-axe','two-handed-axe-new-primary-intent','one-handed-axe','one-handed-axe-new-primary-intent','mandatory-both-stone-wheel','mandatory-both-wood-axe-new-primary-intent'})do
  local secondary=F.oneHandedCase(case)and 77 or 74
  local ids={case=case,initialBeard='LongScruffy',targetBeard='Moustache',
   items={razor={id=73},previous={id=74},replacement={id=75},tail={id=76,initial=8,total=10}},
@@ -657,8 +660,8 @@ for _,case in ipairs({'two-handed-axe','two-handed-axe-new-primary-intent','one-
    items={{id=73,container=42}},origin={sourceCount=1},tail={pages=8,characterPages=8}}}
  local final=F.expected(ids)
  local wantedSecondary=secondary
- if F.twoHandedCase(case)and F.intentCase(case)then wantedSecondary=false end
- assert(F.axeCase(case)and final.appearance.beard=='Moustache')
+ if F.sharedHandCase(case)and F.intentCase(case)then wantedSecondary=false end
+ assert(F.equipmentCase(case)and final.appearance.beard=='Moustache')
  if F.intentCase(case)then
   assert(not F.returnedCase(case)and final.primary==75 and final.secondary==wantedSecondary)
   assert(final.items[1].container=='root'and final.origin.sourceCount==0)
@@ -674,13 +677,14 @@ end
                                 input=source, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_primary_only_native_mode_requires_explicit_false_for_new_cases(self):
-        for case in v.ONE_HANDED_AXE_CASES:
+    def test_new_equipment_native_mode_requires_explicit_flag(self):
+        for case in v.ONE_HANDED_AXE_CASES | v.MANDATORY_BOTH_CASES:
             ids, _, _ = control_observation(case)
             for role in ('preparationEquip', 'restore', 'explicitEquip'):
-                action = native_equip_observation(role, 'mp')
+                two = role == 'restore' and case in v.SHARED_HAND_CASES
+                action = native_equip_observation(role, 'mp', two=two)
                 self.assertEqual(v.equip_mode_errors(action, ids), [])
-                for mutate in (lambda a: a.pop('equipTwoHands'), lambda a: a.update(equipTwoHands=True),
+                for mutate in (lambda a: a.pop('equipTwoHands'), lambda a: a.update(equipTwoHands=not two),
                                lambda a: a.update(equipPrimary=False)):
                     changed = copy.deepcopy(action); mutate(changed)
                     self.assertTrue(v.equip_mode_errors(changed, ids))
@@ -690,9 +694,9 @@ end
         self.assertEqual(v.equip_mode_errors(old, ids), [])
         self.assertEqual(v.preparation_boundary_errors({}, {}, ids, 'mp'), [])
 
-    def test_primary_only_grooming_progress_keeps_exact_pen_and_host_receipt(self):
-        ids, _, _ = control_observation('one-handed-axe')
-        for kind in ('sp', 'mp'):
+    def test_equipment_grooming_progress_keeps_exact_hands_and_host_receipt(self):
+        for case, kind in ((case, kind) for case in v.PREPARATION_BOUNDARY_CASES for kind in ('sp', 'mp')):
+            ids, _, _ = control_observation(case)
             prepared = native_equip_observation('preparationEquip', kind)
             trim = dict(actionRef='trim', nativeRef='native-trim', admittedAt=15, startedAt=16)
             roles = dict(preparationEquip=[prepared], trim=[trim])
@@ -700,7 +704,7 @@ end
                 groomingRef='trim', groomingNative='native-trim', groomingDelta=.4, snapshot=v.borrowed_snapshot(ids)))
             self.assertEqual(v.preparation_boundary_errors(ev, roles, ids, kind), [])
             for mutate in (lambda e: e.pop('preparationBoundary'),
-                           lambda e: e['preparationBoundary']['snapshot'].update(secondary=False),
+                           lambda e: e['preparationBoundary']['snapshot'].update(secondary=False if case in v.ONE_HANDED_AXE_CASES else 75),
                            lambda e: e['preparationBoundary']['snapshot'].update(secondary=74),
                            lambda e: e['preparationBoundary'].update(groomingDelta=0),
                            lambda e: e['preparationBoundary'].update(groomingNative='foreign'),
@@ -718,6 +722,20 @@ end
                                lambda a: a['ack'][0].update(token='foreign')):
                     changed = copy.deepcopy(roles); mutate(changed['preparationEquip'][0])
                     self.assertTrue(v.preparation_boundary_errors(ev, changed, ids, kind))
+
+    def test_mandatory_hand_seed_requires_native_type_and_no_force_drop(self):
+        for case, previous_type, weapon in (('mandatory-both-stone-wheel', 'Base.StoneWheelSmall', False),
+                                           ('mandatory-both-wood-axe-new-primary-intent', 'Base.WoodAxe', True)):
+            ids, _, _ = control_observation(case)
+            seed = dict(id=ids['items']['previous']['id'], secondary=ids['items']['previous']['id'], type=previous_type,
+                        requiresBoth=True, handWeapon=weapon, supportsTwo=weapon, ordinary=True, forceDropHeavy=False)
+            self.assertEqual(v.hand_seed_errors(seed, ids), [])
+            for mutate in (lambda s: s.update(forceDropHeavy=True), lambda s: s.update(forceDropHeavy=0),
+                           lambda s: s.pop('forceDropHeavy'), lambda s: s.update(requiresBoth=False),
+                           lambda s: s.update(handWeapon=not weapon), lambda s: s.update(supportsTwo=not weapon),
+                           lambda s: s.update(secondary=ids['items']['replacement']['id'])):
+                changed = copy.deepcopy(seed); mutate(changed)
+                self.assertTrue(v.hand_seed_errors(changed, ids))
 
     def test_missing_live_logs_never_pass(self):
         with tempfile.TemporaryDirectory() as directory:

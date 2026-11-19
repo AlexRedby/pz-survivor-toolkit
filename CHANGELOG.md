@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.18
+
+- After grooming, opt-in restoration can equip a carried item that requires both hands, such as a wood axe or small stone wheel. Choosing new equipment during grooming still takes precedence.
+
 ### 0.2.17
 
 - Opt-in grooming restoration now returns an axe or another optional two-handed weapon to its original one-handed grip. An item held in the other hand stays there.

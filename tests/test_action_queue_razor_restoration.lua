@@ -10,6 +10,10 @@ local function prepared(editorEnabled,kind)
  local e,q,t=f.env,f.queue,f.env.PZSurvivorToolkit
  local previous,secondary
  if kind.empty then secondary=f.tool(810,'Base.Pen',f.inventory)
+ elseif kind.required then
+  previous=f.tool(810,'Base.StoneWheelSmall',f.inventory)
+  previous.isRequiresEquippedBothHands=function()return true end
+  secondary=previous
  elseif kind.axeGrip then
   previous=f.tool(810,'Base.Axe',f.inventory)
   previous.class='HandWeapon'
@@ -47,6 +51,7 @@ local function prepared(editorEnabled,kind)
 end
 for _,kind in ipairs({
  {tool='Base.Razor',body='ISTrimBeard',style='Moustache',axeGrip='both'},
+ {tool='Base.Razor',body='ISTrimBeard',style='Moustache',required=true},
  {tool='Base.Scissors',body='ISCutHair',style='Fabian',axeGrip='primary'},
  {tool='Base.Razor',body='ISTrimBeard',style='Moustache'},
  {tool='Base.Scissors',body='ISTrimBeard',style='Moustache'},
@@ -83,6 +88,23 @@ for _, editorEnabled in ipairs({true, false}) do
   and f.effects[1].item==razor and f.effects[1].destination==f.inventory
   and f.effects[2].item==razor and f.effects[2].destination==f.source,'native return failed to settle exactly one earned tool loan')
 end
+end
+
+-- Native equip drops a heavy held item into the world. Neither its old grip
+-- nor a one-slot replica of a mandatory grip can authorize an inventory restore.
+do
+ local f=create(false,{p4=false,carried=true,razor=true})
+ local item=f.tool(810,'Base.StoneAnvil',f.inventory)
+ item.isRequiresEquippedBothHands=function()return true end
+ item.isForceDropHeavyItem=function()return true end
+ f.player.primary,f.player.secondary=item,item
+ local hands=f.env.PZSurvivorToolkit.ActionQueueEquip.restorationHands
+ assert(hands(f.player)==nil)
+ f.player.primary,f.player.secondary=nil,nil
+ assert(hands(f.player,item,true)==nil)
+ item.isForceDropHeavyItem=function()return false end
+ f.player.primary=item
+ assert(hands(f.player)==nil)
 end
 
 -- The native Bald callback also permits a tool-less body. It must run without

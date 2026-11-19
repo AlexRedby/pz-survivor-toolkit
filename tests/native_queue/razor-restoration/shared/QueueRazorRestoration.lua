@@ -1,12 +1,17 @@
 -- Authority-only seeds/interventions; native queue work is never synthesized.
 local F={}
 local P=require 'QueueEnergyPlacement'
+local mandatoryTypes={['mandatory-both-stone-wheel']='Base.StoneWheelSmall',['mandatory-both-wood-axe-new-primary-intent']='Base.WoodAxe'}
+function F.mandatoryType(case)return mandatoryTypes[case]end
+function F.mandatoryCase(case)return mandatoryTypes[case]~=nil end
 function F.twoHandedCase(case)return case=='two-handed-axe'or case=='two-handed-axe-new-primary-intent'end
 function F.oneHandedCase(case)return case=='one-handed-axe'or case=='one-handed-axe-new-primary-intent'end
 function F.axeCase(case)return F.twoHandedCase(case)or F.oneHandedCase(case)end
-function F.intentCase(case)return case=='new-primary-intent'or case=='two-handed-axe-new-primary-intent'or case=='one-handed-axe-new-primary-intent'end
-function F.returnedCase(case)return case=='restore-success'or case=='two-handed-axe'or case=='one-handed-axe'or case=='empty-primary'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
-function F.restoreBoundaryCase(case)return case=='empty-primary'or F.axeCase(case)and not F.intentCase(case)end
+function F.equipmentCase(case)return F.axeCase(case)or F.mandatoryCase(case)end
+function F.sharedHandCase(case)return F.twoHandedCase(case)or F.mandatoryCase(case)end
+function F.intentCase(case)return case=='new-primary-intent'or case=='two-handed-axe-new-primary-intent'or case=='one-handed-axe-new-primary-intent'or case=='mandatory-both-wood-axe-new-primary-intent'end
+function F.returnedCase(case)return case=='restore-success'or case=='mandatory-both-stone-wheel'or case=='two-handed-axe'or case=='one-handed-axe'or case=='empty-primary'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
+function F.restoreBoundaryCase(case)return case=='empty-primary'or F.equipmentCase(case)and not F.intentCase(case)end
 local function id(item)return item and item:getID()or false end
 function F.same(a,b)
  if type(a)~=type(b)then return false end
@@ -92,7 +97,7 @@ end
 function F.prepare(player,case,target,proof,previous)
  assert(not isClient()and P.atCentered(player,target),'authority must be at the prepared square')
  assert(not player:isFemale(),'native male character creation required for beard trimming')
- assert(({['restore-success']=true,['one-handed-axe']=true,['one-handed-axe-new-primary-intent']=true,['two-handed-axe']=true,['two-handed-axe-new-primary-intent']=true,['empty-primary']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case],'unknown razor case')
+ assert((F.mandatoryCase(case)or({['restore-success']=true,['one-handed-axe']=true,['one-handed-axe-new-primary-intent']=true,['two-handed-axe']=true,['two-handed-axe-new-primary-intent']=true,['empty-primary']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case]),'unknown razor case')
  if previous then F.dispose(previous)end
  assert(not player:getPrimaryHandItem()and not player:getSecondaryHandItem(),'authority seed requires empty initial hands')
  local root=player:getInventory();local bag=assert(root:AddItem('Base.Bag_Military'));local source=bag:getItemContainer();source:setExplored(true)
@@ -103,10 +108,13 @@ function F.prepare(player,case,target,proof,previous)
  local cut=case=='cut-hair-scissors'
  if cut then ids.initialHair='Fabian';ids.targetHair='Bald' end
  local s={player=player,ids=ids,bag=bag}
- local types={razor=(case=='trim-scissors'or cut)and'Base.Scissors'or'Base.Razor',previous=F.axeCase(case)and'Base.Axe'or'Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'}
+ local types={razor=(case=='trim-scissors'or cut)and'Base.Scissors'or'Base.Razor',previous=F.mandatoryType(case)or F.axeCase(case)and'Base.Axe'or'Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'}
  if F.oneHandedCase(case)then types.secondary='Base.Pen'end
  for name,kind in pairs(types)do
   local item=assert((name=='razor'and source or root):AddItem(kind));item:setFavorite(true)
+  if name=='previous'and F.mandatoryCase(case)then
+   assert(item:isRequiresEquippedBothHands()and item:isForceDropHeavyItem()==false,'mandatory both-hands fixture requires safe carried native item')
+  end
   ids.items[name]={id=item:getID(),type=kind}
  end
  local tail=F.find(player,ids.items.tail.id);local pages=tail:getNumberOfPages();assert(pages>2)
@@ -115,7 +123,7 @@ function F.prepare(player,case,target,proof,previous)
  player:setWornItem(bag:canBeEquipped(),bag)
  if case=='empty-primary'then player:setSecondaryHandItem(F.find(player,ids.items.previous.id))
  else player:setPrimaryHandItem(F.find(player,ids.items.previous.id))
-  if F.axeCase(case)then player:setSecondaryHandItem(F.find(player,(ids.items.secondary or ids.items.previous).id))end
+  if F.equipmentCase(case)then player:setSecondaryHandItem(F.find(player,(ids.items.secondary or ids.items.previous).id))end
  end
  local visual=player:getHumanVisual();visual:setBeardModel(ids.initialBeard)
  if cut then
@@ -159,7 +167,7 @@ function F.expected(ids)
  else row.appearance.beard=ids.case=='cancel-active'and ids.initialBeard or ids.targetBeard end
  if ids.case=='empty-primary'then row.primary=false
  else row.primary=ids.items[ids.handAckDelay and'razor'or F.intentCase(ids.case)and'replacement'or'previous'].id end
- if F.twoHandedCase(ids.case)and F.intentCase(ids.case)then row.secondary=false end
+ if F.sharedHandCase(ids.case)and F.intentCase(ids.case)then row.secondary=false end
  row.tail.pages=ids.items.tail.total;row.tail.characterPages=ids.items.tail.total
  if ids.handAckDelay or not F.returnedCase(ids.case)then
   row.origin.sourceCount=0
