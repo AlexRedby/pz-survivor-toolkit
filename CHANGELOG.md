@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.20
+
+- **Action queue:** Added support for identifying the exact generator set down during an equipment change, even when another generator occupies the same tile. Automatic generator pickup is still pending.
+
 ### 0.2.19
 
 - After grooming, opt-in restoration can pick up a stone anvil dropped when equipping the tool and return it to both hands. Choosing another item or losing access to the anvil suppresses recovery.
@@ -1815,6 +1819,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.4
+
+- **Action queue:** Exposed the generator created by native placement to Toolkit during an observed equipment change. The observation lasts only for that drop and does not modify the generator or the save.
 
 ### 0.2.3
 

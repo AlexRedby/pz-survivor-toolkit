@@ -111,7 +111,8 @@ def build_kotlin_relocator(jdk, home, destination, *, run=None):
     return [str(Path(jdk) / 'bin/java'), '-cp', os.pathsep.join([str(destination), compiler]), 'RelocateKotlin']
 
 
-CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRIPT_ITEM_PROPERTIES_CHECKS_PASS',
+CHECKS = {'net.alexredby.pztoolkitjavapatches.GeneratorDropObservationChecks': 'GENERATOR_DROP_OBSERVATION_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRIPT_ITEM_PROPERTIES_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.GroundHighlightChecks': 'GROUND_HIGHLIGHT_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ItemLaundryPropertiesChecks': 'ITEM_LAUNDRY_PROPERTIES_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.RecipeItemPropertiesChecks': 'RECIPE_ITEM_PROPERTIES_CHECKS_PASS',
@@ -443,7 +444,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.2.3',
+    'version': '0.2.4',
     'author': 'AlexRedby',
     'versionMin': '42.22',
     'versionMax': '42.22',

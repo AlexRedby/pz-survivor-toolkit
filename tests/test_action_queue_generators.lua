@@ -383,6 +383,63 @@ assert(not policy.inspect(action), 'mutated private command snapshot revokes per
 q.queue, q.current = {action}, action; action:begin(); action:start(); assert(#q.queue == 1)
 -- Native completion still owns generator pickup, fuel/state synchronization and activation idempotence.
 local take = ISTakeGenerator:new(p, other); assert(take:complete() and other.removed and p.primary == p.secondary)
+-- Execute the loaded stock complete, rather than inferring pickup ancestry from
+-- an inventory/type delta. Java allocation/defaults are explicit fixture inputs;
+-- this qualifies only the Lua fields copied into that exact factory result.
+do
+    local allocate, inventory, primary, secondary = instanceItem, inv.items, p.primary, p.secondary
+    local complete = ISTakeGenerator.complete
+    assert(getFilenameOfClosure(complete):match('ISTakeGenerator.lua$'), 'pickup qualification must execute the stock completion')
+    for _, specification in ipairs({{kind = 'Base.Generator_Blue', fuel = 20}, {kind = 'Base.Generator', fuel = 0}}) do
+        local remainingFuel = specification.fuel
+        local input = f.item(specification.kind)
+        input.condition, input.favorite, input.data = 37, true, {fuel = 11, ancestry = 'carried-input'}
+        local target, unrelated = generator(), generator()
+        target.getGeneratorItemType = function() return specification.kind end
+        unrelated.getGeneratorItemType = target.getGeneratorItemType
+        target.fuel, target.condition = remainingFuel, 92
+        target.favorite, target.data = true, {ancestry = 'world-source', custom = {retained = true}}
+        unrelated.fuel, unrelated.condition = 60, 47
+        local allocated, requestedType, allocations
+        allocations = 0
+        instanceItem = function(kind)
+            allocations, requestedType = allocations + 1, kind
+            allocated = allocate(kind)
+            -- Model a fresh Java InventoryItem, with no input favorite/modData.
+            allocated.favorite = false
+            return allocated
+        end
+        local sent, equipped = nil, false
+        local sendItem, sendHands = sendAddItemToContainer, sendEquip
+        sendAddItemToContainer = function(container, item)
+            assert(container == inv and item == allocated, 'native pickup sent a candidate instead of its allocation')
+            sent = item
+        end
+        sendEquip = function(character)
+            assert(character == p and p.primary == allocated and p.secondary == allocated,
+                'native pickup did not equip the exact factory result in both hands')
+            equipped = true
+        end
+        inv.items, p.primary, p.secondary = {input}, nil, nil
+        local pickup = ISTakeGenerator:new(p, target)
+        assert(pickup.complete == complete and pickup:isValid() and pickup:complete(), 'stock generator pickup did not complete normally')
+        assert(allocations == 1 and requestedType == target:getGeneratorItemType()
+            and allocated:getFullType() == input:getFullType(), 'pickup did not allocate the native generator item type')
+        assert(allocated ~= input and allocated ~= target and allocated ~= unrelated and allocated:getID() ~= input:getID()
+            and #inv.items == 2 and inv.items[1] == input and inv.items[2] == allocated
+            and sent == allocated and equipped, 'same-type candidates cannot stand in for the newly allocated pickup output')
+        assert(allocated.condition == target.condition and allocated:getModData().fuel == (remainingFuel > 0 and remainingFuel or nil),
+            'pickup must copy target condition and only positive fuel into its new output')
+        assert(allocated.favorite == false and allocated:getModData().ancestry == nil and allocated:getModData().custom == nil,
+            'pickup must not inherit input/world favorite or arbitrary modData')
+        assert(input.condition == 37 and input.favorite and input.data.fuel == 11 and input.data.ancestry == 'carried-input'
+            and target.favorite and target.data.ancestry == 'world-source' and target.data.custom.retained
+            and target.removed and not unrelated.removed and unrelated.condition == 47 and unrelated.fuel == 60,
+            'pickup changed a same-type candidate or copied metadata by mutating its source')
+        sendAddItemToContainer, sendEquip = sendItem, sendHands
+    end
+    instanceItem, inv.items, p.primary, p.secondary = allocate, inventory, primary, secondary
+end
 local activate = ISActivateGenerator:new(p, g, true); g.connected = true; assert(activate:complete() and g.activated and g.synced)
 assert(adapter.canSkip(activate))
 local plug = ISPlugGenerator:new(p, g, false); assert(plug:complete() and not g.connected)
