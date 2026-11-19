@@ -563,6 +563,8 @@ local function wrap(owner,name,kind,hotbar)
                     end
                     request.any=record.serial
                     if action.primary or action.twoHands then request.primary=record.serial end
+                    local generator = PZSurvivorToolkit.ActionQueueGeneratorReturn
+                    if generator then generator.handRequested(record.player) end
                 end
                 if record.finished then confirm(record) end
             else watching[record.action]=nil end

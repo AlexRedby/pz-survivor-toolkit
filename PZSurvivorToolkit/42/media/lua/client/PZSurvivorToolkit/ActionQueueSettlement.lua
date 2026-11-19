@@ -5283,7 +5283,7 @@ function Settlement.discardUnstartedPickups(queue,token,members)
     return true
 end
 
-local explicitEquipmentRole={adler=120995603,line=176}
+local explicitEquipmentRole={adler=658010903,line=176}
 local explicitEquipmentMatches=executionProof and executionProof.matches
 local retainingExplicitEquipment=false
 local function explicitPickupCapture(candidate,capture)

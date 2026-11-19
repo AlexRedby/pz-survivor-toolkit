@@ -49,7 +49,8 @@ function Drop.finish(ticket, actor, tool)
         or ticket.root:getItemWithID(ticket.item:getID()) ~= nil
         or generator:getSquare() ~= ticket.square or generator:getGeneratorItemType() ~= ticket.kind
         or generator:getCondition() ~= ticket.condition or generator:getFuel() ~= ticket.fuel then return end
-    return {actor=actor, generator=generator, square=ticket.square}
+    return {actor=actor, generator=generator, square=ticket.square, tool=tool, root=ticket.root,
+        sourceID=ticket.item:getID(), kind=ticket.kind, condition=ticket.condition, fuel=ticket.fuel}
 end
 
 -- A read-only availability check. Pickup and output ownership require separate evidence.
@@ -60,7 +61,10 @@ function Drop.target(record, actor)
     if index < 0 or generator:getSquare() ~= square or index >= square:getObjects():size()
         or square:getObjects():get(index) ~= generator or not square:getSpecialObjects():contains(generator)
         or getCell():getGridSquare(square:getX(), square:getY(), square:getZ()) ~= square
-        or generator:isConnected() or generator:isActivated() then return end
+        or generator:isConnected() or generator:isActivated()
+        or record.kind and generator:getGeneratorItemType() ~= record.kind
+        or record.condition and generator:getCondition() ~= record.condition
+        or record.fuel and generator:getFuel() ~= record.fuel then return end
     local here = actor:getCurrentSquare()
     if here and (here == square or here:canReachTo(square)) then return generator end
 end

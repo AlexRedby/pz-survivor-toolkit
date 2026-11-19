@@ -1,15 +1,17 @@
--- P4-free native tool producer. Installation is explicit until editor-off
--- restoration and live provider cutover are qualified. No per-tick queue scan.
+-- P4 owns the selected pack until cutover. In P4-free games, install the
+-- qualified generator path at startup. Full grooming qualification can opt in explicitly.
 local Toolkit = PZSurvivorToolkit
 local Hand = require 'PZSurvivorToolkit/ActionQueueHandRestoration'
 local Heavy = require 'PZSurvivorToolkit/ActionQueueHeavyPickup'
+local Generator = require 'PZSurvivorToolkit/ActionQueueGeneratorReturn'
 local Razor = {}
 Toolkit.ActionQueueRazorRestoration = Razor
 local installed = false
 local commandMarker = {}
 
-function Razor.enabled()
-    return installed
+local generatorsOnly
+function Razor.enabled(actor)
+    return installed and (not generatorsOnly or not actor or Generator.holding(actor))
 end
 
 local function command(actor, callback)
@@ -20,8 +22,11 @@ local function command(actor, callback)
     return action
 end
 
-function Razor.install()
-    if installed then return true end
+function Razor.install(onlyGenerators)
+    if installed then
+        if not onlyGenerators then generatorsOnly = false end
+        return true
+    end
     local definitions, ops = Toolkit.ActionQueueDefinitions, Toolkit.ActionQueueOperations
     if not definitions or not ops or not Toolkit.ActionQueueTidyIntent
         or not Toolkit.ActionQueueRestoration.prepareOwnHandIntent()
@@ -37,6 +42,7 @@ function Razor.install()
                 equipment=action.character, deferred=true, cancelWaiting=true}
         end,
     })
+    generatorsOnly = onlyGenerators == true
     installed = true
     return true
 end
@@ -91,14 +97,22 @@ function Razor.observe(episode, action)
         episode.equipHandle = settlement.observePreparation(action, {
             guard = guard,
             capture = function()
-                local before = Toolkit.ActionQueueEquip.restorationHands(actor)
-                local drop
-                if not before then
-                    drop = Heavy.capture(actor)
+                local before, drop
+                if Generator.holding(actor) then
+                    local reason
+                    episode.generator, reason = Generator.arm(actor, currentTool(episode), action)
+                    if Generator.trace then pcall(Generator.trace, action, 'arm', reason or 'armed') end
+                    drop = episode.generator
                     if not drop then return end
+                else
+                    before = Toolkit.ActionQueueEquip.restorationHands(actor)
+                    if not before then drop = Heavy.capture(actor) end
+                end
+                if drop then
                     local grip = {item=drop.item, requiresBoth=true, handWeapon=false, handgun=false}
                     before = {primary=grip, secondary=grip}
                 end
+                if not before then return end
                 episode.bothHands = before.primary and before.secondary and before.primary.item == before.secondary.item
                 episode.revision = episode.bothHands and bothRevision or primaryRevision
                 if episode.revision ~= nil then return {hands=before, drop=drop} end
@@ -106,8 +120,12 @@ function Razor.observe(episode, action)
             observed = function(_, before)
                 local after = Toolkit.ActionQueueEquip.restorationHands(actor)
                 if not after or not after.primary or after.primary.item ~= currentTool(episode) then return false end
-                if before.drop and Heavy.placed(before.drop) then episode.drop = before.drop end
-                if not episode.hand then episode.hand = Hand.capture(before.hands, after, after.primary) end
+                if before.drop and not episode.generator and Heavy.placed(before.drop) then episode.drop = before.drop end
+                if not episode.hand then
+                    local reason
+                    episode.hand, reason = Hand.capture(before.hands, after, after.primary)
+                    if episode.generator and Generator.trace then pcall(Generator.trace, action, 'hand-observed', reason or 'captured') end
+                end
                 return episode.hand ~= nil
             end,
         })
@@ -119,16 +137,22 @@ end
 local function restore(episode, parent)
     local settlement, ops = Toolkit.ActionQueueSettlement, Toolkit.ActionQueueOperations
     local actor, loan = episode.actor, episode.loan
-    if not settlement.reserveClaimedReturn(parent, loan) then return end
-    if not episode.source() or not episode.hand or not settlement.earned(episode.equipHandle) then return end
+    local function report(stage, value)
+        if episode.generator and Generator.trace then pcall(Generator.trace, episode.equip, stage, value) end
+    end
+    if not settlement.reserveClaimedReturn(parent, loan) then report('return', 'loan-unavailable'); return end
+    if not episode.source() or not episode.hand or not settlement.earned(episode.equipHandle) then
+        report('return', 'preparation-unconfirmed')
+        return
+    end
     local hands = Toolkit.ActionQueueEquip.restorationHands
     local revision = Toolkit.ActionQueueTidyIntent.handRequestRevision
     local function eligible()
         return episode.source() and revision(actor, episode.bothHands) == episode.revision
     end
-    if not eligible() then return end
+    if not eligible() then Generator.cancel(episode.generator); return end
     local proposal, plan = Hand.propose(episode.hand, hands(actor))
-    if not proposal then return end
+    if not proposal then report('proposal', plan); return end
     local borrowed = currentTool(episode)
     if not borrowed then return end
     local previous = plan.incoming and plan.incoming.item
@@ -136,7 +160,13 @@ local function restore(episode, parent)
     local token = parent.toolkitQueueOperation
     local drop = episode.drop
     local action, pickup, pickupHandle
-    if drop then
+    local generator = episode.generator
+    if generator then
+        if not bothHands or previous ~= generator.item then return end
+        action = Generator.pickup(generator)
+        report('return', action and 'constructed' or 'revoked')
+        if not action then return end
+    elseif drop then
         if not bothHands or previous ~= drop.item then return end
         Toolkit.FitnessEquipment.refreshFloor(actor)
         local floorItem, floor = Heavy.resolveFloor(drop)
@@ -155,9 +185,10 @@ local function restore(episode, parent)
         action = ISEquipWeaponAction:new(actor, previous, 50, true, bothHands)
     end
     ops.adopt(action, token)
-    if not settlement.inheritCleanup(action, parent) then return end
+    if not settlement.inheritCleanup(action, parent) then report('return', 'unowned-cleanup'); return end
     local function bound(value)
         if value ~= action then return false end
+        if generator then return Generator.bound(generator, value) end
         if drop then
             return (value.item == pickup.item or value.item == Heavy.restoredRoot(drop))
                 and isPrimaryEquip(value, actor, value.item, true)
@@ -167,11 +198,16 @@ local function restore(episode, parent)
             and not value.fromHotbar and value.reason == nil and Toolkit.ActionQueuePolicy.matchesNative(value)
     end
     local effect = settlement.observeCleanupEffect(action, {
-        guard = bound, sourceGuard = bound,
+        guard = function(value)
+            local receipt = generator and generator.receipt
+            return bound(value) and not (receipt and (receipt.skipped or receipt.unknown))
+        end, sourceGuard = bound,
         admit = function(value)
-            if not bound(value) or not eligible() then return false end
+            if not bound(value) or not eligible() then Generator.cancel(generator); return false end
             local current
-            if drop then
+            if generator then
+                current = hands(actor)
+            elseif drop then
                 if not settlement.earned(pickupHandle) or not Heavy.restoredRoot(drop) then return false end
                 current = hands(actor)
             else
@@ -181,6 +217,7 @@ local function restore(episode, parent)
         end,
         capture = function() return hands(actor) end,
         observed = function(_, before)
+            if generator then return Generator.observed(generator) end
             if drop then
                 local item = Heavy.restoredRoot(drop)
                 return item ~= nil and actor:getPrimaryHandItem() == item and actor:getSecondaryHandItem() == item
@@ -192,16 +229,19 @@ local function restore(episode, parent)
                 and (after.secondary and after.secondary.item) == (plan.expected.secondary and plan.expected.secondary.item)
         end,
     })
-    if not effect then return end
+    if not effect then report('return', 'effect-unobserved'); return end
     local continuation = command(actor, function()
         if settlement.earned(effect) then settlement.enqueueBorrowedReturn(loan) end
     end)
     ops.adopt(continuation, token)
     if settlement.inheritCleanup(continuation, parent)
         and settlement.requireBorrowedReturnSuccess(loan, {effect}, continuation) then
+        report('return', 'enrolled')
         if pickup then ISTimedActionQueue.add(pickup) end
         ISTimedActionQueue.add(action)
         ISTimedActionQueue.add(continuation)
+    else
+        report('return', 'continuation-unavailable')
     end
 end
 
@@ -221,5 +261,9 @@ function Razor.finish(episode)
         ops.runWith(token, ISTimedActionQueue.add, parent)
     end
 end
+
+if Events and Events.OnGameStart then Events.OnGameStart.Add(function()
+    if P4TidyUpMeister == nil and not getActivatedMods():contains('P4TidyUpMeister') then Razor.install(true) end
+end) end
 
 return Razor

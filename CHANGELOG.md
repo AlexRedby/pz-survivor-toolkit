@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.21
+
+- In games without P4 Tidy Up Meister, grooming with a borrowed razor or scissors can return a carried generator to both hands after use. A newer equipment choice or another player taking the generator takes precedence. Native pickup preserves condition and fuel and gives the generator a new item ID.
+
 ### 0.2.20
 
 - **Action queue:** Added support for identifying the exact generator set down during an equipment change, even when another generator occupies the same tile. Automatic generator pickup is still pending.

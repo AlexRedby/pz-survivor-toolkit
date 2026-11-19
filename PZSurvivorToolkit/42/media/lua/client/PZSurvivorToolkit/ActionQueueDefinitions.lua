@@ -390,6 +390,7 @@ local native = {
     ISStopAlarmClockAction = {key = "UI_PZSurvivorToolkit_queue_native_ISStopAlarmClockAction", family = "device", targets = {"alarm"}},
     ISTakeCarBatteryChargerAction = {key = "UI_PZSurvivorToolkit_queue_native_ISTakeCarBatteryChargerAction", family = "device", targets = {"charger"}},
     ISTakeFuel = {key = "ContextMenu_TakeGasFromPump", family = "device", targets = {}},
+    PZSurvivorToolkitGeneratorRecovery = {key = "UI_PZSurvivorToolkit_queue_native_ISTakeGenerator", family = "device", targets = {}},
     ISTakeGenerator = {key = "UI_PZSurvivorToolkit_queue_native_ISTakeGenerator", family = "device", targets = {"generator"}},
     ISToggleClothingDryer = {key = prefix .. "power", family = "device", targets = {"object"}},
     ISToggleClothingWasher = {key = prefix .. "power", family = "device", targets = {"object"}},

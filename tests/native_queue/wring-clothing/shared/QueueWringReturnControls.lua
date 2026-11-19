@@ -53,7 +53,7 @@ local function installationFacts()
   facts.roles[#facts.roles+1]=role
  end
  local hashes={
-  {'intent','media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',120995603,'PZSurvivorToolkit',true},
+  {'intent','media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',658010903,'PZSurvivorToolkit',true},
   {'nativePane','media/lua/client/ISUI/ISInventoryPane.lua',3828276359,false,true},
   {'cleanPane','media/lua/client/ISUI/ISInventoryPane.lua',2870025445,'CleanUI',true},
   {'nativeContext','media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',2366291360},

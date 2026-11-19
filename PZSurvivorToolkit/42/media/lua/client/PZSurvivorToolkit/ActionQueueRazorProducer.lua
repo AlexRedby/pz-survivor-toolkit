@@ -29,7 +29,7 @@ end
 
 local function prepare(producer,callback,actor,style,duration)
  local consumer=Toolkit.ActionQueueRazorRestoration
- if type(consumer)~='table'or type(consumer.enabled)~='function'or consumer.enabled()~=true then return end
+ if type(consumer)~='table'or type(consumer.enabled)~='function'or consumer.enabled(actor)~=true then return end
  if not producer or not noProvider()or type(actor)~='userdata'and type(actor)~='table'
   or not instanceof(actor,'IsoPlayer')or not actor:isLocalPlayer()
   or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead()or actor:isAsleep()then return end

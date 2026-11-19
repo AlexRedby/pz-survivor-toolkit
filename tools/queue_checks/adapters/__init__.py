@@ -19,6 +19,7 @@ MODULES = {'magazine-unload': 'magazine_unload', 'wring-clothing': 'wring_clothi
 MODULES['claimed-return'] = 'claimed_return'
 MODULES['razor-restoration'] = 'razor_restoration'
 MODULES['generator-drop'] = 'generator_drop'
+MODULES['generator-recovery'] = 'generator_recovery'
 
 
 def get(suite):
