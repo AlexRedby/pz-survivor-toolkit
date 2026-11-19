@@ -2,16 +2,18 @@
 local F={}
 local P=require 'QueueEnergyPlacement'
 local mandatoryTypes={['mandatory-both-stone-wheel']='Base.StoneWheelSmall',['mandatory-both-wood-axe-new-primary-intent']='Base.WoodAxe'}
+function F.heavyCase(case)return case=='heavy-stone-anvil'or case=='heavy-stone-anvil-new-primary-intent'or case=='heavy-stone-anvil-unavailable'end
+function F.unavailableHeavy(case)return case=='heavy-stone-anvil-unavailable'end
 function F.mandatoryType(case)return mandatoryTypes[case]end
 function F.mandatoryCase(case)return mandatoryTypes[case]~=nil end
 function F.twoHandedCase(case)return case=='two-handed-axe'or case=='two-handed-axe-new-primary-intent'end
 function F.oneHandedCase(case)return case=='one-handed-axe'or case=='one-handed-axe-new-primary-intent'end
 function F.axeCase(case)return F.twoHandedCase(case)or F.oneHandedCase(case)end
-function F.equipmentCase(case)return F.axeCase(case)or F.mandatoryCase(case)end
-function F.sharedHandCase(case)return F.twoHandedCase(case)or F.mandatoryCase(case)end
-function F.intentCase(case)return case=='new-primary-intent'or case=='two-handed-axe-new-primary-intent'or case=='one-handed-axe-new-primary-intent'or case=='mandatory-both-wood-axe-new-primary-intent'end
-function F.returnedCase(case)return case=='restore-success'or case=='mandatory-both-stone-wheel'or case=='two-handed-axe'or case=='one-handed-axe'or case=='empty-primary'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
-function F.restoreBoundaryCase(case)return case=='empty-primary'or F.equipmentCase(case)and not F.intentCase(case)end
+function F.equipmentCase(case)return F.axeCase(case)or F.mandatoryCase(case)or F.heavyCase(case)end
+function F.sharedHandCase(case)return F.twoHandedCase(case)or F.mandatoryCase(case)or F.heavyCase(case)end
+function F.intentCase(case)return case=='heavy-stone-anvil-new-primary-intent'or case=='new-primary-intent'or case=='two-handed-axe-new-primary-intent'or case=='one-handed-axe-new-primary-intent'or case=='mandatory-both-wood-axe-new-primary-intent'end
+function F.returnedCase(case)return case=='heavy-stone-anvil'or case=='restore-success'or case=='mandatory-both-stone-wheel'or case=='two-handed-axe'or case=='one-handed-axe'or case=='empty-primary'or case=='cancel-active'or case=='trim-scissors'or case=='cut-hair-scissors'end
+function F.restoreBoundaryCase(case)return case=='empty-primary'or F.equipmentCase(case)and not F.intentCase(case)and not F.unavailableHeavy(case)end
 local function id(item)return item and item:getID()or false end
 function F.same(a,b)
  if type(a)~=type(b)then return false end
@@ -29,6 +31,47 @@ function F.find(player,wanted)
  end
  return scan(player:getInventory())
 end
+-- Exact world identity is independently observed on authority and replica.
+function F.heavySnapshot(s)
+ if not F.heavyCase(s.ids.case)then return end
+ local spec=s.ids.items.previous;local root=s.player:getInventory();local inventory=F.find(s.player,spec.id)
+ local at=s.ids.placement;local square=assert(getCell():getGridSquare(at.x,at.y,at.z));local found,world,count=nil,nil,0
+ local objects=square:getWorldObjects()
+ for i=0,objects:size()-1 do local candidate=objects:get(i);local item=candidate:getItem()
+  if item and item:getID()==spec.id then found,world,count=item,candidate,count+1 end
+ end
+ assert(count<=1 and not(inventory and found),'heavy fixture exact ID duplicated across inventory/world')
+ local item=inventory or found or assert(s.previousItem,'heavy fixture lost original detached item')
+ assert(item:getFullType()==spec.type,'heavy fixture ID changed type');s.previousItem=item
+ local present=world~=nil and world:getItem()==item and item:getWorldItem()==world and world:getSquare()==square
+ return{item=item,world=world,physical={id=spec.id,type=spec.type,x=at.x,y=at.y,z=at.z,
+  state=inventory and'root'or present and'world'or'unavailable',rootPresent=inventory~=nil,worldPresent=present,
+  canonical=inventory and item:getContainer()==root and root:getItemById(spec.id)==item or present or not inventory and not found}}
+end
+function F.observeHeavyAuthority(s)
+ if not s or not F.heavyCase(s.ids.case)then return end
+ assert(not isClient(),'heavy authority observed on replica')
+ local found=F.heavySnapshot(s);local phase=found.physical.state
+ if phase=='root'and not s.heavyDropped or s.heavyLast==phase then return end
+ if phase=='world'then s.heavyDropped=true end
+ assert(s.heavyDropped,'heavy item disappeared before exact native world drop was observed')
+ s.heavyLast=phase
+ local row={case=s.ids.case,phase=phase=='world'and'dropped'or phase=='root'and'recovered'or'removed',at=getTimestampMs(),authority=true,
+  player=s.player:getOnlineID(),itemSame=found.item==s.seedPrevious,physical=found.physical,snapshot=F.snapshot(s)}
+ assert(row.itemSame,'authority heavy drop/recovery changed exact seeded object')
+ s.heavy=s.heavy or{};s.heavy[#s.heavy+1]=row;return row
+end
+function F.removeHeavy(s,requestedAt)
+ assert(not isClient()and F.unavailableHeavy(s.ids.case)and not s.heavyRemoved,'unexpected heavy authority intervention')
+ local found=F.heavySnapshot(s);local world=assert(found.world,'heavy intervention requires exact world object')
+ local player=s.player;local razor=assert(F.find(player,s.ids.items.razor.id))
+ assert(found.physical.state=='world'and player:getPrimaryHandItem()==razor and player:getHumanVisual():getBeardModel()==s.ids.initialBeard,'heavy intervention missed genuine trim')
+ local row={case=s.ids.case,at=getTimestampMs(),requestedAt=requestedAt,authority=true,before=F.snapshot(s)}
+ local square=assert(world:getSquare());square:transmitRemoveItemFromSquare(world)
+ if world:getObjectIndex()>=0 then world:removeFromWorld();world:removeFromSquare()end
+ found.item:setWorldItem(nil);row.after=F.snapshot(s)
+ assert(row.after.heavy.state=='unavailable','heavy world removal did not take effect');s.heavyRemoved=row;return row
+end
 function F.snapshot(s)
  local player,root=s.player,s.player:getInventory();local items,worn={},{}
  local bag=F.find(player,s.ids.bag.id)or assert(s.bag);s.bag=bag;local detached=root:getItemById(bag:getID())~=bag
@@ -45,13 +88,18 @@ function F.snapshot(s)
   items[#items+1]={id=bag:getID(),type=bag:getFullType(),container='unavailable',condition=bag:getCondition(),favorite=bag:isFavorite(),count=bag:getCount(),canonical=bag==s.bag and root:getItemById(bag:getID())==nil}
   scan(bag:getItemContainer(),bag:getID())
  end
+ local heavy=F.heavySnapshot(s)
+ if heavy and heavy.physical.state~='root'then local item=heavy.item
+  items[#items+1]={id=item:getID(),type=item:getFullType(),container=heavy.physical.state,condition=item:getCondition(),
+   favorite=item:isFavorite(),count=item:getCount(),canonical=heavy.physical.canonical}
+ end
  table.sort(items,function(a,b)return a.id<b.id end)
  local values=player:getWornItems()
  for i=0,values:size()-1 do local row=values:get(i);worn[#worn+1]={id=row:getItem():getID(),location=tostring(row:getLocation())}end
  table.sort(worn,function(a,b)return a.location<b.location end)
  local visual=player:getHumanVisual();local hc,bc=visual:getHairColor(),visual:getBeardColor()
  local tail=assert(F.find(player,s.ids.items.tail.id))
- return{case=s.ids.case,male=not player:isFemale(),items=items,worn=worn,
+ return{heavy=heavy and heavy.physical or nil,case=s.ids.case,male=not player:isFemale(),items=items,worn=worn,
   primary=id(player:getPrimaryHandItem()),secondary=id(player:getSecondaryHandItem()),
   origin={id=bag:getID(),type=bag:getFullType(),container=detached and'unavailable'or'root',worn=player:getWornItems():contains(bag),sourceCount=bag:getItemContainer():getItems():size()},
   appearance={beard=visual:getBeardModel()or'',hair=visual:getHairModel()or'',nonAttached=visual:getNonAttachedHair()or false,
@@ -59,6 +107,12 @@ function F.snapshot(s)
   tail={id=tail:getID(),type=tail:getFullType(),pages=tail:getAlreadyReadPages(),total=tail:getNumberOfPages(),characterPages=player:getAlreadyReadPages(tail:getFullType())}}
 end
 function F.transferSnapshot(s,role)
+ if role=='heavyPickup'then
+  local found=F.heavySnapshot(s);local state=found.physical
+  return{case=s.ids.case,role=role,at=getTimestampMs(),authority=not isClient(),itemId=state.id,itemType=state.type,
+   source='world',destination='root',sourceCount=state.worldPresent and 1 or 0,destinationCount=state.rootPresent and 1 or 0,
+   canonical=state.canonical,bagCanonical=true,heavy=state}
+ end
  local root=s.player:getInventory();local bag=F.find(s.player,s.ids.bag.id)or assert(s.bag);s.bag=bag;local source=bag:getItemContainer()
  local wanted=s.ids.items.razor;local function count(container)
   local total=0;local values=container:getItems()
@@ -84,10 +138,14 @@ function F.observeTransferAuthority(s)
 end
 function F.dispose(s)
  local player=s.player
- for _,spec in pairs(s.ids.items)do local item=assert(F.find(player,spec.id))
+ for _,spec in pairs(s.ids.items)do local item=F.find(player,spec.id)or F.heavyCase(s.ids.case)and spec==s.ids.items.previous and assert(s.previousItem);assert(item)
   if player:getPrimaryHandItem()==item then player:setPrimaryHandItem(nil)end
   if player:getSecondaryHandItem()==item then player:setSecondaryHandItem(nil)end
-  local owner=item:getContainer();owner:Remove(item);if isServer()then sendRemoveItemFromContainer(owner,item)end
+  local world=item:getWorldItem()
+  if world and world:getSquare()and world:getSquare():getWorldObjects():contains(world)then
+   local square=world:getSquare();square:transmitRemoveItemFromSquare(world);world:removeFromWorld();world:removeFromSquare();item:setWorldItem(nil)
+  end
+  local owner=item:getContainer();if owner and owner:contains(item)then owner:Remove(item);if isServer()then sendRemoveItemFromContainer(owner,item)end end
  end
  local bag=F.find(player,s.ids.bag.id)or assert(s.bag);s.bag=bag;local slot=bag:canBeEquipped()
  local carried=player:getInventory():getItemById(bag:getID())==bag;player:setWornItem(slot,nil)
@@ -97,7 +155,7 @@ end
 function F.prepare(player,case,target,proof,previous)
  assert(not isClient()and P.atCentered(player,target),'authority must be at the prepared square')
  assert(not player:isFemale(),'native male character creation required for beard trimming')
- assert((F.mandatoryCase(case)or({['restore-success']=true,['one-handed-axe']=true,['one-handed-axe-new-primary-intent']=true,['two-handed-axe']=true,['two-handed-axe-new-primary-intent']=true,['empty-primary']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case]),'unknown razor case')
+ assert((F.heavyCase(case)or F.mandatoryCase(case)or({['restore-success']=true,['one-handed-axe']=true,['one-handed-axe-new-primary-intent']=true,['two-handed-axe']=true,['two-handed-axe-new-primary-intent']=true,['empty-primary']=true,['new-primary-intent']=true,['cancel-active']=true,['full-origin']=true,['unavailable-origin']=true,['keep-return']=true,['trim-scissors']=true,['cut-hair-scissors']=true})[case]),'unknown razor case')
  if previous then F.dispose(previous)end
  assert(not player:getPrimaryHandItem()and not player:getSecondaryHandItem(),'authority seed requires empty initial hands')
  local root=player:getInventory();local bag=assert(root:AddItem('Base.Bag_Military'));local source=bag:getItemContainer();source:setExplored(true)
@@ -108,7 +166,7 @@ function F.prepare(player,case,target,proof,previous)
  local cut=case=='cut-hair-scissors'
  if cut then ids.initialHair='Fabian';ids.targetHair='Bald' end
  local s={player=player,ids=ids,bag=bag}
- local types={razor=(case=='trim-scissors'or cut)and'Base.Scissors'or'Base.Razor',previous=F.mandatoryType(case)or F.axeCase(case)and'Base.Axe'or'Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'}
+ local types={razor=(case=='trim-scissors'or cut)and'Base.Scissors'or'Base.Razor',previous=F.heavyCase(case)and'Base.StoneAnvil'or F.mandatoryType(case)or F.axeCase(case)and'Base.Axe'or'Base.Hammer',replacement='Base.Screwdriver',tail='Base.BookCarpentry1'}
  if F.oneHandedCase(case)then types.secondary='Base.Pen'end
  for name,kind in pairs(types)do
   local item=assert((name=='razor'and source or root):AddItem(kind));item:setFavorite(true)
@@ -117,6 +175,7 @@ function F.prepare(player,case,target,proof,previous)
   end
   ids.items[name]={id=item:getID(),type=kind}
  end
+ if F.heavyCase(case)then ids.heavyActor=player:getOnlineID();s.previousItem=assert(F.find(player,ids.items.previous.id));s.seedPrevious=s.previousItem;assert(s.previousItem:isForceDropHeavyItem()and s.previousItem:isRequiresEquippedBothHands(),'heavy fixture must naturally force-drop')end
  local tail=F.find(player,ids.items.tail.id);local pages=tail:getNumberOfPages();assert(pages>2)
  ids.items.tail.total=pages;ids.items.tail.initial=pages-2
  tail:setAlreadyReadPages(pages-2);player:setAlreadyReadPages(tail:getFullType(),pages-2);player:setPerkLevelDebug(Perks.Woodwork,0)
@@ -151,7 +210,7 @@ function F.resolve(player,ids)
  for name,spec in pairs(ids.items)do local item=F.find(player,spec.id)
   if not item or item:getFullType()~=spec.type or item:getContainer()~=(name=='razor'and bag:getItemContainer()or player:getInventory())then return end
  end
- local s={player=player,ids=ids,bag=bag}
+ local s={player=player,ids=ids,bag=bag,previousItem=F.find(player,ids.items.previous.id)}
  if not resolved[ids]then
   -- Native book read checkpoints are actor-local baseline bookkeeping only.
   local tail=F.find(player,ids.items.tail.id);tail:setAlreadyReadPages(ids.items.tail.initial)
@@ -167,7 +226,12 @@ function F.expected(ids)
  else row.appearance.beard=ids.case=='cancel-active'and ids.initialBeard or ids.targetBeard end
  if ids.case=='empty-primary'then row.primary=false
  else row.primary=ids.items[ids.handAckDelay and'razor'or F.intentCase(ids.case)and'replacement'or'previous'].id end
- if F.sharedHandCase(ids.case)and F.intentCase(ids.case)then row.secondary=false end
+ if F.sharedHandCase(ids.case)and(F.intentCase(ids.case)or F.unavailableHeavy(ids.case))then row.secondary=false end
+ if F.unavailableHeavy(ids.case)then row.primary=ids.items.razor.id end
+ if F.heavyCase(ids.case)and ids.case~='heavy-stone-anvil'then
+  row.heavy.state=F.unavailableHeavy(ids.case)and'unavailable'or'world';row.heavy.rootPresent=false;row.heavy.worldPresent=not F.unavailableHeavy(ids.case)
+  for _,item in ipairs(row.items)do if item.id==ids.items.previous.id then item.container=row.heavy.state end end
+ end
  row.tail.pages=ids.items.tail.total;row.tail.characterPages=ids.items.tail.total
  if ids.handAckDelay or not F.returnedCase(ids.case)then
   row.origin.sourceCount=0

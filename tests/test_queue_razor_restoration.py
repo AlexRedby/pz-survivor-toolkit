@@ -30,6 +30,9 @@ def control_observation(case):
         origin=dict(id=42, type='Base.Bag_Military', container='root', worn=True, sourceCount=1), worn=[dict(id=42, location='Back')],
         tail=dict(id=76, type='Base.BookCarpentry1', pages=8, characterPages=8, total=10))
     ids['baseline'].update(v.seed_hands(ids))
+    if case in v.HEAVY_CASES:
+        ids['placement'] = dict(x=10, y=10, z=0); ids['heavyActor'] = 4
+        ids['baseline']['heavy'] = v.heavy_physical(ids, 'root')
     if case == 'cut-hair-scissors':
         ids.update(initialHair='Fabian', targetHair='Bald')
         ids['baseline']['appearance'].update(hair='Fabian', nonAttached=False)
@@ -93,7 +96,8 @@ class RazorRestorationTests(unittest.TestCase):
                                   'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors',
                                   'two-handed-axe', 'two-handed-axe-new-primary-intent',
                                   'one-handed-axe', 'one-handed-axe-new-primary-intent',
-                                  'mandatory-both-stone-wheel', 'mandatory-both-wood-axe-new-primary-intent'))
+                                  'mandatory-both-stone-wheel', 'mandatory-both-wood-axe-new-primary-intent',
+                                  'heavy-stone-anvil', 'heavy-stone-anvil-new-primary-intent', 'heavy-stone-anvil-unavailable'))
         for kind in ('sp', 'mp'):
             for cases in (list(a.CASES[:2]), *([case] for case in a.CASES), list(a.CASES[2:])):
                 value = selection(kind); value['cases'] = cases
@@ -569,7 +573,8 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
                 teleports=0, stableMs=500, quietMs=0, elapsedMs=500, centered=True, centers=0)
             v.validate_prepared(ids, selection())
             expected_type = {'mandatory-both-stone-wheel': 'Base.StoneWheelSmall',
-                             'mandatory-both-wood-axe-new-primary-intent': 'Base.WoodAxe'}.get(case, 'Base.Axe')
+                             'mandatory-both-wood-axe-new-primary-intent': 'Base.WoodAxe',
+                             **{case: 'Base.StoneAnvil' for case in v.HEAVY_CASES}}.get(case, 'Base.Axe')
             self.assertEqual(ids['items']['previous']['type'], expected_type)
             self.assertEqual(baseline['primary'], ids['items']['previous']['id'])
             held_secondary = ids['items']['secondary']['id'] if case in v.ONE_HANDED_AXE_CASES else baseline['primary']
@@ -583,6 +588,11 @@ assert(ids.baseline.primary==false and ids.baseline.secondary==74 and ids.baseli
                 self.assertEqual(final['primary'], ids['items']['replacement']['id'])
                 self.assertEqual(final['secondary'], borrowed_secondary)
                 self.assertEqual(final['items'][1]['container'], 'root')
+                self.assertEqual(final['origin']['sourceCount'], 0)
+            elif case == v.UNAVAILABLE_HEAVY:
+                self.assertEqual(final['primary'], ids['items']['razor']['id'])
+                self.assertFalse(final['secondary'])
+                self.assertEqual(final['heavy']['state'], 'unavailable')
                 self.assertEqual(final['origin']['sourceCount'], 0)
             else:
                 self.assertEqual(final['primary'], ids['items']['previous']['id'])
@@ -736,6 +746,109 @@ end
                            lambda s: s.update(secondary=ids['items']['replacement']['id'])):
                 changed = copy.deepcopy(seed); mutate(changed)
                 self.assertTrue(v.hand_seed_errors(changed, ids))
+
+    def test_heavy_seed_requires_own_capture_exact_both_grips_and_no_ordinary_restore(self):
+        for case in v.HEAVY_CASES:
+            ids, _, _ = control_observation(case); previous = ids['items']['previous']; at = ids['placement']
+            seed = dict(id=previous['id'], secondary=previous['id'], type='Base.StoneAnvil', requiresBoth=True,
+                        handWeapon=False, supportsTwo=False, ordinary=False, ordinaryUnavailable=True, forceDropHeavy=True,
+                        heavy=dict(captured=True, actorSame=True, rootSame=True, itemSame=True, squareSame=True,
+                            primarySame=True, secondarySame=True, id=previous['id'], type=previous['type'],
+                            position=dict(x=at['x']+.5, y=at['y']+.5, z=at['z']), square=dict(at)))
+            self.assertEqual(v.hand_seed_errors(seed, ids), [])
+            for mutate in (lambda s: s.update(ordinary=True), lambda s: s.update(ordinaryUnavailable=False),
+                           lambda s: s.pop('heavy'), lambda s: s['heavy'].update(captured=False),
+                           lambda s: s['heavy'].update(captured=1), lambda s: s['heavy'].update(itemSame=1),
+                           lambda s: s['heavy'].update(itemSame=False), lambda s: s['heavy'].update(actorSame=False),
+                           lambda s: s['heavy'].update(rootSame=False), lambda s: s['heavy'].update(primarySame=False),
+                           lambda s: s['heavy'].update(secondarySame=False), lambda s: s['heavy'].update(squareSame=False),
+                           lambda s: s['heavy'].update(id=999), lambda s: s['heavy']['position'].update(x=11.5),
+                           lambda s: s['heavy']['square'].update(x=11)):
+                changed = copy.deepcopy(seed); mutate(changed)
+                self.assertTrue(v.hand_seed_errors(changed, ids))
+
+    @unittest.skipUnless(shutil.which('luajit'), 'luajit is required for actual fixture helper checks')
+    def test_heavy_world_helper_rejects_duplicate_or_foreign_physical_identity(self):
+        script = r"""
+package.preload.QueueEnergyPlacement=function()return{}end
+instanceof=function()return false end
+local function list(values)return{size=function()return #values end,get=function(_,i)return values[i+1]end}end
+local inventory,objects={},{}
+local root={getItems=function()return list(inventory)end,getItemById=function(_,id)
+ for _,item in ipairs(inventory)do if item:getID()==id then return item end end end}
+local square={getWorldObjects=function()return list(objects)end}
+getCell=function()return{getGridSquare=function(_,x,y,z)assert(x==10 and y==10 and z==0);return square end}end
+local item={id=74,kind='Base.StoneAnvil',owner=root}
+function item:getID()return self.id end
+function item:getFullType()return self.kind end
+function item:getContainer()return self.owner end
+function item:getWorldItem()return self.world end
+local world={getItem=function()return item end,getSquare=function()return square end}
+local state={player={getInventory=function()return root end},previousItem=item,
+ ids={case='heavy-stone-anvil',placement={x=10,y=10,z=0},items={previous={id=74,type='Base.StoneAnvil'}}}}
+local F=dofile(arg[1]);inventory[1]=item
+local value=F.heavySnapshot(state);assert(value.physical.state=='root'and value.physical.canonical and not value.physical.worldPresent)
+inventory[1]=nil;objects[1]=world;item.world=world;item.owner=nil
+value=F.heavySnapshot(state);assert(value.item==item and value.world==world and value.physical.state=='world'and value.physical.canonical)
+inventory[1]=item;assert(not pcall(F.heavySnapshot,state),'inventory/world duplicate accepted');inventory[1]=nil
+objects[2]=world;assert(not pcall(F.heavySnapshot,state),'duplicate world ID accepted');objects[2]=nil
+item.kind='Base.Generator';assert(not pcall(F.heavySnapshot,state),'foreign heavy type accepted');item.kind='Base.StoneAnvil'
+item.world=nil;value=F.heavySnapshot(state);assert(not value.physical.canonical,'broken world backlink accepted')
+objects[1]=nil;value=F.heavySnapshot(state);assert(value.item==item and value.physical.state=='unavailable'and value.physical.canonical)
+"""
+        result = subprocess.run(['luajit', '-', str(PROJECT / 'tests/native_queue/razor-restoration/shared/QueueRazorRestoration.lua')],
+                                input=script, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_heavy_authority_receipts_reject_foreign_drop_recovery_and_removed_item(self):
+        # Focused sub-schema receipts only; these never constitute a native pass.
+        for case in v.HEAVY_CASES:
+            ids, _, _ = control_observation(case)
+            dropped = dict(case=case, phase='dropped', at=2, authority=True, player=4, itemSame=True,
+                           physical=v.heavy_physical(ids, 'world'), snapshot=v.borrowed_snapshot(ids))
+            rows = [dropped]; ev = {}
+            if case == 'heavy-stone-anvil':
+                recovered = copy.deepcopy(dropped); recovered.update(phase='recovered', at=5, physical=v.heavy_physical(ids, 'root'))
+                recovered['snapshot']['heavy'] = copy.deepcopy(recovered['physical']); rows.append(recovered)
+            elif case == v.UNAVAILABLE_HEAVY:
+                after = copy.deepcopy(dropped['snapshot']); after['heavy'] = v.heavy_physical(ids, 'unavailable')
+                for item in after['items']:
+                    if item['id'] == ids['items']['previous']['id']: item['container'] = 'unavailable'
+                ev['preparationBoundary'] = {'at': 1}
+                ev['heavyRemoval'] = dict(case=case, authority=True, requestedAt=1.5, at=4, before=dropped['snapshot'], after=after)
+                rows.append(dict(case=case, phase='removed', at=5, authority=True, player=4, itemSame=True,
+                                 physical=after['heavy'], snapshot=after))
+            authority = dict(heavyTransitions=rows)
+            self.assertEqual(v.heavy_errors(ev, authority, ids, 'mp'), [])
+            for mutate in (lambda a: a['heavyTransitions'][0].update(itemSame=False),
+                           lambda a: a['heavyTransitions'][0].update(authority=False),
+                           lambda a: a['heavyTransitions'][0].update(player=999),
+                           lambda a: a['heavyTransitions'][0]['physical'].update(id=999),
+                           lambda a: a['heavyTransitions'][0]['physical'].update(worldPresent=False),
+                           lambda a: a.update(heavyTransitions=[])):
+                changed = copy.deepcopy(authority); mutate(changed)
+                self.assertTrue(v.heavy_errors(ev, changed, ids, 'mp'))
+            if case == v.UNAVAILABLE_HEAVY:
+                for field, invalid in [('requestedAt', 0), ('requestedAt', 6), ('at', 1.75), ('at', 6)]:
+                    changed = copy.deepcopy(ev)
+                    changed['heavyRemoval'][field] = invalid
+                    self.assertTrue(v.heavy_errors(changed, authority, ids, 'mp'))
+                changed = copy.deepcopy(ev); changed['heavyRemoval']['after']['primary'] = ids['items']['previous']['id']
+                self.assertTrue(v.heavy_errors(changed, authority, ids, 'mp'))
+
+    def test_heavy_transfer_requires_same_world_id_and_root_destination(self):
+        ids, _, _ = control_observation('heavy-stone-anvil')
+        for state in ('world', 'root'):
+            row = dict(case=ids['case'], role='heavyPickup', at=4, authority=False,
+                       itemId=ids['items']['previous']['id'], itemType='Base.StoneAnvil', source='world', destination='root',
+                       sourceCount=int(state == 'world'), destinationCount=int(state == 'root'), canonical=True,
+                       bagCanonical=True, heavy=v.heavy_physical(ids, state))
+            self.assertEqual(v.physical_transfer_errors(row, ids, 'heavyPickup', False), [])
+            for mutate in (lambda r: r.update(itemId=999), lambda r: r.update(source='root'),
+                           lambda r: r.update(destinationCount=True), lambda r: r['heavy'].update(type='Base.Generator'),
+                           lambda r: r['heavy'].update(x=11), lambda r: r.update(canonical=False)):
+                changed = copy.deepcopy(row); mutate(changed)
+                self.assertTrue(v.physical_transfer_errors(changed, ids, 'heavyPickup', False))
 
     def test_missing_live_logs_never_pass(self):
         with tempfile.TemporaryDirectory() as directory:

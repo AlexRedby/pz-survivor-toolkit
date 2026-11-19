@@ -3321,7 +3321,7 @@ function Settlement.isCleanupPickup(action)
         and planned.source:getType() == "floor" and planned.destination == record.character:getInventory() or false
 end
 
-function Settlement.observeCleanupTransfer(action, parent)
+function Settlement.observeCleanupTransfer(action, parent, displacedBy)
     local queue = parent and ISTimedActionQueue.queues[parent.character]
     local policy = Toolkit.ActionQueuePolicy
     if not action or action.Type ~= "ISInventoryTransferAction" or not action.item or not parent
@@ -3339,8 +3339,21 @@ function Settlement.observeCleanupTransfer(action, parent)
             preparation = previous; break
         end
     end
-    local world = action.item:getWorldItem()
     local square = preparation and preparation.preparation.before and preparation.preparation.before.square
+    if displacedBy then
+        local reservation = parentRecord.actions[parent].reservation
+        local equip = stepProof(displacedBy)
+        if not reservation or not equip or equip.operation ~= reservation.loan.operation
+            or equip.operation.character ~= parent.character or not Settlement.earned(displacedBy)
+            or equip.phase ~= 'prepare' or equip.action.Type ~= 'ISEquipWeaponAction' then return false end
+        local before = equip.preparation and equip.preparation.before
+        local drop = before and before.drop
+        if not drop or drop.actor ~= parent.character then return false end
+        local item, floor = Toolkit.ActionQueueHeavyPickup.resolveFloor(drop)
+        if item ~= action.item or floor ~= action.srcContainer then return false end
+        preparation, square = equip, drop.square
+    end
+    local world = action.item:getWorldItem()
     if not preparation or not square or not world or world:getItem() ~= action.item or world:getSquare() ~= square
         or not square:getWorldObjects():contains(world) then return false end
     admitCleanup(queue, action)
@@ -3354,7 +3367,7 @@ function Settlement.observeCleanupTransfer(action, parent)
     step.item = {id = action.item:getID(), fullType = action.item:getFullType()}
     step.returning = {obligation = obligation, item = step.item, direction = "pickup", preparation = preparation,
         source = action.srcContainer, destination = action.destContainer}
-    return true
+    return true, step.handle
 end
 
 local function returnProvider()

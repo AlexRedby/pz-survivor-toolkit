@@ -31,7 +31,7 @@ local started,ready,done=false,false,false
 local state,authority,previous,ids,receipt,placement,placing,placementProof,quiet
 local evidence,actions,tracks,order={},{},{},{}
 local menu,cutMenu,primaryMenu,nativeMethods
-local originReceipt,originRequestedAt
+local originReceipt,originRequestedAt,heavyReceipt,heavyRequestedAt
 local observeCancelStop
 local function originCase()return ids.case=='full-origin'or ids.case=='unavailable-origin'or ids.case=='keep-return'end
 local function q()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
@@ -65,6 +65,7 @@ end
 local function role(action)
  if action.Type==(ids.case=='cut-hair-scissors'and'ISCutHair'or'ISTrimBeard')then return 'trim'end
  if action.Type=='ISReadABook'then return 'tail'end
+ if F.heavyCase(ids.case)and action.Type=='ISInventoryTransferAction'and action.item and action.item:getID()==ids.items.previous.id then return'heavyPickup'end
  if action.Type=='ISInventoryTransferAction'and action.item and action.item:getID()==ids.items.razor.id then
   return action.destContainer==getPlayer():getInventory()and'pickup'or'returned'
  end
@@ -112,7 +113,7 @@ local function itemIdentity(action,row,boundary)
  if current~=nil then
   assert(exact and(current==original or current==row.boundItem or current==canonical),row.role..'/'..boundary..': foreign item ID/type/reference')
   if current==canonical then row.boundItem=current end
- elseif not isClient()or(row.role~='pickup'and row.role~='returned')then
+ elseif not isClient()or(row.role~='pickup'and row.role~='returned'and row.role~='heavyPickup')then
   error(row.role..'/'..boundary..': missing exact native item')
  else
   local physical=F.transferSnapshot(state,row.role)
@@ -121,13 +122,13 @@ local function itemIdentity(action,row,boundary)
   assert(physical.canonical and((physical.sourceCount==0 and physical.destinationCount==1 and terminal)or row.transferDone),row.role..'/'..boundary..': nil item without exact completed transfer/physical effect')
   exact=true
  end
- if current~=nil and row.role~='pickup'and row.role~='returned'and action.action and q().current==action and action:isStarted()then
+ if current~=nil and row.role~='pickup'and row.role~='returned'and row.role~='heavyPickup'and action.action and q().current==action and action:isStarted()then
   assert(current==canonical,row.role..'/'..boundary..': started item is not exact current canonical replica')
  end
  return{exact=exact,state=current==nil and'nil'or current==original and'original'or'canonical-replica',canonical=current==canonical}
 end
 local function transferObservation(action,row,boundary)
- if row.role~='pickup'and row.role~='returned'then return end
+ if row.role~='pickup'and row.role~='returned'and row.role~='heavyPickup'then return end
  if boundary=='poll'and q().current~=action and(not row.started or row.transferDone)then return end
  local identity=itemIdentity(action,row,boundary);local physical=F.transferSnapshot(state,row.role)
  local transaction=action.transactionId or 0
@@ -148,7 +149,7 @@ local function transferObservation(action,row,boundary)
  end
 end
 local function acknowledge(action,row)
- if not isClient()or not action.action or row.role=='pickup'or row.role=='returned'then return end
+ if not isClient()or not action.action or row.role=='pickup'or row.role=='returned'or row.role=='heavyPickup'then return end
  local A=T.ActionQueueAcknowledgements
  if not row.receipt then row.receipt=A.capture(action)end
  if not row.receipt then return end
@@ -195,17 +196,18 @@ assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
  end,
 }))
 local function request(command)
- local args={case=config.cases[index],placement=placement,clientPlacement=placementProof,requestedAt=originRequestedAt}
+ local args={case=config.cases[index],placement=placement,clientPlacement=placementProof,requestedAt=command=='ChangeHeavy'and heavyRequestedAt or originRequestedAt}
  if isClient()then sendClientCommand('RazorRestorationTest',command,args)
  elseif command=='Prepare'then authority=F.prepare(getPlayer(),args.case,placement,placementProof,previous);previous=nil;ids=authority.ids;raw('PREPARED',ids)
+ elseif command=='ChangeHeavy'then heavyReceipt=F.removeHeavy(authority,heavyRequestedAt);raw('HEAVY_REMOVED',heavyReceipt)
  elseif command=='ChangeOrigin'then originReceipt=F.changeOrigin(authority,originRequestedAt);raw('ORIGIN',originReceipt)
- else receipt=assert(F.verify(authority),'SP exact physical authority differs');receipt.transfers=authority.transfers or{};raw('VERIFIED',receipt)end
+ else receipt=assert(F.verify(authority),'SP exact physical authority differs');receipt.transfers=authority.transfers or{};receipt.heavyTransitions=authority.heavy or{};raw('VERIFIED',receipt)end
 end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='RazorRestorationTest'or done then return end
  if command=='Failed'then fail(args.error)
  elseif args and args.case==config.cases[index]then
-  if command=='Prepared'then ids=args elseif command=='Verified'then receipt=args elseif command=='OriginChanged'then originReceipt=args end
+  if command=='Prepared'then ids=args elseif command=='Verified'then receipt=args elseif command=='OriginChanged'then originReceipt=args elseif command=='HeavyChanged'then heavyReceipt=args end
  end
 end)
 local function callbacksUnchanged()
@@ -237,13 +239,32 @@ local function produce()
    evidence.handSeed.ordinary=evidence.handSeed.ordinary and hands.secondary and hands.secondary.item==secondary
   end
  end
- if F.mandatoryCase(ids.case)then
+ if F.mandatoryCase(ids.case)or F.heavyCase(ids.case)then
   evidence.handSeed.forceDropHeavy=previous:isForceDropHeavyItem()
-  assert(evidence.handSeed.forceDropHeavy==false,'mandatory item would force-drop during native equip')
+  assert(evidence.handSeed.forceDropHeavy==F.heavyCase(ids.case),'fixture force-drop contract differs')
  end
  local weapon=F.axeCase(ids.case)or F.mandatoryType(ids.case)=='Base.WoodAxe'
- assert(evidence.handSeed.ordinary and evidence.handSeed.requiresBoth==F.mandatoryCase(ids.case)and evidence.handSeed.supportsTwo==weapon,
-  'authority initial primary is outside the exact ordinary restoration topology')
+ if F.heavyCase(ids.case)then
+  local player=getPlayer();local captured=T.ActionQueueHeavyPickup.capture(player)
+  evidence.handSeed.ordinaryUnavailable=hands==nil
+  evidence.handSeed.heavy={captured=captured~=nil,actorSame=captured and captured.actor==player or false,
+   rootSame=captured and captured.root==player:getInventory()or false,itemSame=captured and captured.item==previous or false,
+   id=captured and captured.id or false,type=captured and captured.fullType or false,
+   squareSame=captured and captured.square==player:getCurrentSquare()or false,
+   primarySame=player:getPrimaryHandItem()==previous,secondarySame=player:getSecondaryHandItem()==previous,
+   position={x=player:getX(),y=player:getY(),z=player:getZ()},
+   square={x=player:getCurrentSquare():getX(),y=player:getCurrentSquare():getY(),z=player:getCurrentSquare():getZ()}}
+  raw('HAND_SEED',{case=ids.case,observation=evidence.handSeed})
+  local heavy=evidence.handSeed.heavy
+  assert(evidence.handSeed.ordinary==false and evidence.handSeed.ordinaryUnavailable and heavy.captured
+   and heavy.actorSame and heavy.rootSame and heavy.itemSame and heavy.squareSame and heavy.primarySame and heavy.secondarySame
+   and heavy.id==ids.items.previous.id and heavy.type==ids.items.previous.type,
+   'authority initial heavy item lacks exact native Heavy.capture and shared grips')
+ else
+  assert(evidence.handSeed.ordinary,'authority initial primary is outside the exact ordinary restoration topology')
+ end
+ assert(evidence.handSeed.requiresBoth==(F.mandatoryCase(ids.case)or F.heavyCase(ids.case))and evidence.handSeed.supportsTwo==weapon,
+  'authority initial item mandatory/optional both-hands contract differs')
  phase='running'
  if cut then ISCharacterScreen.onCutHair(getPlayer(),ids.targetHair,300)
  else ISCharacterScreen.onTrimBeard(getPlayer(),ids.targetBeard)end
@@ -392,11 +413,14 @@ local function observe()
  -- Use the same current Started receipt required by the grooming cancel policy.
  if row.progress and q().current==trim and (not isClient() or row.receipt
   and T.ActionQueueAcknowledgements.state(trim,row.receipt)=='started') then
-  if(F.oneHandedCase(ids.case)or F.mandatoryCase(ids.case))and not evidence.preparationBoundary then
+  if(F.oneHandedCase(ids.case)or F.mandatoryCase(ids.case)or F.heavyCase(ids.case))and not evidence.preparationBoundary then
    local prepared=assert(actions.preparationEquip);local equipped=assert(tracks[prepared])
    evidence.preparationBoundary={at=getTimestampMs(),actionRef=equipped.actionRef,nativeRef=tostring(prepared.action),
     groomingRef=row.actionRef,groomingNative=tostring(trim.action),groomingDelta=trim:getJobDelta(),snapshot=F.snapshot(state)}
    raw('PREPARATION_BOUNDARY',{case=ids.case,observation=evidence.preparationBoundary})
+  end
+  if F.unavailableHeavy(ids.case)and not heavyRequestedAt then
+   heavyRequestedAt=getTimestampMs();request('ChangeHeavy')
   end
   if ids.case=='cancel-active'and not evidence.control then cancelActive(trim,row)end
   if originCase()and not originRequestedAt then
@@ -405,6 +429,9 @@ local function observe()
     trimRef=row.actionRef,trimNative=tostring(trim.action),trimDelta=trim:getJobDelta(),before=F.snapshot(state),accepted=false}
    request('ChangeOrigin')
   end
+ end
+ if heavyReceipt and not evidence.heavyRemoval then
+  evidence.heavyRemoval=heavyReceipt;raw('HEAVY_REMOVAL_CLIENT',heavyReceipt)
  end
  if originReceipt and not evidence.origin then
   evidence.origin=originReceipt;evidence.control.accepted=true;evidence.control.acceptedAt=originReceipt.at
@@ -461,6 +488,7 @@ require('QueuePreflight').onTick(Events,function()
   assert(getTimestampMs()-since<120000,'razor restoration timeout '..phase)
   if authority and not isClient()then
    local transfer=F.observeTransferAuthority(authority);if transfer then raw('TRANSFER_AUTHORITY',transfer)end
+   local heavy=F.observeHeavyAuthority(authority);if heavy then raw('HEAVY_AUTHORITY',heavy)end
   end
   if phase=='prepare'then
    assert(empty());placement=placement or P.choose(player);placing=placing or P.beginCentered(player,placement);placementProof=P.poll(placing);if not placementProof then return end
@@ -480,8 +508,11 @@ require('QueuePreflight').onTick(Events,function()
     evidence.handAuthority=handAuthority.complete()
     assert(actions.restore and not actions.returned and #debts==0,'hand Keep constructed a location return or lost debt retirement')
    elseif F.returnedCase(ids.case)then
-    assert(actions.restore and actions.returned and #debts==0 and not evidence.explicitRequested,'ordinary producer restore/return missing')
+    assert((not F.heavyCase(ids.case)or actions.heavyPickup)and actions.restore and actions.returned and #debts==0 and not evidence.explicitRequested,'ordinary producer restore/return missing')
     if ids.case=='cancel-active'then assert(evidence.control and evidence.control.nativeStop and evidence.control.nativeStop.after,'exact native trim cancellation was not observed before cleanup')end
+   elseif F.unavailableHeavy(ids.case)then
+    assert(evidence.heavyRemoval and not actions.heavyPickup and not actions.restore and not actions.returned,'unavailable heavy recovery constructed native work')
+    assert(#debts==1 and debts[1].itemId==ids.items.razor.id and debts[1].state=='blocked','unavailable heavy lost exact unpaid razor debt')
    elseif F.intentCase(ids.case)then
     assert(evidence.explicitRequested and actions.explicitEquip and not actions.restore and not actions.returned,
      'new primary intent allowed old restore or borrowed return construction')
@@ -507,7 +538,7 @@ require('QueuePreflight').onTick(Events,function()
    if not config.cases[index]then emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
    for _,debt in ipairs(T.ActionQueueSettlement.blockedReturns(player))do assert(T.ActionQueueExecution.keepReturn(player,debt.id),'explicit fixture debt retirement refused')end
    state,authority,ids,receipt,placement,placing,placementProof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
-   originReceipt,originRequestedAt=nil,nil
+   originReceipt,originRequestedAt,heavyReceipt,heavyRequestedAt=nil,nil,nil,nil
    actions,tracks,order,evidence={},{},{},{};phase='prepare';since=getTimestampMs()
   end
  end)

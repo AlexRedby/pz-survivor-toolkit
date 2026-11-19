@@ -35,6 +35,7 @@ REQUIRED_INPUTS = {
     "test_action_queue_cleanup_failure.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_razor_producer.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_razor_restoration.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_heavy_pickup.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_lookup.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_magazine.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_output_dependencies.lua": ("native_action_root", "--game or --native-action-root"),
@@ -83,6 +84,7 @@ DEFAULT_NATIVE_ONLY = {
 # cannot prove that its conditional assertions actually ran.
 SOURCE_CHECKS = {'test_device_action_target.lua': ('source-contract',), 'test_action_queue_spatial_execution.lua': ('source-contract',),
  'test_action_queue_device_integration.lua': ('source-contract',),
+ 'test_action_queue_heavy_pickup.lua': ('native-heavy-transfer',),
  'test_action_queue_device_admission.lua': ('source-contract',),
  'test_action_queue_device_targets.lua': ('native-stale-device',),
  'test_action_queue_spatial_lease.lua': ('source-contract',),

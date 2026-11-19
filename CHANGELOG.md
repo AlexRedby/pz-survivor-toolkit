@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.19
+
+- After grooming, opt-in restoration can pick up a stone anvil dropped when equipping the tool and return it to both hands. Choosing another item or losing access to the anvil suppresses recovery.
+
 ### 0.2.18
 
 - After grooming, opt-in restoration can equip a carried item that requires both hands, such as a wood axe or small stone wheel. Choosing new equipment during grooming still takes precedence.

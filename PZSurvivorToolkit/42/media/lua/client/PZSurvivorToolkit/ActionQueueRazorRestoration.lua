@@ -2,6 +2,7 @@
 -- restoration and live provider cutover are qualified. No per-tick queue scan.
 local Toolkit = PZSurvivorToolkit
 local Hand = require 'PZSurvivorToolkit/ActionQueueHandRestoration'
+local Heavy = require 'PZSurvivorToolkit/ActionQueueHeavyPickup'
 local Razor = {}
 Toolkit.ActionQueueRazorRestoration = Razor
 local installed = false
@@ -91,15 +92,22 @@ function Razor.observe(episode, action)
             guard = guard,
             capture = function()
                 local before = Toolkit.ActionQueueEquip.restorationHands(actor)
-                if not before then return end
+                local drop
+                if not before then
+                    drop = Heavy.capture(actor)
+                    if not drop then return end
+                    local grip = {item=drop.item, requiresBoth=true, handWeapon=false, handgun=false}
+                    before = {primary=grip, secondary=grip}
+                end
                 episode.bothHands = before.primary and before.secondary and before.primary.item == before.secondary.item
                 episode.revision = episode.bothHands and bothRevision or primaryRevision
-                if episode.revision ~= nil then return before end
+                if episode.revision ~= nil then return {hands=before, drop=drop} end
             end,
             observed = function(_, before)
                 local after = Toolkit.ActionQueueEquip.restorationHands(actor)
                 if not after or not after.primary or after.primary.item ~= currentTool(episode) then return false end
-                if not episode.hand then episode.hand = Hand.capture(before, after, after.primary) end
+                if before.drop and Heavy.placed(before.drop) then episode.drop = before.drop end
+                if not episode.hand then episode.hand = Hand.capture(before.hands, after, after.primary) end
                 return episode.hand ~= nil
             end,
         })
@@ -125,18 +133,35 @@ local function restore(episode, parent)
     if not borrowed then return end
     local previous = plan.incoming and plan.incoming.item
     local bothHands = plan.mode == 'both'
-    local action
-    if plan.mode == 'unequip' then
+    local token = parent.toolkitQueueOperation
+    local drop = episode.drop
+    local action, pickup, pickupHandle
+    if drop then
+        if not bothHands or previous ~= drop.item then return end
+        Toolkit.FitnessEquipment.refreshFloor(actor)
+        local floorItem, floor = Heavy.resolveFloor(drop)
+        if not floorItem or not eligible() then return end
+        pickup = ISInventoryTransferUtil.newInventoryTransferAction(actor, floorItem, floor, actor:getInventory())
+        pickup:setAllowMissingItems(true)
+        ops.adopt(pickup, token)
+        local enrolled
+        enrolled, pickupHandle = settlement.observeCleanupTransfer(pickup, parent, episode.equipHandle)
+        if not enrolled then return end
+        action = ISEquipWeaponAction:new(actor, floorItem, 50, true, true)
+    elseif plan.mode == 'unequip' then
         action = ISUnequipAction:new(actor, borrowed, 50)
     else
         if not previous or not hands(actor, previous, bothHands) then return end
         action = ISEquipWeaponAction:new(actor, previous, 50, true, bothHands)
     end
-    local token = parent.toolkitQueueOperation
     ops.adopt(action, token)
     if not settlement.inheritCleanup(action, parent) then return end
     local function bound(value)
         if value ~= action then return false end
+        if drop then
+            return (value.item == pickup.item or value.item == Heavy.restoredRoot(drop))
+                and isPrimaryEquip(value, actor, value.item, true)
+        end
         if previous then return isPrimaryEquip(value, actor, previous, bothHands) end
         return getmetatable(value) == ISUnequipAction and value.character == actor and value.item == borrowed
             and not value.fromHotbar and value.reason == nil and Toolkit.ActionQueuePolicy.matchesNative(value)
@@ -144,10 +169,23 @@ local function restore(episode, parent)
     local effect = settlement.observeCleanupEffect(action, {
         guard = bound, sourceGuard = bound,
         admit = function(value)
-            return bound(value) and eligible() and Hand.consume(episode.hand, proposal, hands(actor, previous, bothHands)) ~= nil
+            if not bound(value) or not eligible() then return false end
+            local current
+            if drop then
+                if not settlement.earned(pickupHandle) or not Heavy.restoredRoot(drop) then return false end
+                current = hands(actor)
+            else
+                current = hands(actor, previous, bothHands)
+            end
+            return Hand.consume(episode.hand, proposal, current) ~= nil
         end,
         capture = function() return hands(actor) end,
         observed = function(_, before)
+            if drop then
+                local item = Heavy.restoredRoot(drop)
+                return item ~= nil and actor:getPrimaryHandItem() == item and actor:getSecondaryHandItem() == item
+                    and before.primary and before.primary.item == currentTool(episode)
+            end
             local after = hands(actor)
             return after and (after.primary and after.primary.item) == previous and before.primary
                 and before.primary.item == currentTool(episode)
@@ -161,6 +199,7 @@ local function restore(episode, parent)
     ops.adopt(continuation, token)
     if settlement.inheritCleanup(continuation, parent)
         and settlement.requireBorrowedReturnSuccess(loan, {effect}, continuation) then
+        if pickup then ISTimedActionQueue.add(pickup) end
         ISTimedActionQueue.add(action)
         ISTimedActionQueue.add(continuation)
     end

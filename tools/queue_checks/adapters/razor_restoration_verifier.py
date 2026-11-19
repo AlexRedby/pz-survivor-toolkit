@@ -8,28 +8,31 @@ from .claimed_return_verifier import number, operation_key, records
 
 PREFIX = '[RAZOR_RESTORATION] '
 TYPES = {'razor': 'Base.Razor', 'previous': 'Base.Hammer', 'replacement': 'Base.Screwdriver', 'tail': 'Base.BookCarpentry1'}
-ACTION_TYPES = {'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEquipWeaponAction', 'trim': 'ISTrimBeard',
+ACTION_TYPES = {'heavyPickup': 'ISInventoryTransferAction', 'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEquipWeaponAction', 'trim': 'ISTrimBeard',
                 'restore': 'ISEquipWeaponAction', 'returned': 'ISInventoryTransferAction', 'tail': 'ISReadABook',
                 'explicitEquip': 'ISEquipWeaponAction', 'command': 'ISQueueActionsAction', 'approach': 'ISQueueActionsAction'}
 ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle', 'equipPrimary', 'equipTwoHands')
-RETURNED_CASES = {'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'one-handed-axe', 'mandatory-both-stone-wheel'}
+RETURNED_CASES = {'heavy-stone-anvil', 'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'one-handed-axe', 'mandatory-both-stone-wheel'}
 TWO_HANDED_AXE_CASES = {'two-handed-axe', 'two-handed-axe-new-primary-intent'}
 ONE_HANDED_AXE_CASES = {'one-handed-axe', 'one-handed-axe-new-primary-intent'}
 AXE_CASES = TWO_HANDED_AXE_CASES | ONE_HANDED_AXE_CASES
 MANDATORY_BOTH_TYPES = {'mandatory-both-stone-wheel': 'Base.StoneWheelSmall',
                         'mandatory-both-wood-axe-new-primary-intent': 'Base.WoodAxe'}
 MANDATORY_BOTH_CASES = set(MANDATORY_BOTH_TYPES)
-SHARED_HAND_CASES = TWO_HANDED_AXE_CASES | MANDATORY_BOTH_CASES
-EQUIPMENT_CASES = AXE_CASES | MANDATORY_BOTH_CASES
-PREPARATION_BOUNDARY_CASES = ONE_HANDED_AXE_CASES | MANDATORY_BOTH_CASES
-INTENT_CASES = {'new-primary-intent', 'two-handed-axe-new-primary-intent', 'one-handed-axe-new-primary-intent', 'mandatory-both-wood-axe-new-primary-intent'}
-RESTORE_BOUNDARY_CASES = {'empty-primary'} | (EQUIPMENT_CASES - INTENT_CASES)
+HEAVY_CASES = {'heavy-stone-anvil', 'heavy-stone-anvil-new-primary-intent', 'heavy-stone-anvil-unavailable'}
+UNAVAILABLE_HEAVY = 'heavy-stone-anvil-unavailable'
+SHARED_HAND_CASES = TWO_HANDED_AXE_CASES | MANDATORY_BOTH_CASES | HEAVY_CASES
+EQUIPMENT_CASES = AXE_CASES | MANDATORY_BOTH_CASES | HEAVY_CASES
+PREPARATION_BOUNDARY_CASES = ONE_HANDED_AXE_CASES | MANDATORY_BOTH_CASES | HEAVY_CASES
+INTENT_CASES = {'heavy-stone-anvil-new-primary-intent', 'new-primary-intent', 'two-handed-axe-new-primary-intent', 'one-handed-axe-new-primary-intent', 'mandatory-both-wood-axe-new-primary-intent'}
+RESTORE_BOUNDARY_CASES = {'empty-primary'} | (EQUIPMENT_CASES - INTENT_CASES - {UNAVAILABLE_HEAVY})
 SCISSORS_CASES = {'trim-scissors', 'cut-hair-scissors'}
 
 
 def item_types(case):
     values = dict(TYPES)
     if case in SCISSORS_CASES: values['razor'] = 'Base.Scissors'
+    if case in HEAVY_CASES: values['previous'] = 'Base.StoneAnvil'
     if case in AXE_CASES: values['previous'] = 'Base.Axe'
     if case in MANDATORY_BOTH_CASES: values['previous'] = MANDATORY_BOTH_TYPES[case]
     if case in ONE_HANDED_AXE_CASES: values['secondary'] = 'Base.Pen'
@@ -39,6 +42,50 @@ def item_types(case):
 def grooming(case):
     return ('ISCharacterScreen.onCutHair', 'ISCutHair', 'Bald') if case == 'cut-hair-scissors' else ('ISCharacterScreen.onTrimBeard', 'ISTrimBeard', 'Moustache')
 ORIGIN_CASES = {'full-origin', 'unavailable-origin', 'keep-return'}
+
+
+def heavy_physical(ids, state):
+    at = ids['placement']; spec = ids['items']['previous']
+    return dict(id=spec['id'], type=spec['type'], x=at['x'], y=at['y'], z=at['z'],
+                state=state, rootPresent=state == 'root', worldPresent=state == 'world', canonical=True)
+
+
+def heavy_errors(ev, authority, ids, kind):
+    values = authority.get('heavyTransitions', [])
+    if ids['case'] not in HEAVY_CASES:
+        return [] if values == [] and 'heavyRemoval' not in ev else ['Unrequested heavy world observations']
+    try:
+        phases = ['dropped', 'recovered'] if ids['case'] == 'heavy-stone-anvil' else ['dropped', 'removed'] if ids['case'] == UNAVAILABLE_HEAVY else ['dropped']
+        if type(values) is not list or [value.get('phase') for value in values] != phases:
+            raise ValueError('exact authority drop/recovery/removal sequence differs')
+        for value, phase in zip(values, phases):
+            state = {'dropped': 'world', 'recovered': 'root', 'removed': 'unavailable'}[phase]
+            if (value.get('case') != ids['case'] or value.get('authority') is not True or value.get('itemSame') is not True
+                    or type(value.get('player')) is not int or value['player'] != ids['heavyActor'] or not number(value.get('at'))
+                    or value.get('physical') != heavy_physical(ids, state)
+                    or value.get('snapshot', {}).get('heavy') != value['physical']):
+                raise ValueError('authority exact actor/seeded item/world identity differs')
+        if [value['at'] for value in values] != sorted(value['at'] for value in values):
+            raise ValueError('heavy authority transitions reordered')
+        if values[0]['snapshot'] != borrowed_snapshot(ids):
+            raise ValueError('authority native preparation failed to drop exact shared prior item')
+        if ids['case'] == UNAVAILABLE_HEAVY:
+            receipt = ev['heavyRemoval']; before = borrowed_snapshot(ids); after = copy.deepcopy(before)
+            after['heavy'] = heavy_physical(ids, 'unavailable')
+            for item in after['items']:
+                if item['id'] == ids['items']['previous']['id']: item['container'] = 'unavailable'
+            if (receipt.get('case') != ids['case'] or receipt.get('authority') is not True
+                    or not number(receipt.get('at')) or not number(receipt.get('requestedAt'))
+                    # The server can first observe the drop while handling the client's request.
+                    or not ev['preparationBoundary']['at'] <= receipt['requestedAt'] <= receipt['at']
+                    or not values[0]['at'] <= receipt['at'] <= values[1]['at']
+                    or receipt.get('before') != before or receipt.get('after') != after):
+                raise ValueError('exact authority removal during active trim differs')
+        elif 'heavyRemoval' in ev:
+            raise ValueError('unexpected heavy removal')
+        return []
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        return ['Heavy native world evidence differs: ' + str(error)]
 
 
 def action_key(value):
@@ -57,7 +104,13 @@ def expected(ids, authority):
     else:
         row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
     row['primary'] = ids['items']['razor']['id'] if ids.get('handAckDelay') else False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] in INTENT_CASES else 'previous']['id']
-    if ids['case'] in SHARED_HAND_CASES and ids['case'] in INTENT_CASES: row['secondary'] = False
+    if ids['case'] in SHARED_HAND_CASES and (ids['case'] in INTENT_CASES or ids['case'] == UNAVAILABLE_HEAVY): row['secondary'] = False
+    if ids['case'] == UNAVAILABLE_HEAVY: row['primary'] = ids['items']['razor']['id']
+    if ids['case'] in HEAVY_CASES and ids['case'] != 'heavy-stone-anvil':
+        state = 'unavailable' if ids['case'] == UNAVAILABLE_HEAVY else 'world'
+        row['heavy'].update(state=state, rootPresent=False, worldPresent=state == 'world')
+        for item in row['items']:
+            if item['id'] == ids['items']['previous']['id']: item['container'] = state
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
     if ids.get('handAckDelay') or ids['case'] not in RETURNED_CASES:
         row['origin']['sourceCount'] = 0
@@ -91,14 +144,21 @@ def equip_mode_errors(action, ids):
 
 def hand_seed_errors(seed, ids):
     case = ids['case']; previous_type = item_types(case)['previous']
-    wanted = dict(type=previous_type, requiresBoth=case in MANDATORY_BOTH_CASES,
-                  handWeapon=previous_type != 'Base.StoneWheelSmall',
-                  supportsTwo=previous_type in ('Base.Axe', 'Base.WoodAxe'), ordinary=True)
+    wanted = dict(type=previous_type, requiresBoth=case in MANDATORY_BOTH_CASES | HEAVY_CASES,
+                  handWeapon=previous_type not in ('Base.StoneWheelSmall', 'Base.StoneAnvil'),
+                  supportsTwo=previous_type in ('Base.Axe', 'Base.WoodAxe'), ordinary=case not in HEAVY_CASES)
     wanted.update(dict(primary=False, secondary=ids['items']['previous']['id']) if case == 'empty-primary'
                   else dict(id=ids['items']['previous']['id']))
     if case in EQUIPMENT_CASES: wanted['secondary'] = seed_hands(ids)['secondary']
-    if case in MANDATORY_BOTH_CASES: wanted['forceDropHeavy'] = False
+    if case in MANDATORY_BOTH_CASES | HEAVY_CASES: wanted['forceDropHeavy'] = case in HEAVY_CASES
+    if case in HEAVY_CASES:
+        at = ids['placement']
+        wanted.update(ordinaryUnavailable=True, heavy=dict(captured=True, actorSame=True, rootSame=True, itemSame=True,
+            id=ids['items']['previous']['id'], type=previous_type, squareSame=True, primarySame=True, secondarySame=True,
+            position=dict(x=at['x'] + .5, y=at['y'] + .5, z=at['z']), square=dict(at)))
     valid = type(seed) is dict and seed == wanted and all(type(seed[key]) is type(value) for key, value in wanted.items())
+    if valid and case in HEAVY_CASES:
+        valid = all(type(seed['heavy'][key]) is type(value) for key, value in wanted['heavy'].items())
     return [] if valid else ['Initial hands lack exact ordinary restoration proof']
 
 
@@ -109,6 +169,10 @@ def validate_prepared(ids, selection):
     if ids.get('handAckDelay', False) is not (selection.get('options', {}).get('razor_hand_ack_delay_ms') is not None):
         raise ValueError('hand authority prepared flag differs from explicit selection')
     owned = ids['items']; baseline = ids['baseline']; bag = ids['bag']
+    if ids['case'] in HEAVY_CASES and (type(ids.get('heavyActor')) is not int or selection['kind'] == 'mp' and ids['heavyActor'] < 0):
+        raise ValueError('prepared exact heavy actor identity differs')
+    if baseline.get('heavy') != (heavy_physical(ids, 'root') if ids['case'] in HEAVY_CASES else None):
+        raise ValueError('prepared exact heavy inventory/world topology differs')
     if ids['case'] == 'cut-hair-scissors' and (ids.get('initialHair') != 'Fabian' or ids.get('targetHair') != 'Bald'
             or baseline['appearance'].get('hair') != ids['initialHair'] or baseline['appearance'].get('nonAttached') is not False):
         raise ValueError('prepared plain haircut differs')
@@ -153,6 +217,18 @@ def validate_prepared(ids, selection):
 
 
 def physical_transfer_errors(sample, ids, role, authority):
+    if role == 'heavyPickup':
+        if not isinstance(sample, dict): return ['Malformed heavy world transaction']
+        state = sample.get('heavy', {}) if isinstance(sample, dict) else {}
+        if (sample.get('case') != ids['case'] or sample.get('role') != role or sample.get('authority') is not authority
+                or not number(sample.get('at')) or sample.get('itemId') != ids['items']['previous']['id']
+                or sample.get('itemType') != 'Base.StoneAnvil' or sample.get('source') != 'world' or sample.get('destination') != 'root'
+                or sample.get('canonical') is not True or sample.get('bagCanonical') is not True
+                or type(sample.get('sourceCount')) is not int or type(sample.get('destinationCount')) is not int
+                or (sample.get('sourceCount'), sample.get('destinationCount')) not in ((1, 0), (0, 1))
+                or state != heavy_physical(ids, 'world' if sample.get('sourceCount') == 1 else 'root')):
+            return ['Exact heavy world transaction identity/ancestry differs']
+        return []
     pickup = role == 'pickup'
     if (not isinstance(sample, dict) or sample.get('case') != ids['case'] or sample.get('role') != role
             or sample.get('authority') is not authority or not number(sample.get('at'))
@@ -250,6 +326,10 @@ def producer_errors(ev, roles, ids):
 def borrowed_snapshot(ids):
     row = copy.deepcopy(ids['baseline']); row['primary'] = ids['items']['razor']['id']
     if ids['case'] in SHARED_HAND_CASES: row['secondary'] = False
+    if ids['case'] in HEAVY_CASES:
+        row['heavy'] = heavy_physical(ids, 'world')
+        for item in row['items']:
+            if item['id'] == ids['items']['previous']['id']: item['container'] = 'world'
     row['origin']['sourceCount'] = 0
     for item in row['items']:
         if item['id'] == ids['items']['razor']['id']: item['container'] = 'root'
@@ -461,7 +541,7 @@ def lifecycle_errors(action, kind, canceled=False):
                    or event['boundary'] == 'finish' and event.get('succeeded') is not True for event in events)
             or [event['at'] for event in events] != sorted(event['at'] for event in events)):
         errors.append('Unchanged native completion lifecycle differs: ' + role)
-    if kind == 'mp' and role not in ('pickup', 'returned'):
+    if kind == 'mp' and role not in ('pickup', 'returned', 'heavyPickup'):
         terminal = [ack for ack in action.get('ack', []) if ack.get('state') in ('completed', 'canceled', 'rejected')]
         if (len(terminal) != 1 or terminal[0]['state'] != ('canceled' if canceled else 'completed')
                 or terminal[0].get('kind') != action['type'] or type(terminal[0].get('transaction')) is not int
@@ -658,7 +738,7 @@ def check_case(row, selection, prepared, verified):
             raise ValueError('exact native case/process identity differs')
         validate_prepared(ids, selection)
         placement.validate(row['clientPlacement'], ids['placement'], 'local', centered=True)
-        authority_snapshot = dict(verified); authority_snapshot.pop('transfers', None)
+        authority_snapshot = dict(verified); authority_snapshot.pop('transfers', None); authority_snapshot.pop('heavyTransitions', None)
         errors.extend(authority_transfer_errors(verified, ids))
         if (row.get('server') != verified or authority_snapshot != expected(ids, True)
                 or row.get('client') != expected(ids, selection['kind'] == 'sp') or ev.get('after') != row['client']
@@ -668,15 +748,17 @@ def check_case(row, selection, prepared, verified):
                 'installed': True, 'explicitRequested': intent_case, 'nativeCallbacksUntouched': True, 'queueIdle': True}.items()):
             errors.append('Real install/menu producer or native callback integrity differs')
         errors.extend(editor_errors(ev, selection))
+        errors.extend(heavy_errors(ev, verified, ids, selection['kind']))
         actions = ev['actions']; roles = {}
         for action in actions:
             roles.setdefault(action['role'], []).append(action)
         required = {'pickup', 'preparationEquip', 'trim', 'tail', 'command'}
-        required.update({'explicitEquip'} if intent_case else {'restore'})
+        required.update({'explicitEquip'} if intent_case else set() if case == UNAVAILABLE_HEAVY else {'restore'})
+        if case == 'heavy-stone-anvil': required.add('heavyPickup')
         if not delayed and (case in RETURNED_CASES or case in ('full-origin', 'keep-return')): required.add('returned')
         if 'approach' in roles: required.add('approach')
         command_count = len(roles.get('command', []))
-        if (set(roles) != required or command_count != (1 if intent_case else 2)
+        if (set(roles) != required or command_count != (1 if intent_case or case == UNAVAILABLE_HEAVY else 2)
                 or any(len(values) != 1 for role, values in roles.items() if role != 'command')):
             raise ValueError('Native producer/cleanup action topology differs')
         refs = [action['actionRef'] for action in actions]
@@ -699,7 +781,7 @@ def check_case(row, selection, prepared, verified):
                     continue
                 if role == 'trim' and case == 'cut-hair-scissors' and (action.get('hairStyle') != ids['targetHair'] or action.get('constructorDuration') != 300):
                     errors.append('Native haircut hairStyle/ordinary duration differs')
-                item = 'previous' if role == 'restore' and case != 'empty-primary' else 'replacement' if role == 'explicitEquip' else 'tail' if role == 'tail' else 'razor'
+                item = 'previous' if role == 'heavyPickup' or role == 'restore' and case != 'empty-primary' else 'replacement' if role == 'explicitEquip' else 'tail' if role == 'tail' else 'razor'
                 if (action.get('itemId') != ids['items'][item]['id'] or any(action.get(key) is not True for key in ('allocated', 'started', 'progress'))
                         or not number(action.get('startedAt')) or not number(action.get('effectiveDuration')) or action['effectiveDuration'] <= 1
                         or not isinstance(action.get('nativeRef'), str) or not isinstance(action.get('operationRef'), str)):
@@ -707,13 +789,13 @@ def check_case(row, selection, prepared, verified):
                 duration = action.get('constructorDuration')
                 if case == 'empty-primary' and role == 'restore' and duration != 50:
                     errors.append('Empty-primary restore does not use ordinary native unequip duration')
-                if not number(duration) or (duration != -1 if selection['kind'] == 'mp' and role in ('pickup', 'returned') else duration <= 1):
+                if not number(duration) or (duration != -1 if selection['kind'] == 'mp' and role in ('pickup', 'returned', 'heavyPickup') else duration <= 1):
                     errors.append('Original native constructor duration differs: ' + role)
                 if delayed and role == 'restore':
                     errors.extend(hand_restore_lifecycle_errors(action))
                 else:
                     errors.extend(lifecycle_errors(action, selection['kind'], case == 'cancel-active' and role == 'trim'))
-                if role in ('pickup', 'returned'):
+                if role in ('pickup', 'returned', 'heavyPickup'):
                     errors.extend(transfer_errors(action, ids, selection['kind']))
         get = lambda name: roles[name][0]
         pickup, equip, trim, tail = (get(name) for name in ('pickup', 'preparationEquip', 'trim', 'tail'))
@@ -738,11 +820,16 @@ def check_case(row, selection, prepared, verified):
             errors.append('Unrequested action operation ownership transition')
         debts = ev.get('debts')
         errors.extend(control_errors(ev, roles, ids, selection['kind']))
-        if selection['kind'] == 'mp' and (canceled or case in ORIGIN_CASES):
+        if selection['kind'] == 'mp' and (canceled or case in ORIGIN_CASES or case == UNAVAILABLE_HEAVY):
             start = [ack for ack in trim['ack'] if ack['state'] == 'started']
-            if len(start) != 1 or start[0]['at'] > ev['control']['at']:
+            if len(start) != 1 or start[0]['at'] > (ev['heavyRemoval']['requestedAt'] if case == UNAVAILABLE_HEAVY else ev['control']['at']):
                 errors.append('Host control preceded native grooming admission')
         if returned_case:
+            if case == 'heavy-stone-anvil':
+                heavy = get('heavyPickup')
+                if (not trim['startedAt'] <= heavy['startedAt'] <= get('restore')['startedAt']
+                        or operation_key(heavy['operationRef']) != token):
+                    errors.append('Heavy pickup escaped native cleanup order/operation')
             restore, returned = get('restore'), get('returned')
             if (not trim['startedAt'] <= restore['startedAt'] <= returned['startedAt'] <= tail['startedAt']
                     or canceled and (operation_key(restore['operationRef']) == token or operation_key(returned['operationRef']) != operation_key(restore['operationRef']))
@@ -751,6 +838,11 @@ def check_case(row, selection, prepared, verified):
                 errors.append('Ordinary native restore/return effects or debt differ')
         elif delayed:
             errors.extend(hand_authority_errors(ev, roles, ids))
+        elif case == UNAVAILABLE_HEAVY:
+            if (type(debts) is not list or len(debts) != 1 or debts[0].get('itemId') != ids['items']['razor']['id']
+                    or debts[0].get('itemType') != 'Base.Razor' or type(debts[0].get('id')) is not int or debts[0]['id'] <= 0
+                    or debts[0].get('state') != 'blocked' or debts[0].get('reason') != 'cleanup-unresolved'):
+                errors.append('Unavailable heavy lost exact unresolved borrowed-tool debt')
         elif intent_case:
             errors.extend(intent_errors(ev, roles, ids))
         elif case in ORIGIN_CASES:
@@ -795,6 +887,31 @@ def verify(root, selection, catalog):
         if not setups[0][0] < placements[0][0] or not rows[-1][0] < completions[0][0] < complete[0][0]:
             issues.append('Native receipts escape setup/completion boundaries')
         action_rows = records(client, PREFIX + 'ACTION '); ack_rows = records(client, PREFIX + 'ACK '); intent_rows = records(client, PREFIX + 'INTENT ')
+        seed_rows = records(client, PREFIX + 'HAND_SEED ')
+        if [value for _, value in seed_rows] != [dict(case=row['id'], observation=row['evidence']['handSeed'])
+                                                for _, row in rows if row['id'] in HEAVY_CASES]:
+            issues.append('Raw exact heavy capture seed differs from published evidence')
+        for position, value in seed_rows:
+            index = cases.index(value['case'])
+            if not placements[index][0] < position < rows[index][0]:
+                issues.append('Heavy capture seed escaped exact case boundaries')
+        if selection['kind'] == 'mp' and records(authority, PREFIX + 'HAND_SEED '):
+            issues.append('Actor-local heavy capture seed emitted by authority process')
+        heavy_rows = records(authority, PREFIX + 'HEAVY_AUTHORITY ')
+        if [value for _, value in heavy_rows] != [sample for _, value in verified for sample in value.get('heavyTransitions', [])]:
+            issues.append('Raw independent heavy authority transitions differ from published receipt')
+        for position, value in heavy_rows:
+            index = cases.index(value['case'])
+            if not prepared[index][0] < position < verified[index][0]:
+                issues.append('Heavy authority transition escaped exact case boundaries')
+        removed = records(authority, PREFIX + 'HEAVY_REMOVED ')
+        removed_client = records(client, PREFIX + 'HEAVY_REMOVAL_CLIENT ')
+        wanted_removed = [row['evidence']['heavyRemoval'] for _, row in rows if 'heavyRemoval' in row['evidence']]
+        if [value for _, value in removed] != wanted_removed or [value for _, value in removed_client] != wanted_removed:
+            issues.append('Raw authority/client heavy removal differs from exact published case')
+        if selection['kind'] == 'mp' and (records(client, PREFIX + 'HEAVY_AUTHORITY ') or records(client, PREFIX + 'HEAVY_REMOVED ')
+                or records(authority, PREFIX + 'HEAVY_REMOVAL_CLIENT ')):
+            issues.append('Heavy authority evidence emitted by wrong process')
         transfers = records(client, PREFIX + 'TRANSFER '); authority_transfers = records(authority, PREFIX + 'TRANSFER_AUTHORITY ')
         if [value for _, value in authority_transfers] != [sample for _, value in verified for sample in value.get('transfers', [])]:
             issues.append('Independent raw authority transfer transitions differ from published receipt')
