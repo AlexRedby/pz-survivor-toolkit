@@ -8,6 +8,57 @@ local capture, origin, source = Proof.captureBindings, Proof.closure, Proof.matc
 local firstLine = getFirstLineOfClosure
 local pins
 
+local cleanupMarker = {}
+local cleanupDefinitions
+
+-- Native put-back rows stay visible and independently editable. Only a group
+-- cancellation can materialize this command in place of the discarded rows.
+local function registerCleanup(definitions, operations)
+    if cleanupDefinitions == definitions then return end
+    definitions.registerBehavior("toolkit.cancel-craft-returns", {
+        types={"ISQueueActionsAction"},
+        matches=function(action)
+            local owns = rawget(action, cleanupMarker)
+            return type(owns) == "function" and owns(action) and operations.isCommand(action)
+        end,
+        inspect=function(action)
+            return {items={}, targets={[action.character]=true}, knownInputs=false, unknownOutputs=true}
+        end,
+    })
+    cleanupDefinitions = definitions
+end
+
+local function bindCancelledReturns(player, body, returns, members)
+    if #members < 2 or #members ~= #returns then return end
+    local queue = ISTimedActionQueue.queues[player]
+    local index = queue and queue:indexOf(body)
+    local token = body.toolkitQueueOperation
+    if not index or index < 1 or not token then return end
+    local handles = {}
+    for i, member in ipairs(members) do
+        local row = queue.queue[index + i]
+        if not row or row.Type ~= "ISInventoryTransferAction" or row.character ~= player
+            or row.toolkitQueueOperation ~= token or row.action or row.started
+            or row.allowMissingItems ~= true or row.item ~= member.item or returns[i] ~= member.item
+            or row.srcContainer ~= player:getInventory() or row.destContainer ~= member.source then return end
+        handles[i] = member.handle
+    end
+    local settlement, operations, definitions = Toolkit.ActionQueueSettlement, Toolkit.ActionQueueOperations, Toolkit.ActionQueueDefinitions
+    local issue = settlement.enqueueClaimedReturns
+    if not origin(issue, "ActionQueueSettlement.lua") then return end
+    registerCleanup(definitions, operations)
+    local expansion
+    local function restore()
+        if settlement.enqueueClaimedReturns == issue then issue(expansion, handles) end
+    end
+    expansion = operations.command(player, restore, {})
+    expansion[cleanupMarker] = function(action) return action == expansion and action.addActionsFunction == restore end
+    operations.adopt(expansion, token)
+    if settlement.cleanupAfter(expansion, handles) and settlement.claimBorrowedReturns(expansion, handles) then
+        settlement.onCancelBorrowedReturns(expansion, handles)
+    end
+end
+
 local function captureLoans(player, body, selected, kept)
     local settlement, policy, craft, definitions, settings, bulk = Toolkit.ActionQueueSettlement,
         Toolkit.ActionQueuePolicy, Toolkit.ActionQueueCraft, Toolkit.ActionQueueDefinitions, Toolkit.Settings, Toolkit.BulkActions
@@ -95,7 +146,7 @@ local function captureLoans(player, body, selected, kept)
         if carried(expected.source,player) then carriedCount = carriedCount + 1 end
     end
     if carriedCount == 0 or not live() then return end
-    local observed = false
+    local members = {}
     return {
         pickup = function(action)
             local item = action.item
@@ -110,10 +161,13 @@ local function captureLoans(player, body, selected, kept)
             end
             local handle = prepare(action,{guard=guard,capture=function() return {source=expected.source} end,
                 observed=function() return false end})
-            observed = observed or handle ~= nil
+            if handle then members[#members+1] = {handle=handle, item=item, source=expected.source} end
+        end,
+        returns = function(items)
+            if #members >= 2 and live() then bindCancelledReturns(player, body, items, members) end
         end,
         body = function(action)
-            if observed and action == body and live() then remember(action,inspect) end
+            if #members > 0 and action == body and live() then remember(action,inspect) end
         end,
     }
 end

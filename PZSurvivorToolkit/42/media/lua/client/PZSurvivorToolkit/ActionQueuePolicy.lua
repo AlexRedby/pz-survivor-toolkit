@@ -2647,6 +2647,19 @@ local returnFailureSuffix = {ISReadABook = true, ISWalkToTimedAction = true,
     ISRadioAction = true}
 local returnApproachBinding
 local returnApproachClosure = Proof and Proof.closure
+function returnFailureSuffix.batchSibling(queue, action, other)
+    local owner = Toolkit.ActionQueueSettlement
+    local checker = owner and owner.returnFailureBatchSibling
+    if type(checker) ~= "function" or not Proof or Proof.closure ~= returnApproachClosure
+        or type(returnApproachClosure) ~= "function" or not returnApproachClosure(checker, "ActionQueueSettlement.lua") then return false end
+    local binding = returnFailureSuffix.batchBinding
+    if not binding then binding = {owner=owner, checker=checker}; returnFailureSuffix.batchBinding = binding end
+    if binding.owner ~= owner or binding.checker ~= checker then return false end
+    local allowed = checker(queue, action, other) == true
+    return allowed and Toolkit.ActionQueueSettlement == owner and owner.returnFailureBatchSibling == checker
+        and Proof.closure == returnApproachClosure
+end
+
 local function returnFailureApproach(action)
     local owner = Toolkit.ActionQueueApproach
     local checker = owner and owner.isAction
@@ -2674,7 +2687,8 @@ local function returnFailureIndependent(queue, action, scope)
     for i = index + 1, #queue.queue do
         local other = queue.queue[i]
         local approach = other.Type == "ISQueueActionsAction" and returnFailureApproach(other)
-        if not returnFailureSuffix[other.Type] and not approach and other.Type ~= "ISWringClothing"
+        local sibling = other.Type == "ISInventoryTransferAction" and returnFailureSuffix.batchSibling(queue, action, other)
+        if not returnFailureSuffix[other.Type] and not approach and not sibling and other.Type ~= "ISWringClothing"
             or other.Type == "ISRadioAction" and not deviceSetterModes[other.mode] then
             return false, "unsupported_tail_kind"
         end
@@ -2706,6 +2720,7 @@ local function returnFailureIndependent(queue, action, scope)
         if not contract or contract.knownInputs == false or contract.unknownOutputs
             or sharedItem(action, other, context) or sharedWorldTarget(action, other, context)
             or dynamicConflict(action, other, context) or dynamicConflict(other, action, context) then return false end
+        if sibling and not returnFailureSuffix.batchSibling(queue, action, other) then return false end
     end
     return true
 end

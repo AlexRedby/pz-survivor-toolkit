@@ -6,25 +6,29 @@ local config=require 'QueueTestSelection'
 local Fixture=require 'QueueCraftFixture'
 local JSON=require 'QueueHealthEvents'
 local T=PZSurvivorToolkit
-assert(#config.cases==1 and config.cases[1]=='keep-craft-tool'and config.mode=='toolkit','isolated toolkit case required')
+local step=1
+local function case() return config.cases[step] end
+local function fullOrigin() return case()=='cancel-pinned-full' end
+local function cancelling() return case()=='cancel-pinned-tools' or fullOrigin() end
 local started,done,phase,since=false,false,'prepare',0
 local state,ids,current,tail,receipt,keptRow,siblingRow,craftNative
 local kept,progress,afterKeep,tailProgress,returnsBeforeRead=false,false,false,false,false
 local picked,returned,outcomeTrace={},{},{}
 local keepProgress,idle,readySince
+local cancelled,batches,returnStarts=false,0,{}
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(value)
  value.suite='craft';value.kind=config.kind;value.mode=config.mode;value.actor='client1';JSON.emit(value)
 end
 local function sorted(set)local values={};for id in pairs(set)do values[#values+1]=id end;table.sort(values);return values end
 local function request(command)
- if config.kind=='mp'then sendClientCommand('CraftQueueTest',command,{case='keep-craft-tool'})
+ if config.kind=='mp'then sendClientCommand('CraftQueueTest',command,{case=case()})
  elseif command=='Prepare'then
-  state=Fixture.prepare(getPlayer(),'keep-craft-tool');ids=Fixture.descriptor(state)
+  state=Fixture.prepare(getPlayer(),case());ids=Fixture.descriptor(state)
   print('[CRAFT_QUEUE_TEST] PREPARED '..JSON.encode(ids))
  else
   receipt=assert(Fixture.verify(state,true))
-  print('[CRAFT_QUEUE_TEST] KEEP_AUTHORITY '..JSON.encode(receipt))
+  print('[CRAFT_QUEUE_TEST] '..(cancelling() and 'ACTIVE_AUTHORITY ' or 'KEEP_AUTHORITY ')..JSON.encode(receipt))
  end
 end
 local function discover()
@@ -53,6 +57,19 @@ Events.OnPlayerUpdate.Add(function(player)
  if started and player==getPlayer()then idle=#queue().queue==0 and not player:hasTimedActions()and(idle or 0)+1 or 0 end
 end)
 require('QueuePreflight').onGameStart(Events,function()
+ assert(T.ActionQueueLifecycle.registerObserver('pinned-craft-return-fixture',{started=function(action)
+  if not cancelling() or not ids or not state then return end
+  if action.Type=='ISQueueActionsAction' then
+   local _,id=T.ActionQueueDefinitions.behavior(action)
+   if id=='toolkit.cancel-craft-returns' then batches=batches+1 end
+  elseif action.Type=='ISInventoryTransferAction'and action.srcContainer==state.root then
+   for i,id in ipairs(ids.tools)do
+    if action.item:getID()==id and action.destContainer==state.bags[i]:getItemContainer() then
+     returnStarts[#returnStarts+1]=id
+    end
+   end
+  end
+ end}))
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
  if not isClient()then getPlayer():setGhostMode(true)end
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
@@ -62,7 +79,7 @@ local function prepareWait(player,reason,worn,held,containers,recipeReady)
  local now=getTimestampMs()
  if state.prepareDiagnosticAt and now-state.prepareDiagnosticAt<5000 then return end
  state.prepareDiagnosticAt=now
- print('[CRAFT_QUEUE_TEST] PREPARE_WAIT '..JSON.encode({case='keep-craft-tool',reason=reason,
+ print('[CRAFT_QUEUE_TEST] PREPARE_WAIT '..JSON.encode({case=case(),reason=reason,
   elapsed=now-since,actorMatches=state.player==player,rootMatches=state.root==player:getInventory(),
   worn=worn,held=held,refreshed=state.menuRefreshed==true,
   firstContainer=containers and containers:contains(state.bags[1]:getItemContainer())or false,
@@ -160,20 +177,39 @@ local function keep(player,q)
  assert(state.root:getItemById(ids.tools[keptIndex]):getContainer()==state.root,'Keep moved the retained tool')
  assert(not T.ActionQueueSettlement.canWaivePendingReturn(keptRow,function()return true end),'retired row replayed Keep')
  kept=true
- print('[CRAFT_QUEUE_TEST] KEPT '..JSON.encode({case='keep-craft-tool',itemId=ids.tools[keptIndex],sourceId=ids.bags[keptIndex],progress=keepProgress}))
+ print('[CRAFT_QUEUE_TEST] KEPT '..JSON.encode({case=case(),itemId=ids.tools[keptIndex],sourceId=ids.bags[keptIndex],progress=keepProgress}))
 end
 local function finish()
+ local value
+ if cancelling() then
+  value={event='case',id=case(),status='passed',toolIds=ids.tools,pickupIds=sorted(picked),returnIds=sorted(returned),
+   pickupProgress=picked[ids.tools[1]] and picked[ids.tools[2]],craftProgress=progress,interrupted=cancelled,
+   tailProgress=tailProgress,returnsBeforeRead=returnsBeforeRead,tokenCancelled=current.toolkitQueueOperation.toolkitCancelled==true,
+   producer='CraftChainRecipes.enqueue',nativeDuration=current:getDuration(),authorityVerified=true,manualInputs=true,
+   interruptionProgress=keepProgress,outcomeTrace=outcomeTrace,playerId=ids.playerId,
+   cancelBatches=batches,returnStarts=returnStarts,fullOrigin=state.fullOrigin==true}
+ else
  local keptIndex=ids.keptIndex;local returnedIndex=3-keptIndex
- local value={event='case',id='keep-craft-tool',status='passed',reason=nil,toolIds=ids.tools,
+ value={event='case',id='keep-craft-tool',status='passed',reason=nil,toolIds=ids.tools,
   pickupIds=sorted(picked),returnIds=sorted(returned),keptId=ids.tools[keptIndex],keptSourceId=ids.bags[keptIndex],
   siblingId=ids.tools[returnedIndex],siblingSourceId=ids.bags[returnedIndex],keepSucceeded=true,keptRowRemoved=true,siblingPreserved=true,
   craftProgress=progress,craftProgressAfterKeep=afterKeep,keepProgress=keepProgress,tailProgress=tailProgress,
   returnsBeforeRead=returnsBeforeRead,tokenCancelled=current.toolkitQueueOperation.toolkitCancelled==true,
   producer='CraftChainRecipes.enqueue',nativeDuration=150,authorityVerified=true,playerId=ids.playerId,outcomeTrace=outcomeTrace}
+ end
  for key,result in pairs(receipt)do if key~='case'then value[key]=result end end
  emit(value)
- emit({event='complete',cases=config.cases,expected=1,performed=1,failed=0,skipped=0})
- done=true;print('[CRAFT_QUEUE_TEST] COMPLETE')
+ if step==#config.cases then
+  emit({event='complete',cases=config.cases,expected=step,performed=step,failed=0,skipped=0})
+  done=true;print('[CRAFT_QUEUE_TEST] COMPLETE')
+ else
+  step=step+1;phase='prepare';since=getTimestampMs()
+  state,ids,current,tail,receipt,keptRow,siblingRow,craftNative=nil,nil,nil,nil,nil,nil,nil,nil
+  kept,progress,afterKeep,tailProgress,returnsBeforeRead=false,false,false,false,false
+  picked,returned,outcomeTrace,returnStarts={},{},{},{}
+  keepProgress,idle,readySince=nil,nil,nil
+  cancelled,batches=false,0
+ end
 end
 require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()then return end
@@ -183,12 +219,12 @@ require('QueuePreflight').onTick(Events,function()
   if config.kind=='mp'and(not isClient()or player:getOnlineID()<0)then return end
   if phase=='prepare'then
    assert(T.Settings.actionQueue()and P4TidyUpMeister==nil and not getActivatedMods():contains('P4TidyUpMeister'),'wrong keep craft providers')
-   emit({event='setup',cases=config.cases,expected=1,queueEnabled=true,nativeDurations=true})
+   if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=true,nativeDurations=true}) end
    request('Prepare');phase='ready';return
   end
   if phase=='ready'then
    if not ids then return end
-   assert(ids.case=='keep-craft-tool')
+   assert(ids.case==case())
    state=state or Fixture.resolve(player,ids);if not state then return end
    readySince=readySince or getTimestampMs()
    assert(getTimestampMs()-readySince<25000,'keep craft readiness deadline '..tostring(state.prepareWaitReason))
@@ -197,28 +233,51 @@ require('QueuePreflight').onTick(Events,function()
   end
   if phase=='running'then
    local q=queue();discover();transfers(q.current)
+   if fullOrigin() then Fixture.fillFirstOrigin(state) end
    if current and q.current==current and current.craftStarted==true and current:isStarted()and current:getJobDelta()>0 then
     progress=true;assert(current:getDuration()==150 and not player:isTimedActionInstant(),'native craft duration changed')
-    if not kept then
+    if not kept and not cancelled then
      local ack=config.kind=='mp'and T.ActionQueueAcknowledgements.capture(current)
      if config.kind=='sp'or ack and T.ActionQueueAcknowledgements.state(current,ack)=='started'then
-      assert(current:getJobDelta()<=.25,'Keep missed early active craft');keep(player,q)
+      assert(current:getJobDelta()<=.25,'missed early active craft')
+      if cancelling() then
+       assert(not fullOrigin() or state.fullOrigin,'origin still available at cancel')
+       keepProgress=current:getJobDelta()
+       local ok,reason=T.ActionQueue.cancelOperation(q,current);assert(ok,reason)
+       cancelled=true
+      else keep(player,q) end
      end
     elseif current.action==craftNative and current:getJobDelta()>keepProgress then afterKeep=true end
    end
    if q.current==tail and tail:isStarted()and tail:getJobDelta()>0 then
     tailProgress=true
+    if cancelling() then
+     local first=state.root:getItemById(ids.tools[1])
+     local sawAtExpectedOrigin=first and first:getContainer()==(fullOrigin() and state.root or state.bags[1]:getItemContainer())
+     returnsBeforeRead=cancelled and batches==1 and sawAtExpectedOrigin and returned[ids.tools[2]]
+      and state.bags[2]:getItemContainer():getItemById(ids.tools[2])~=nil
+     if fullOrigin() then
+      local debts=T.ActionQueueSettlement.blockedReturns(player)
+      local sawDebt=false
+      for _,debt in ipairs(debts) do
+       if debt.itemId==ids.tools[1] and debt.state=='blocked' then sawDebt=true end
+       assert(debt.itemId~=ids.tools[2], 'second tool unexpectedly blocked')
+      end
+      returnsBeforeRead=returnsBeforeRead and sawDebt
+     else returnsBeforeRead=returnsBeforeRead and #returnStarts==2 and returned[ids.tools[1]] end
+    else
     local ki=ids.keptIndex;local ri=3-ki
     returnsBeforeRead=kept and not returned[ids.tools[ki]]and returned[ids.tools[ri]]==true
      and state.root:getItemById(ids.tools[ki]):getContainer()==state.root
      and state.bags[ri]:getItemContainer():getItemById(ids.tools[ri])~=nil
-    assert(returnsBeforeRead,'independent return did not precede reader')
+    end
+    assert(returnsBeforeRead,'independent return did not precede reader: batches='..batches..', transfers='..#returnStarts)
    end
    if #q.queue>0 or player:hasTimedActions()or(idle or 0)<3 then return end
-   assert(kept and progress and afterKeep and tailProgress and returnsBeforeRead,'native Keep craft did not finish required progress')
+   assert((cancelling() and cancelled or kept and afterKeep) and progress and tailProgress and returnsBeforeRead,'native Keep craft did not finish required progress')
    if config.kind=='mp'then
     if #outcomeTrace<2 then return end
-    assert(#outcomeTrace==2 and outcomeTrace[1].state=='started'and outcomeTrace[2].state=='completed','native craft receipt differs')
+    assert(#outcomeTrace==2 and outcomeTrace[1].state=='started'and outcomeTrace[2].state==(cancelling() and 'canceled' or 'completed'),'native craft receipt differs')
    end
    request('Verify');phase='receipt';return
   end

@@ -6,9 +6,13 @@ import re
 import shutil
 
 PRESTART_CASES = ['borrowed-tools', 'cancel-pickup', 'missing-input']
+PINNED_CANCEL = 'cancel-pinned-tools'
 ACTIVE_CASES = ['cancel-craft', 'late-input']
+PINNED_FULL = 'cancel-pinned-full'
+PINNED_CANCELLATIONS = [PINNED_CANCEL, PINNED_FULL]
+PINNED_CASES = ['keep-craft-tool', *PINNED_CANCELLATIONS]
 KEEP_CASE = 'keep-craft-tool'
-CASES = PRESTART_CASES + ACTIVE_CASES + [KEEP_CASE]
+CASES = PRESTART_CASES + ACTIVE_CASES + PINNED_CASES
 MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 
 
@@ -16,15 +20,15 @@ def definitions():
     return {'craft': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                                  'kinds': ['sp', 'mp'], 'languages': ['EN'],
-                                 'modes': ['toolkit'] if case == KEEP_CASE else ['native', 'toolkit']}
+                                 'modes': ['toolkit'] if case in PINNED_CASES else ['native', 'toolkit']}
                                 for case in CASES]}}
 
 
 def validate(selection):
     cases = selection.get('cases')
-    if isinstance(cases, list) and KEEP_CASE in cases and (cases != [KEEP_CASE]
+    if isinstance(cases, list) and any(case in PINNED_CASES for case in cases) and (any(case not in PINNED_CASES for case in cases)
             or selection.get('mode') != 'toolkit' or 'P4TidyUpMeister' in selection.get('mods', [])):
-        raise ValueError('keep-craft-tool requires an isolated toolkit case without P4TidyUpMeister')
+        raise ValueError('Pinned craft scenarios require a Toolkit selection without P4TidyUpMeister')
     if (not isinstance(cases, list) or not cases or cases != [case for case in CASES if case in cases]
             or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
@@ -116,7 +120,7 @@ def _prepared_valid(prep, case):
     if not _ids(ids) or any(type(prep.get(key)) is not int or prep[key] < 0 for key in
                             ('outputs', 'materialCondition', 'materialUses')):
         return False
-    kinds = ('Base.Saw', 'Base.HandDrill') if case == KEEP_CASE else ('Base.Hammer', 'Base.Saw')
+    kinds = ('Base.Saw', 'Base.HandDrill') if case in PINNED_CASES else ('Base.Hammer', 'Base.Saw')
     for index, kind in enumerate(kinds):
         meta = prep['toolMeta'][index]
         if (type(meta) is not dict or set(meta) != {'id', 'kind', 'condition', 'uses'}
@@ -213,9 +217,17 @@ def _active(case, selection, row, prep, receipt, removal):
                     interrupted=True, missingObserved=late, nativeDuration=150, authorityVerified=True,
                     manualInputs=True, localDeferrals=0, sharedPerform=enabled and late,
                     sharedComplete=enabled and late and selection['kind'] == 'sp')
+    if case in PINNED_CANCELLATIONS:
+        for key in ('localDeferrals', 'sharedPerform', 'sharedComplete', 'missingObserved'):
+            expected.pop(key)
+        expected.update(producer='CraftChainRecipes.enqueue', cancelBatches=1, fullOrigin=case == PINNED_FULL)
+        starts, tools = row.get('returnStarts'), prep.get('tools')
+        if (not _ids(starts) or not _ids(tools, 2) or not (starts == tools or
+                case == PINNED_FULL and starts == tools[1:])):
+            issues.append('Each pinned tool must start one return to its exact source')
     if enabled:
         expected.update(tailRead=True, tailProgress=True, returnsBeforeRead=True,
-                        tokenCancelled=not late, toolsReturned=2, status='passed', reason=None)
+                        tokenCancelled=not late, toolsReturned=(1 if case == PINNED_FULL else 2), status='passed', reason=None)
     if not _matches(row, expected) or 'consumed' in row:
         issues.append('Craft active effect/accounting/progress differs: ' + case)
     progress = row.get('interruptionProgress')
@@ -255,7 +267,7 @@ def _active(case, selection, row, prep, receipt, removal):
     if (not _same(row.get('toolIds'), prep['tools']) or not _ids(row.get('pickupIds'), 2)
             or row.get('pickupIds') != sorted(prep['tools']) or not _ids(row.get('returnIds'))
             or row['returnIds'] != sorted(row['returnIds']) or not set(row['returnIds']) <= set(prep['tools'])
-            or (enabled or row.get('returnsBeforeRead') is True) and row['returnIds'] != sorted(prep['tools'])):
+            or (enabled or row.get('returnsBeforeRead') is True) and row['returnIds'] != sorted(prep['tools'][1:] if case == PINNED_FULL else prep['tools'])):
         issues.append('Craft active exact pickup/return IDs differ: ' + case)
     if not _matches(row, dict(materialId=prep['material'], bookId=prep['book'], playerId=prep['playerId'],
                              materialCondition=prep['materialCondition'], materialUses=prep['materialUses'])):
@@ -275,7 +287,7 @@ def _active(case, selection, row, prep, receipt, removal):
                     or any(type(resource.get(key)) is not int or resource[key] not in (0, 1)
                            for key in ('sourceCount', 'rootCount'))
                     or resource.get('sourceCount', 0) + resource.get('rootCount', 0) != 1
-                    or (enabled or row.get('returnsBeforeRead') is True) and resource.get('sourceCount') != 1):
+                    or (enabled or row.get('returnsBeforeRead') is True) and resource.get('sourceCount') != int(case != PINNED_FULL or index != 0)):
                 issues.append('Craft active exact tool conservation/endpoint differs: ' + case)
             else:
                 returned += resource['sourceCount']
@@ -420,7 +432,7 @@ def verify(root, selection, catalog):
         if case in ('missing-input', 'late-input'):
             expected_raw.append(('REMOVED', case))
         marker = ('AUTHORITY' if case == 'borrowed-tools' else 'KEEP_AUTHORITY' if case == KEEP_CASE
-                  else 'ACTIVE_AUTHORITY' if case in ACTIVE_CASES else 'ABORT_AUTHORITY')
+                  else 'ACTIVE_AUTHORITY' if case in ACTIVE_CASES + PINNED_CANCELLATIONS else 'ABORT_AUTHORITY')
         expected_raw.append((marker, case))
     if [(kind, 'borrowed-tools' if kind == 'AUTHORITY' else row.get('case')) for kind, row in raw] != expected_raw:
         issues.append('Missing, duplicated or reordered authoritative craft receipt')
@@ -453,7 +465,7 @@ def verify(root, selection, catalog):
             issues.extend(_keep(selection, row, prep, receipt))
             outcome = {key: row.get(key) for key in KEEP_RECEIPT_KEYS + ('keptId', 'keptSourceId', 'siblingId',
                        'siblingSourceId', 'keepProgress', 'craftProgressAfterKeep', 'outcomeTrace', 'playerId')}
-        elif case in ACTIVE_CASES:
+        elif case in ACTIVE_CASES + PINNED_CANCELLATIONS:
             receipt = next((row for kind, row in raw if kind == 'ACTIVE_AUTHORITY' and row.get('case') == case), {})
             removal = next((row for kind, row in raw if kind == 'REMOVED' and row.get('case') == case), {})
             case_issues, failure = _active(case, selection, row, prep, receipt, removal)
@@ -472,7 +484,7 @@ def verify(root, selection, catalog):
             outcome = {key: row.get(key) for key in RECEIPT_KEYS + ('pickupIds', 'returnIds', 'craftProgress',
                        'tailProgress', 'returnsBeforeRead', 'tokenCancelled', 'authorityVerified')}
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
-    traces = [row.get('outcomeTrace') for row in results if row.get('id') in ACTIVE_CASES + [KEEP_CASE]]
+    traces = [row.get('outcomeTrace') for row in results if row.get('id') in ACTIVE_CASES + PINNED_CASES]
     if any(type(trace) is not list for trace in traces):
         issues.append('Craft active native State trace envelope differs')
     else:

@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.22
+
+- In a P4-free game, cancelling a pinned craft can return its borrowed kept tools to their individual bags in pickup order. Each tool keeps its own return status if its original bag is unavailable.
+
 ### 0.2.21
 
 - In games without P4 Tidy Up Meister, grooming with a borrowed razor or scissors can return a carried generator to both hands after use. A newer equipment choice or another player taking the generator takes precedence. Native pickup preserves condition and fuel and gives the generator a new item ID.

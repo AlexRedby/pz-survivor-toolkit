@@ -1,5 +1,5 @@
 local Fixture={}
-local function active(case)return case=='cancel-craft' or case=='late-input'or case=='keep-craft-tool'end
+local function active(case)return case=='cancel-craft' or case=='late-input'or case=='keep-craft-tool'or case=='cancel-pinned-tools'or case=='cancel-pinned-full'end
 local function count(container,kind)
  local total=0
  for i=0,container:getItems():size()-1 do
@@ -20,7 +20,8 @@ local function uses(item)return instanceof(item,'DrainableComboItem') and item:g
 function Fixture.prepare(player,case)
  local inventory=player:getInventory()
  local state={case=case or 'borrowed-tools',player=player,root=inventory,bags={},tools={},toolMeta={}}
- local toolKinds=state.case=='keep-craft-tool'and {'Base.Saw','Base.HandDrill'}or {'Base.Hammer','Base.Saw'}
+ local pinned=state.case=='keep-craft-tool'or state.case=='cancel-pinned-tools'or state.case=='cancel-pinned-full'
+ local toolKinds=pinned and {'Base.Saw','Base.HandDrill'}or {'Base.Hammer','Base.Saw'}
  for i,kind in ipairs(toolKinds) do
   local bag=assert(inventory:AddItem('Base.Bag_Schoolbag'))
   state.bags[i]=bag
@@ -28,7 +29,7 @@ function Fixture.prepare(player,case)
   state.toolMeta[i]={id=state.tools[i]:getID(),kind=kind,condition=state.tools[i]:getCondition(),uses=uses(state.tools[i])}
   if isServer() then sendAddItemToContainer(inventory,bag) end
  end
- if state.case=='keep-craft-tool'then
+ if pinned then
   getGameTime():setTimeOfDay(12)
   state.keptIndex=isServer()and 2 or 1
   for _,bag in ipairs(state.bags)do bag:getItemContainer():setExplored(true)end
@@ -97,6 +98,17 @@ function Fixture.resolve(player,ids)
  state.blocker=ids.blocker and inventory:getItemById(ids.blocker)
  if not state.material or not state.book or ids.blocker and not state.blocker then return end
  return state
+end
+-- Apply the same capacity change on each authority/replica only after the
+-- exact saw is fetched. Keep both original container identities in the world.
+function Fixture.fillFirstOrigin(state)
+ if state.case~='cancel-pinned-full' or state.fullOrigin then return end
+ local origin=state.bags[1]:getItemContainer()
+ local saw=state.root:getItemById(state.tools[1]:getID())
+ if not saw or saw:getContainer()~=state.root then return end
+ origin:setCapacity(0)
+ assert(not origin:hasRoomFor(state.player,saw),'fixture origin must refuse the exact saw')
+ state.fullOrigin=true
 end
 function Fixture.removeInput(state)
  assert((state.case=='missing-input'or state.case=='late-input')and not state.removed,'unexpected craft input removal')
@@ -200,7 +212,9 @@ function Fixture.verify(state,enabled)
     or tool:getCondition()~=expected.condition or uses(tool)~=expected.uses then return nil,'abort exact tool changed' end
    local sc=identityCount(source,expected.id)
    local rc=tool:getContainer()==inventory and 1 or 0
-   if sc+rc~=1 or enabled and sc~=1 then return nil,'abort exact tool endpoint differs' end
+   local blocked=state.case=='cancel-pinned-full' and i==1
+   if sc+rc~=1 or enabled and sc~=(blocked and 0 or 1) then return nil,'abort exact tool endpoint differs' end
+   if blocked and (not state.fullOrigin or source:hasRoomFor(player,tool)) then return nil,'full origin accepted saw' end
    returned=returned+sc
    resources[i]={id=expected.id,kind=expected.kind,condition=expected.condition,uses=uses(tool),sourceCount=sc,rootCount=rc}
   end

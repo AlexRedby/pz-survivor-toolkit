@@ -506,6 +506,7 @@ local function addStep(player, step, context, initialIds)
     ISTimedActionQueue.add(action)
     if loans then pcall(loans.body, action) end
     ISCraftingUI.ReturnItemsToOriginalContainer(player, returns)
+    if loans then pcall(loans.returns, returns) end
 end
 
 function Recipes.enqueue(player, plan, context)

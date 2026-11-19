@@ -164,7 +164,7 @@ function Settlement.completeCancellation(queue, action)
     if not state then return end
     local member = state.members[action]
     -- Keep the generation bridge until the ended expansion publishes its debt.
-    if member and member.returnOwner and member.returnOwner.reservation then return end
+    if member and member.returnOwner and (member.returnOwner.reservation or member.returnOwner.reservations) then return end
     if member then state.members[action] = nil end
     for _ in pairs(state.members) do return end
     cancellations[queue] = nil
@@ -264,7 +264,7 @@ function Settlement.restorationActive(action)
     if not episode then return false end
     local step = record.actions[action]
     return action == episode.pickup or action == episode.equip or action == episode.body
-        or step ~= nil and step.phase == "cleanup" and (step.returnClaim ~= nil or step.required == true or step.returning ~= nil)
+        or step ~= nil and step.phase == "cleanup" and (step.returnClaim ~= nil or step.returnClaims ~= nil or step.required == true or step.returning ~= nil)
 end
 
 function Settlement.admitCancellation(queue, request, decision)
@@ -3381,17 +3381,48 @@ local function returnProvider()
     end
 end
 
+local returnBatch = {}
+function returnBatch.borrowedSteps(handles, minimum)
+    if type(handles) ~= "table" or getmetatable(handles) ~= nil then return end
+    local size, steps, seen = #handles, {}, {}
+    if size < minimum or size > MAX_EXECUTION_MEMBERS then return end
+    for key in pairs(handles) do
+        if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > size then return end
+    end
+    for index = 1, size do
+        local step = stepProof(handles[index])
+        if not step or seen[step] or index > 1 and step.operation ~= steps[1].operation then return end
+        steps[index], seen[step] = step, true
+    end
+    return steps
+end
+function returnBatch.ownedReservation(owner, reservation)
+    if owner.reservation == reservation then return true end
+    for _, current in ipairs(owner.reservations or {}) do if current == reservation then return true end end
+    return false
+end
+function returnBatch.releaseReservation(owner, reservation)
+    if owner.reservation == reservation then owner.reservation = nil; return end
+    for index, current in ipairs(owner.reservations or {}) do
+        if current == reservation then table.remove(owner.reservations, index); break end
+    end
+    if owner.reservations and #owner.reservations == 0 then owner.reservations = nil end
+end
+
 -- A pending claim changes no queue or item. Cancellation can hand off this
 -- exact paid pickup only if its original command actually survives the edit.
-function Settlement.claimBorrowedReturn(action, handle)
-    local loan = stepProof(handle)
-    local record = loan and loan.operation
-    local owner = record and record.actions[action]
-    local binding = loan and loan.borrowing
-    if not binding or binding.candidate.step ~= loan or not owner or record.actions[loan.action] ~= loan
-        or owner.phase ~= "cleanup" or owner.kind ~= "ISQueueActionsAction"
-        or not owner.prerequisites or #owner.prerequisites ~= 1 or owner.prerequisites[1] ~= loan
-        or owner.returnClaim or binding.candidate.returnClaim then return false end
+function returnBatch.claimBorrowedReturns(action, loans, batch)
+    local record = loans[1].operation
+    local owner = record.actions[action]
+    if not owner or owner.phase ~= "cleanup" or owner.kind ~= "ISQueueActionsAction"
+        or not owner.prerequisites or #owner.prerequisites ~= #loans or owner.returnClaim or owner.returnClaims then return false end
+    local bindings = {}
+    for index, loan in ipairs(loans) do
+        local binding = loan.borrowing
+        if not binding or binding.candidate.step ~= loan or record.actions[loan.action] ~= loan
+            or owner.prerequisites[index] ~= loan or binding.candidate.returnClaim then return false end
+        bindings[index] = binding
+    end
     local ops, provider = Toolkit.ActionQueueOperations, returnProvider()
     local matches = ops and ops.isCommand
     if not executionProof.closure(matches, "ActionQueueOperations.lua") or not provider()
@@ -3405,18 +3436,60 @@ function Settlement.claimBorrowedReturn(action, handle)
     if not watch or Toolkit.ActionQueueOperations ~= ops or ops.isCommand ~= matches or not matches(action)
         or not watch() or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
         or owner.started or action.started or action.action or record.settlement
-        or owner.returnClaim or binding.candidate.returnClaim then return false end
-    local claim = {loan=loan, provider=provider, source=function() return matches(action) and watch() end}
-    owner.returnClaim, binding.candidate.returnClaim = claim, claim
+        or owner.returnClaim or owner.returnClaims then return false end
+    local claims = {}
+    for index, loan in ipairs(loans) do
+        local binding = bindings[index]
+        if loan.borrowing ~= binding or binding.candidate.step ~= loan or binding.candidate.returnClaim
+            or owner.prerequisites[index] ~= loan or record.actions[loan.action] ~= loan then return false end
+        claims[index] = {loan=loan, provider=provider, source=function() return matches(action) and watch() end}
+    end
+    if batch then owner.returnClaims = claims else owner.returnClaim = claims[1] end
+    for index, binding in ipairs(bindings) do binding.candidate.returnClaim = claims[index] end
+    return true
+end
+function Settlement.claimBorrowedReturn(action, handle)
+    local loan = stepProof(handle)
+    return loan and returnBatch.claimBorrowedReturns(action, {loan}, false) or false
+end
+-- Multi-loan ownership is explicit and atomic; repeated singleton calls still
+-- cannot turn one command into an ambiguous owner of several loans.
+function Settlement.claimBorrowedReturns(action, handles)
+    local loans = returnBatch.borrowedSteps(handles, 2)
+    return loans and returnBatch.claimBorrowedReturns(action, loans, true) or false
+end
+
+function Settlement.onCancelBorrowedReturns(action, handles)
+    local loans = returnBatch.borrowedSteps(handles, 2)
+    local record = loans and loans[1].operation
+    local owner = record and record.actions[action]
+    if not owner or record.cancelReturnOwner or record.settlement or owner.started or action.started or action.action
+        or owner.returnClaim or not owner.returnClaims or #owner.returnClaims ~= #loans then return false end
+    local queue = record.queue
+    if #queue.queue > MAX_EXECUTION_MEMBERS then return false end
+    for _, member in ipairs(queue.queue) do if member == action then return false end end
+    local watch = executionProof.captureBindings({{owner=action, exact=true}})
+    if not watch then return false end
+    for index, loan in ipairs(loans) do
+        local claim = owner.returnClaims[index]
+        if claim.loan ~= loan or owner.prerequisites[index] ~= loan or not claim.provider() or not claim.source() then return false end
+    end
+    if not operationLive(record) or record.actions[action] ~= owner or not watch() then return false end
+    for _, member in ipairs(queue.queue) do if member == action then return false end end
+    record.cancelReturnOwner = {action=action, owner=owner, loans=loans, watch=watch}
     return true
 end
 
-local function reserveReturn(owner, claim, scope, candidate, expansion)
+local function reserveReturn(owner, claim, scope, candidate, expansion, batch)
     local record, queue = owner.operation, owner.operation.queue
     local reservation = {candidate=candidate, scope=scope, loan=claim.loan, record=record,
         actor=record.character, queue=queue, list=queue.queue, generation=queue.toolkitOperationGeneration or 0,
         provider=claim.provider, expansion=expansion, claim=claim, state="reserved"}
-    owner.reservation, candidate.returnSuccess = reservation, reservation
+    if batch then
+        owner.reservations = owner.reservations or {}
+        owner.reservations[#owner.reservations + 1] = reservation
+    else owner.reservation = reservation end
+    candidate.returnSuccess = reservation
     expansion[cleanupWatchMarker], cleanupContinuationsIssued = true, true
     return reservation
 end
@@ -3424,15 +3497,20 @@ end
 -- A prior command claim becomes fallback debt ownership only inside its actual
 -- earned cleanup expansion. Enrollment replaces this reservation; an empty or
 -- unavailable expansion leaves it for the existing completion/debt gate.
-function Settlement.reserveClaimedReturn(expansion, handle)
-    local loan = stepProof(handle)
+function returnBatch.reserveClaimedReturn(expansion, loan, batch, validateOnly)
     local binding = loan and loan.borrowing
     local candidate, scope = binding and binding.candidate, binding and binding.scope
     local record = expansion and operation(expansion.character, expansion.toolkitQueueOperation)
     local owner = record and record.actions[expansion]
     local queue = record and record.queue
-    local reservation = owner and owner.reservation
+    local reservation = candidate and candidate.returnSuccess
+    if reservation and not (owner and returnBatch.ownedReservation(owner, reservation)) then return false end
     local claim = reservation and reservation.claim or owner and owner.returnClaim
+    if batch and owner then
+        claim = nil
+        for _, owned in ipairs(owner.returnClaims or {}) do if owned.loan == loan then claim = owned; break end end
+        if reservation then claim = reservation.claim end
+    elseif owner and owner.returnClaims then return false end
     if not candidate or not owner or not claim or claim.loan ~= loan or candidate.returnClaim ~= claim then return false end
     local function current()
         return record.actions[expansion] == owner and expansion.character == record.character
@@ -3452,15 +3530,39 @@ function Settlement.reserveClaimedReturn(expansion, handle)
             or reservation.record ~= record or reservation.expansion ~= expansion
             or reservation.queue ~= queue or reservation.list ~= queue.queue
             or reservation.generation ~= (queue.toolkitOperationGeneration or 0) then return false end
-    elseif owner.returnClaim ~= claim or candidate.returnSuccess ~= nil
+    elseif (not batch and owner.returnClaim ~= claim) or candidate.returnSuccess ~= nil
         or loan.operation ~= record or record.actions[loan.action] ~= loan then return false end
     local list, generation = queue.queue, queue.toolkitOperationGeneration or 0
     local unchanged = executionProof.captureBindings({{owner=expansion, exact=true}})
     if not unchanged or not operationLive(record) or not operationLive(loan.operation) or not borrowingLive(scope)
         or not requiredCleanup(expansion, true) or not claim.provider() or not claim.source()
         or not current() or queue.queue ~= list or (queue.toolkitOperationGeneration or 0) ~= generation
-        or owner.reservation ~= reservation or candidate.returnSuccess ~= reservation or not unchanged() then return false end
-    if not reservation then reserveReturn(owner, claim, scope, candidate, expansion) end
+        or reservation and not returnBatch.ownedReservation(owner, reservation)
+        or candidate.returnSuccess ~= reservation or not unchanged() then return false end
+    if validateOnly then return {owner=owner, claim=claim, scope=scope, candidate=candidate, reservation=reservation, unchanged=unchanged} end
+    if not reservation then reserveReturn(owner, claim, scope, candidate, expansion, batch) end
+    return true
+end
+function Settlement.reserveClaimedReturn(expansion, handle)
+    return returnBatch.reserveClaimedReturn(expansion, stepProof(handle), false, false)
+end
+function Settlement.reserveClaimedReturns(expansion, handles)
+    local loans = returnBatch.borrowedSteps(handles, 2)
+    if not loans then return false end
+    local staged, owner = {}, nil
+    for index, loan in ipairs(loans) do
+        local proof = returnBatch.reserveClaimedReturn(expansion, loan, true, true)
+        if not proof or owner and owner ~= proof.owner then return false end
+        owner, staged[index] = proof.owner, proof
+    end
+    if not owner.returnClaims or #owner.returnClaims ~= #loans then return false end
+    for index, proof in ipairs(staged) do
+        if owner.returnClaims[index] ~= proof.claim or proof.claim.loan ~= loans[index]
+            or proof.candidate.returnSuccess ~= proof.reservation or not proof.unchanged() then return false end
+    end
+    for _, proof in ipairs(staged) do
+        if not proof.reservation then reserveReturn(owner, proof.claim, proof.scope, proof.candidate, expansion, true) end
+    end
     return true
 end
 
@@ -3470,9 +3572,7 @@ end
 -- queue editing, native retry or independent editor-disabled ownership. The
 -- optional third argument binds one exact never-issued return command as well;
 -- two-argument callers retain the return-construction gate alone.
-function Settlement.requireBorrowedReturnSuccess(...)
-    if select('#', ...) ~= 2 and select('#', ...) ~= 3 then return false end
-    local handle, prerequisites, continuation = ...
+function returnBatch.stageBorrowedReturnSuccess(handle, prerequisites, continuation)
     if type(prerequisites) ~= "table" or getmetatable(prerequisites) ~= nil then return false end
     local size, previous, seen = #prerequisites, {}, {}
     if size == 0 or size > MAX_EXECUTION_MEMBERS then return false end
@@ -3501,7 +3601,7 @@ function Settlement.requireBorrowedReturnSuccess(...)
         local record = parent and operation(actor, parent.toolkitQueueOperation)
         local owner = record and record.actions[parent]
         if reservation and (reservation.record ~= record or reservation.expansion ~= parent
-            or not owner or owner.reservation ~= reservation or not reservation.claim.source()) then return false end
+            or not owner or not returnBatch.ownedReservation(owner, reservation) or not reservation.claim.source()) then return false end
         if not owner or queue.queue[1] ~= parent or parent.character ~= actor
             or parent.Type ~= "ISQueueActionsAction" or not requiredCleanup(parent, true) then return false end
         local authorized = false
@@ -3550,7 +3650,7 @@ function Settlement.requireBorrowedReturnSuccess(...)
         if not provider() or queue.current ~= parent or queue.queue[1] ~= parent
             or operation(actor, parent.toolkitQueueOperation) ~= record or not operationLive(step.operation)
             or not borrowingLive(scope) or candidate.returnSuccess ~= returnSuccessEnrolling then return false end
-        if reservation and (not reservation.claim.source() or owner.reservation ~= reservation) then return false end
+        if reservation and (not reservation.claim.source() or not returnBatch.ownedReservation(owner, reservation)) then return false end
         if not watch() or queue.current ~= parent or queue.queue[1] ~= parent
             or candidate.returnSuccess ~= returnSuccessEnrolling or candidate.phase ~= "active"
             or candidate.ambiguous or candidate.returning or candidate.plannedReturn then return false end
@@ -3560,9 +3660,10 @@ function Settlement.requireBorrowedReturnSuccess(...)
         local plan = {candidate = candidate, scope = scope, loan = step, record = record,
             actor = actor, queue = queue, list = queue.queue, generation = queue.toolkitOperationGeneration or 0,
             previous = previous, provider = provider, state = "pending"}
+        local entry
         if continuation then
             if continuationStep.returnContinuation then return false end
-            local entry = {action=continuation, step=continuationStep, record=record, plan=plan,
+            entry = {action=continuation, step=continuationStep, record=record, plan=plan,
                 queue=queue, list=queue.queue, actor=actor, token=record.token,
                 generation=queue.toolkitOperationGeneration or 0, commands=commandOwner, matches=commandMatches,
                 callback=continuation.addActionsFunction, args=continuation.args}
@@ -3573,36 +3674,117 @@ function Settlement.requireBorrowedReturnSuccess(...)
                 {owner=commandOwner, keys={"isCommand"}}, {owner=Toolkit, keys={"ActionQueueOperations"}},
             })
             if not entry.sourceWatch then return false end
-            continuationStep.returnContinuation = entry
-            local capsule = {}
-            capsule[cleanupContinuationMarker] = function(challenge)
-                if challenge == cleanupContinuationMarker then return entry end
-            end
-            continuation[cleanupContinuationMarker] = capsule
-            cleanupContinuationsIssued = true
         end
-        candidate.returnSuccess = plan
-        if reservation then owner.reservation = nil end
-        for _, prerequisite in ipairs(previous) do
-            prerequisite.returnSuccessPlans = prerequisite.returnSuccessPlans or {}
-            prerequisite.returnSuccessPlans[#prerequisite.returnSuccessPlans + 1] = plan
-            if prerequisite.preparation.sourceGuard then
-                prerequisite.action[cleanupWatchMarker] = true
-                if prerequisite.preparation.admit and not rawget(prerequisite.action, cleanupAdmissionMarker) then
-                    local capsule = {}
-                    capsule[cleanupAdmissionMarker] = function(challenge)
-                        if challenge == cleanupAdmissionMarker then return prerequisite end
-                    end
-                    prerequisite.action[cleanupAdmissionMarker] = capsule
-                end
-                cleanupFailureIssued = true
-            end
-        end
-        return true
+        local parentWatch = executionProof.captureBindings({{owner=parent, exact=true}})
+        if not parentWatch then return false end
+        return {plan=plan, entry=entry, owner=owner, parent=parent, reservation=reservation,
+            watch=watch, parentWatch=parentWatch, binding=binding}
     end)
-    if candidate.returnSuccess == returnSuccessEnrolling then candidate.returnSuccess = reservation end
-    return ok and accepted == true
+    if not ok or type(accepted) ~= "table" then
+        if candidate.returnSuccess == returnSuccessEnrolling then candidate.returnSuccess = reservation end
+        return false
+    end
+    return accepted
 end
+function returnBatch.publishReturnContinuation(entry, plans)
+    if not entry then return end
+    entry.plans = plans
+    entry.step.returnContinuation = entry
+    local capsule = {}
+    capsule[cleanupContinuationMarker] = function(challenge)
+        if challenge == cleanupContinuationMarker then return entry end
+    end
+    entry.action[cleanupContinuationMarker] = capsule
+    cleanupContinuationsIssued = true
+end
+function returnBatch.publishBorrowedReturnSuccess(staged)
+    local plan, reservation, owner = staged.plan, staged.reservation, staged.owner
+    local candidate, previous = plan.candidate, plan.previous
+    candidate.returnSuccess = plan
+    if reservation then returnBatch.releaseReservation(owner, reservation) end
+    for _, prerequisite in ipairs(previous) do
+        prerequisite.returnSuccessPlans = prerequisite.returnSuccessPlans or {}
+        prerequisite.returnSuccessPlans[#prerequisite.returnSuccessPlans + 1] = plan
+        if prerequisite.preparation.sourceGuard then
+            prerequisite.action[cleanupWatchMarker] = true
+            if prerequisite.preparation.admit and not rawget(prerequisite.action, cleanupAdmissionMarker) then
+                local capsule = {}
+                capsule[cleanupAdmissionMarker] = function(challenge)
+                    if challenge == cleanupAdmissionMarker then return prerequisite end
+                end
+                prerequisite.action[cleanupAdmissionMarker] = capsule
+            end
+            cleanupFailureIssued = true
+        end
+    end
+end
+function returnBatch.stagedReturnCurrent(staged)
+    local plan, owner = staged.plan, staged.owner
+    return staged.watch() and staged.parentWatch()
+        and (not staged.entry or staged.entry.sourceWatch())
+        and plan.candidate.returnSuccess == returnSuccessEnrolling
+        and plan.loan.borrowing == staged.binding and staged.binding.candidate == plan.candidate
+        and plan.candidate.phase == "active" and not plan.candidate.ambiguous
+        and not plan.candidate.returning and not plan.candidate.plannedReturn
+        and plan.queue.current == staged.parent and plan.list[1] == staged.parent
+        and plan.queue.queue == plan.list and ISTimedActionQueue.queues[plan.actor] == plan.queue
+        and (plan.queue.toolkitOperationGeneration or 0) == plan.generation
+        and plan.record.actions[staged.parent] == owner
+        and (not staged.reservation or returnBatch.ownedReservation(owner, staged.reservation))
+        and (not staged.entry or not staged.entry.step.returnContinuation)
+end
+function returnBatch.restoreStagedReturns(staged)
+    for _, proof in ipairs(staged) do
+        if proof.plan.candidate.returnSuccess == returnSuccessEnrolling then
+            proof.plan.candidate.returnSuccess = proof.reservation
+        end
+    end
+end
+function Settlement.requireBorrowedReturnSuccess(...)
+    if select('#', ...) ~= 2 and select('#', ...) ~= 3 then return false end
+    local staged = returnBatch.stageBorrowedReturnSuccess(...)
+    if not staged then return false end
+    if not returnBatch.stagedReturnCurrent(staged) then returnBatch.restoreStagedReturns({staged}); return false end
+    returnBatch.publishReturnContinuation(staged.entry)
+    returnBatch.publishBorrowedReturnSuccess(staged)
+    return true
+end
+-- One source-owned command may depend on an explicitly complete set of loans.
+-- Every candidate and effect is validated before any capability is published.
+function Settlement.requireBorrowedReturnsSuccess(handles, prerequisites, continuation)
+    local loans = returnBatch.borrowedSteps(handles, 2)
+    if not loans or continuation == nil then return false end
+    local effects = returnBatch.borrowedSteps(prerequisites, 1)
+    if not effects then return false end
+    local frozen = {}
+    for index, effect in ipairs(effects) do frozen[index] = effect.handle end
+    local staged, plans = {}, {}
+    for index, loan in ipairs(loans) do
+        local proof = returnBatch.stageBorrowedReturnSuccess(loan.handle, frozen, continuation)
+        if not proof then returnBatch.restoreStagedReturns(staged); return false end
+        staged[index], plans[index] = proof, proof.plan
+    end
+    local owner, record = staged[1].owner, staged[1].plan.record
+    local accepted = #owner.prerequisites == #loans
+    for index, proof in ipairs(staged) do
+        local continuationStep = proof.entry and proof.entry.step
+        accepted = accepted and proof.owner == owner and proof.plan.record == record
+            and proof.plan.loan.operation == loans[1].operation
+            and owner.prerequisites[index] == loans[index]
+            and continuationStep and continuationStep.prerequisites
+            and #continuationStep.prerequisites == #loans
+            and continuationStep.prerequisites[index] == loans[index]
+            and returnBatch.stagedReturnCurrent(proof)
+    end
+    for _, effect in ipairs(effects) do
+        accepted = accepted and #(effect.returnSuccessPlans or {}) + #staged <= MAX_RETURN_FAILURES
+    end
+    if not accepted then returnBatch.restoreStagedReturns(staged); return false end
+    returnBatch.publishReturnContinuation(staged[1].entry, plans)
+    for _, proof in ipairs(staged) do returnBatch.publishBorrowedReturnSuccess(proof) end
+    return true
+end
+
 returnSuccessBlocked = function(plan, reason, terminal)
     if plan.state == "retired" then return false end
     if plan.failure then
@@ -3762,20 +3944,41 @@ local function continuationSource(entry)
     -- during a getter. Finish with the original callback-free owned bindings.
     return ok and accepted == true and current()
 end
+function returnBatch.continuationPlans(entry)
+    return entry.plans or {entry.plan}
+end
+function returnBatch.continuationEarned(entry)
+    local earned = true
+    for _, plan in ipairs(returnBatch.continuationPlans(entry)) do
+        if returnSuccessState(plan) ~= "earned" then earned = false end
+    end
+    return earned
+end
+function returnBatch.blockContinuation(entry)
+    local published = true
+    for _, plan in ipairs(returnBatch.continuationPlans(entry)) do
+        local waived = plan.state == "retired" and plan.candidate.phase == "waived"
+            and plan.failure and plan.failure.plan == plan and plan.failure.candidate == plan.candidate
+        if not waived and not returnSuccessBlocked(plan, "cleanup-unresolved") then published = false end
+    end
+    return published
+end
 function Settlement.advanceCleanupReturns(queue, current)
     if not cleanupContinuationsIssued then return true end
     if not queue or queue.current ~= current or queue.queue[1] ~= current then return false end
     if current and retainedBindingSource.raw(current, cleanupWatchMarker) == true then
         local record = operation(current.character, current.toolkitQueueOperation)
         local owner = record and record.actions[current]
-        local reservation = owner and owner.reservation
-        if reservation then
-            if reservation.candidate.returnSuccess ~= reservation then return false end
-            if reservation.state ~= "retired" and not returnSuccessBlocked(reservation, "cleanup-unresolved") then
-                owner.heldCleanupAdvance = true
-                return false
+        local reservations = owner and (owner.reservations or owner.reservation and {owner.reservation})
+        if reservations then
+            for _, reservation in ipairs(reservations) do
+                if reservation.candidate.returnSuccess ~= reservation then return false end
+                if reservation.state ~= "retired" and not returnSuccessBlocked(reservation, "cleanup-unresolved") then
+                    owner.heldCleanupAdvance = true
+                    return false
+                end
             end
-            owner.reservation = nil
+            owner.reservation, owner.reservations = nil, nil
             Settlement.completeCancellation(queue, current)
         end
     end
@@ -3785,15 +3988,12 @@ function Settlement.advanceCleanupReturns(queue, current)
         if entry == nil then return true end
         if not entry or entry.queue ~= queue or entry.list ~= queue.queue or action.action or action.started then return false end
         if not continuationSource(entry) then return false end
-        local plan = entry.plan
-        if returnSuccessState(plan) == "earned" then
+        if returnBatch.continuationEarned(entry) then
             if not continuationSource(entry) then return false end
             return queue.current == current and queue.queue[1] == current and queue.queue[2] == action
                 and queue.queue == entry.list and not action.action and not action.started
         end
-        local waived = plan.state == "retired" and plan.candidate.phase == "waived"
-            and plan.failure and plan.failure.plan == plan and plan.failure.candidate == plan.candidate
-        if not waived and not returnSuccessBlocked(plan, "cleanup-unresolved") then
+        if not returnBatch.blockContinuation(entry) then
             local record = operation(current.character, current.toolkitQueueOperation)
             local step = record and record.actions[current]
             if step then step.heldCleanupAdvance = true; current[cleanupWatchMarker] = true end
@@ -3819,8 +4019,8 @@ function Settlement.beginCleanupContinuation(action)
     if entry == nil then return false end
     if not entry or entry.retired or action.action or action.started or not continuationSource(entry)
         or entry.queue.current ~= action or entry.list[1] ~= action then return true, false end
-    if returnSuccessState(entry.plan) ~= "earned" then
-        returnSuccessBlocked(entry.plan, "cleanup-unresolved")
+    if not returnBatch.continuationEarned(entry) then
+        returnBatch.blockContinuation(entry)
         return true, false
     end
     return true, continuationSource(entry) and entry.queue.current == action and entry.list[1] == action
@@ -4097,7 +4297,15 @@ local function enqueueBorrowedReturn(step)
     local planned = bindPlannedReturn(action, scope, candidate)
     -- A paid hand restore leaves only the location obligation. Let the
     -- ordinary execution guard isolate a native refusal for this exact return.
-    if dependency then planned.waivable = true end
+    if dependency then
+        planned.waivable = true
+        if dependency.returnBatch then
+            local batch = dependency.returnBatch
+            planned.returnBatch, planned.returnPlan = batch, dependency
+            batch.members[action], batch.order[action] = planned, #batch.actions + 1
+            batch.actions[#batch.actions + 1] = action
+        end
+    end
     ISTimedActionQueue.add(action)
     return action
 end
@@ -4116,6 +4324,133 @@ function Settlement.enqueueBorrowedReturn(handle)
         return nil, "cleanup_dependency"
     end
     return action, reason
+end
+
+-- A source-owned location-only batch needs no fabricated equipment effect.
+-- Validate the whole claim first; each actually earned member then has its own
+-- native return and failure notice, so one unavailable origin cannot hide peers.
+function returnBatch.enqueueClaimedReturns(expansion, handles)
+    local loans = returnBatch.borrowedSteps(handles, 2)
+    local record = expansion and operation(expansion.character, expansion.toolkitQueueOperation)
+    local owner = record and record.actions[expansion]
+    if not loans or not owner or not owner.returnClaims or #owner.returnClaims ~= #loans
+        or owner.claimedReturnsIssued or owner.returnClaim then return false end
+    local queue, proofs = record.queue, {}
+    local list, generation = queue.queue, queue.toolkitOperationGeneration or 0
+    for index, loan in ipairs(loans) do
+        local claim = owner.returnClaims[index]
+        local binding = loan.borrowing
+        if claim.loan ~= loan or not binding or binding.candidate.returnClaim ~= claim
+            or not claim.provider() or not claim.source() then return false end
+        if loan.state == "earned" and binding.candidate.phase == "active"
+            and not binding.candidate.returning and not binding.candidate.plannedReturn then
+            local proof = returnBatch.reserveClaimedReturn(expansion, loan, true, true)
+            if not proof then return false end
+            proofs[#proofs+1] = proof
+        elseif binding.candidate.phase ~= "waived" and binding.candidate.phase ~= "completed"
+            and not binding.candidate.returning and not binding.candidate.plannedReturn
+            and binding.candidate.returnSuccess then return false end
+    end
+    if queue.current ~= expansion or queue.queue[1] ~= expansion or not owner.started
+        or expansion._isAddingActions ~= true or not expansion.action or expansion.action:getTable() ~= expansion
+        or not requiredCleanup(expansion, true) then return false end
+    for _, proof in ipairs(proofs) do
+        if not proof.unchanged() or proof.candidate.returnSuccess ~= proof.reservation
+            or proof.candidate.phase ~= "active" or proof.claim.loan.borrowing.candidate ~= proof.candidate then return false end
+    end
+    if ISTimedActionQueue.queues[record.character] ~= queue or queue.character ~= record.character
+        or queue.queue ~= list or (queue.toolkitOperationGeneration or 0) ~= generation
+        or generation ~= record.generation or record.actions[expansion] ~= owner
+        or expansion.toolkitQueueOperation ~= record.token or expansion.character ~= record.character
+        or queue.current ~= expansion or list[1] ~= expansion then return false end
+    owner.claimedReturnsIssued = true
+    local plans = {}
+    local batch = {record=record, queue=queue, list=list, generation=generation, members={}, order={}, actions={}}
+    for _, proof in ipairs(proofs) do
+        local plan = {returnBatch=batch, candidate=proof.candidate, scope=proof.scope, loan=proof.claim.loan, record=record,
+            actor=record.character, queue=queue, list=queue.queue, generation=queue.toolkitOperationGeneration or 0,
+            previous={}, provider=proof.claim.provider, state="pending"}
+        proof.candidate.returnSuccess = plan
+        if proof.reservation then returnBatch.releaseReservation(owner, proof.reservation) end
+        plans[#plans+1] = plan
+    end
+    owner.claimedReturnPlans = plans
+    local actions = {}
+    for _, plan in ipairs(plans) do
+        local action = Settlement.enqueueBorrowedReturn(plan.loan.handle)
+        if action then actions[#actions+1] = action
+        elseif not returnSuccessBlocked(plan, "cleanup-return") then return false end
+    end
+    return true, actions
+end
+
+-- Only exact, individually admitted native returns from one issued location-only
+-- batch can cross a sibling's no-effect failure. This grants no capacity credit
+-- and does not admit, complete or retry either transfer.
+function Settlement.returnFailureBatchSibling(queue, action, other)
+    if not queue or action == other or not action or not other or action.character ~= queue.character
+        or other.character ~= queue.character or other.action or other.started then return false end
+    local record = operation(action.character, action.toolkitQueueOperation)
+    local step, sibling = record and record.actions[action], record and record.actions[other]
+    local planned, following = step and step.returning, sibling and sibling.returning
+    local batch = planned and planned.returnBatch
+    if not batch or not following or following.returnBatch ~= batch or batch.record ~= record
+        or batch.queue ~= queue or batch.list ~= queue.queue or batch.generation ~= (queue.toolkitOperationGeneration or 0)
+        or batch.members[action] ~= planned or batch.members[other] ~= following
+        or not batch.order[action] or not batch.order[other] or batch.order[action] >= batch.order[other]
+        or action.toolkitQueueOperation ~= record.token or other.toolkitQueueOperation ~= record.token
+        or ISTimedActionQueue.queues[record.character] ~= queue or queue.character ~= record.character then return false end
+    local seen, last, ownCount, nextCount = {}, 0, 0, 0
+    for _, member in ipairs(queue.queue) do
+        local order = batch.order[member]
+        if order then
+            if seen[member] or order <= last then return false end
+            seen[member], last = true, order
+        end
+        if member == action then ownCount = ownCount + 1 end
+        if member == other then nextCount = nextCount + 1 end
+    end
+    if ownCount ~= 1 or nextCount ~= 1 then return false end
+    for _, entry in ipairs({{action,step,planned},{other,sibling,following}}) do
+        local member, owner, debt = entry[1], entry[2], entry[3]
+        local plan, candidate = debt.returnPlan, debt.candidate
+        if not plan or plan.returnBatch ~= batch or candidate.returnSuccess ~= plan or plan.candidate ~= candidate
+            or plan.record ~= record or plan.loan ~= candidate.step or not debt.waivable
+            or debt.direction == "pickup" or candidate.phase ~= "active" or candidate.ambiguous
+            or candidate.plannedReturn ~= member or candidate.step.state ~= "earned"
+            or debt.scope ~= plan.scope or not borrowingLive(plan.scope) or not operationLive(plan.loan.operation)
+            or owner.operation ~= record or record.actions[member] ~= owner or owner.phase ~= "cleanup"
+            or not sameMember(member.item, debt.item) or member.srcContainer ~= debt.source or member.destContainer ~= debt.destination
+            or debt.source ~= candidate.destination or debt.destination ~= candidate.source
+            or member.item:getContainer() ~= debt.source or debt.source:getItemById(candidate.id) ~= member.item then return false end
+    end
+    -- Metadata and physical lookups above may reenter; end with private/public
+    -- identity checks that execute no inventory or source callback.
+    return batch.list == queue.queue and batch.generation == (queue.toolkitOperationGeneration or 0)
+        and ISTimedActionQueue.queues[record.character] == queue and record.actions[action] == step
+        and record.actions[other] == sibling and step.returning == planned and sibling.returning == following
+        and planned.returnPlan.candidate.returnSuccess == planned.returnPlan
+        and following.returnPlan.candidate.returnSuccess == following.returnPlan
+        and planned.candidate.phase == "active" and following.candidate.phase == "active"
+        and planned.candidate.plannedReturn == action and following.candidate.plannedReturn == other
+        and not other.action and not other.started and not sibling.started
+end
+
+function Settlement.enqueueClaimedReturns(expansion, handles)
+    local record = expansion and operation(expansion.character, expansion.toolkitQueueOperation)
+    local owner = record and record.actions[expansion]
+    if not owner or owner.claimedReturnsIssuing then return false end
+    owner.claimedReturnsIssuing = true
+    local ok, accepted, actions = pcall(returnBatch.enqueueClaimedReturns, expansion, handles)
+    owner.claimedReturnsIssuing = nil
+    if not ok then
+        for _, plan in ipairs(owner.claimedReturnPlans or {}) do
+            if plan.candidate.phase == "active" and not plan.candidate.plannedReturn and not plan.candidate.returning then
+                returnSuccessBlocked(plan, "cleanup-source")
+            end
+        end
+    end
+    return ok and accepted == true, ok and actions or nil
 end
 
 -- Called only after the current native step/Host receipt has settled. Pickup
@@ -4187,6 +4522,23 @@ function Settlement.finish(queue, request, discard)
             state.discarded = state.discarded + 1
         end
     end
+    local dormant = record.cancelReturnOwner
+    if dormant then
+        local member, owner = dormant.action, dormant.owner
+        local eligible, valid = false, record.actions[member] == owner and not owner.started and not member.action and not member.started
+        for _, queued in ipairs(queue.queue) do if queued == member then valid = false end end
+        for index, loan in ipairs(dormant.loans) do
+            local claim = owner.returnClaims[index]
+            local binding = loan.borrowing
+            local expected = binding and returns[binding.candidate.id]
+            if not claim or claim.loan ~= loan or not binding or binding.candidate.returnClaim ~= claim
+                or not claim.provider() or not claim.source() then valid = false end
+            if expected and not expected.ambiguous and expected.borrowed == binding.candidate then eligible = true end
+        end
+        if valid and eligible and dormant.watch() and retained(member, current, queue) == "operation-effect" and dormant.watch() then
+            cleanup[#cleanup+1] = {kind="cleanup", provider="operation-effect", action=member}
+        end
+    end
     -- The current effect is already native/authoritative. Only release its owned
     -- bookkeeping; never force-cancel it again or synthesize a compensating effect.
     discard(current, true)
@@ -4197,22 +4549,27 @@ function Settlement.finish(queue, request, discard)
     for _, obligation in ipairs(cleanup) do
         local member = obligation.action
         local original = record.actions[member]
-        local claim = original and original.returnClaim
+        local claims = original and (original.returnClaims or original.returnClaim and {original.returnClaim})
         local fresh = insert(queue, member, index)
-        if fresh and claim and obligation.provider == "operation-effect" then
-            local binding = claim.loan.borrowing
-            local candidate = binding.candidate
-            local expected = returns[candidate.id]
-            if expected and not expected.ambiguous and expected.borrowed == candidate
-                and claim.provider() and claim.source() and candidate.returnClaim == claim and not candidate.returnSuccess
-                and candidate.phase == "active" and not candidate.ambiguous and not candidate.returning and not candidate.plannedReturn
-                and claim.loan.state == "earned" and not member.action and not member.started and not fresh.started and fresh.operation.token == member.toolkitQueueOperation
-                and ISTimedActionQueue.queues[record.character] == queue and queue.queue[index] == member
-                and queue.current == current and queue.queue[1] == current then
-                reserveReturn(fresh, claim, binding.scope, candidate, member)
-                local drain = cancellation(queue)
-                if drain and drain.members[member] then drain.members[member].returnOwner = fresh end
-                returns[candidate.id] = nil
+        if fresh and claims and obligation.provider == "operation-effect" then
+            local batch = original.returnClaims ~= nil
+            if batch then fresh.returnClaims = claims end
+            for _, claim in ipairs(claims) do
+                local binding = claim.loan.borrowing
+                local candidate = binding.candidate
+                local expected = returns[candidate.id]
+                if expected and not expected.ambiguous and expected.borrowed == candidate
+                    and claim.provider() and claim.source() and candidate.returnClaim == claim and not candidate.returnSuccess
+                    and candidate.phase == "active" and not candidate.ambiguous and not candidate.returning and not candidate.plannedReturn
+                    and claim.loan.state == "earned" and not member.action and not member.started and not fresh.started
+                    and fresh.operation.token == member.toolkitQueueOperation
+                    and ISTimedActionQueue.queues[record.character] == queue and queue.queue[index] == member
+                    and queue.current == current and queue.queue[1] == current then
+                    reserveReturn(fresh, claim, binding.scope, candidate, member, batch)
+                    local drain = cancellation(queue)
+                    if drain and drain.members[member] then drain.members[member].returnOwner = fresh end
+                    returns[candidate.id] = nil
+                end
             end
         end
         state.obligations[#state.obligations + 1] = obligation

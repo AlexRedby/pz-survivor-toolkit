@@ -78,11 +78,41 @@ local function fixture(client,options,reused,episode)
     f.approach,f.pickup,f.reading,f.originalReturn=approach,pickup,reading,originalReturn
     local settlement=t.ActionQueueSettlement
     f.loan=assert(settlement.track(pickup,'prepare'))
+    f.loans,f.borroweds={f.loan},{f.borrowed}
+    if options.multi then
+        -- Test-owned generic producer topology: a genuine second native fetch
+        -- shares the operation; no automatic gameplay producer is qualified.
+        local source=f.source
+        if options.separateSources then
+            source={}
+            for key,value in pairs(f.source)do source[key]=value end
+            local bag=f.book(8106+offset,f.inventory)
+            for key,value in pairs(f.bag)do if key~='id'and key~='container'then bag[key]=value end end
+            bag.getInventory=function()return source end;bag.getItemContainer=bag.getInventory
+            source.owner=bag
+            f.secondSource=source
+        end
+        local item=f.book(8104+offset,source)
+        local second=e.ISInventoryTransferUtil.newInventoryTransferAction(f.player,item,source,f.inventory)
+        t.ActionQueueOperations.adopt(second,reading.toolkitQueueOperation)
+        local handle=assert(settlement.observePreparation(second,{
+            guard=function(action)return action==second and action.item==item end,
+            capture=function()return {source=item:getContainer()}end,
+            observed=function(_,before)return before.source==source and item:getContainer()==f.inventory end,
+        }))
+        t.BulkActions.guardTransfer(pickup)
+        t.BulkActions.guardTransfer(second)
+        e.ISTimedActionQueue.addAfter(pickup,second)
+        if options.partialLoan then q:removeFromQueue(second)end
+        f.secondPickup=second
+        f.loans[2],f.borroweds[2]=handle,item
+    end
+    f.paidCount=options.partialLoan and 1 or #f.loans
     assert(not settlement.earned(f.loan),'enqueue manufactured an earned loan')
     -- Replace only the pending native return in this disclosed test topology;
     -- no Keep or item/equipment effect is applied at this setup boundary.
     assert(q:indexOf(originalReturn)>1 and not originalReturn.action)
-    q:removeFromQueue(originalReturn)
+    if not options.keepBeforeCancel then q:removeFromQueue(originalReturn)end
     local nativeSource=sourceGuard(f)
     local expansion
     expansion=command(function()
@@ -90,17 +120,36 @@ local function fixture(client,options,reused,episode)
         if options.reserveDenied then
             assert(not settlement.reserveClaimedReturn(expansion,f.loan),'unclaimed expansion acquired fallback debt ownership')
         end
+        if options.multi and not options.direct then
+            for _,bad in ipairs({{f.loan},{f.loan,f.loan},{f.loan,{}}})do
+                assert(not settlement.reserveClaimedReturns(expansion,bad),
+                    'partial, duplicate or copied batch gained fallback debt ownership')
+            end
+            local getter=e.getActivatedMods
+            e.getActivatedMods=function()return {contains=function()return true end}end
+            assert(not settlement.reserveClaimedReturns(expansion,f.loans),'provider refusal partially reserved a batch')
+            e.getActivatedMods=getter
+            assert(settlement.reserveClaimedReturns(expansion,f.loans),'actual batch expansion lost its complete claim')
+            assert(settlement.reserveClaimedReturns(expansion,f.loans),'same batch reservation must remain idempotent')
+        end
         if options.reserve then
             assert(not settlement.reserveClaimedReturn(expansion,{}),'copied loan acquired fallback debt ownership')
             assert(not settlement.reserveClaimedReturn(f.tail,f.loan),'unrelated command acquired claimed loan')
             assert(settlement.reserveClaimedReturn(expansion,f.loan),'actual claimed expansion could not reserve its exact loan')
             assert(settlement.reserveClaimedReturn(expansion,f.loan),'same claimed expansion did not preserve its reservation')
         end
+        if options.direct then
+            local issued,rows=settlement.enqueueClaimedReturns(expansion,f.loans)
+            assert(issued,'actual direct expansion could not issue its paid subset')
+            f.returnedRows=rows
+            assert(not settlement.enqueueClaimedReturns(expansion,f.loans),'direct batch expansion replayed native returns')
+            return
+        end
         if options.abandonExpansion then f.abandoned=true;return end
         local restore=e.ISEquipWeaponAction:new(f.player,f.previous,50,true,false)
         t.ActionQueueOperations.adopt(restore,expansion.toolkitQueueOperation)
         assert(options.cancelBeforeExpansion and settlement.inheritCleanup(restore,expansion)
-            or not options.cancelBeforeExpansion and settlement.cleanup(restore,f.loan))
+            or not options.cancelBeforeExpansion and settlement.cleanupAfter(restore,f.loans))
         local specification={
             guard=function(action) return action==restore and action.item==f.previous and action.character==f.player end,
             capture=function()
@@ -120,28 +169,85 @@ local function fixture(client,options,reused,episode)
         end end
         f.restoreHandle=assert(settlement.observeCleanupEffect(restore,specification))
         f.restore=restore
+        f.restoreHandles={f.restoreHandle}
+        if options.multiEffects then
+            local secondary=f.book(8105+offset,f.inventory)
+            local nextRestore=e.ISEquipWeaponAction:new(f.player,secondary,50,false,false)
+            t.ActionQueueOperations.adopt(nextRestore,expansion.toolkitQueueOperation)
+            assert(options.cancelBeforeExpansion and settlement.inheritCleanup(nextRestore,expansion)
+                or not options.cancelBeforeExpansion and settlement.cleanupAfter(nextRestore,f.loans))
+            f.secondRestoreHandle=assert(settlement.observeCleanupEffect(nextRestore,{
+                guard=function(action)return action==nextRestore and action.item==secondary end,
+                capture=function()return {secondary=f.player:getSecondaryHandItem()}end,
+                observed=function(_,before)return before.secondary~=secondary and f.player:getSecondaryHandItem()==secondary end,
+                sourceGuard=nativeSource,
+            }))
+            f.restoreHandles[2]=f.secondRestoreHandle
+            f.secondRestore=nextRestore
+        end
         local continuation
         continuation=command(function()
             f.returnCalls=(f.returnCalls or 0)+1
-            f.returned=settlement.enqueueBorrowedReturn(f.loan)
+            if options.multi then
+                f.returnedRows={}
+                for _,handle in ipairs(f.loans)do
+                    f.returnedRows[#f.returnedRows+1]=assert(settlement.enqueueBorrowedReturn(handle))
+                end
+                f.returned=f.returnedRows[1]
+            else f.returned=settlement.enqueueBorrowedReturn(f.loan)end
         end)
         t.ActionQueueOperations.adopt(continuation,expansion.toolkitQueueOperation)
         assert(options.cancelBeforeExpansion and settlement.inheritCleanup(continuation,expansion)
-            or not options.cancelBeforeExpansion and settlement.cleanup(continuation,f.loan))
+            or not options.cancelBeforeExpansion and settlement.cleanupAfter(continuation,f.loans))
         f.continuation=continuation
         if options.enrolled~=false then
-            assert(settlement.requireBorrowedReturnSuccess(f.loan,{f.restoreHandle},continuation))
+            if options.multi then
+                for _,bad in ipairs({{f.loan},{f.loan,f.loan},{f.loan,{}}})do
+                    assert(not settlement.requireBorrowedReturnsSuccess(bad,{f.restoreHandle},continuation),
+                        'partial, duplicate or copied loan batch gained continuation authority')
+                end
+                assert(not settlement.requireBorrowedReturnsSuccess(f.loans,{f.restoreHandle,f.restoreHandle},continuation),
+                    'duplicate effect dependencies enrolled a shared continuation')
+                local input={}
+                for index,handle in ipairs(f.loans)do input[index]=handle end
+                local dependencies={}
+                for index,handle in ipairs(f.restoreHandles)do dependencies[index]=handle end
+                assert(settlement.requireBorrowedReturnsSuccess(input,dependencies,continuation))
+                input[2],input[1]=nil,{}
+                dependencies[2],dependencies[1]=nil,{}
+                assert(not settlement.requireBorrowedReturnsSuccess(f.loans,{f.restoreHandle},continuation),
+                    'same batch enrolled the same continuation twice')
+            else assert(settlement.requireBorrowedReturnSuccess(f.loan,{f.restoreHandle},continuation))end
         end
         e.ISTimedActionQueue.add(restore)
+        if f.secondRestore then e.ISTimedActionQueue.add(f.secondRestore)end
         e.ISTimedActionQueue.add(continuation)
         if options.beforeAdmission then options.beforeAdmission(f) end
     end)
     t.ActionQueueOperations.adopt(expansion,reading.toolkitQueueOperation)
-    assert(settlement.cleanup(expansion,f.loan))
-    if (options.cancelBeforeExpansion or options.claim) and not options.unclaimed then
+    assert(settlement.cleanupAfter(expansion,f.loans))
+    if options.multi then
+        for _,bad in ipairs({{f.loan},{f.loan,f.loan},{f.loan,{}}})do
+            assert(not settlement.claimBorrowedReturns(expansion,bad),
+                'partial, duplicate or copied batch gained future return ownership')
+        end
+        local getter=e.getActivatedMods
+        e.getActivatedMods=function()return {contains=function()return true end}end
+        assert(not settlement.claimBorrowedReturns(expansion,f.loans),'provider refusal partially claimed a batch')
+        e.getActivatedMods=getter
+        local input={f.loans[1],f.loans[2]}
+        assert(settlement.claimBorrowedReturns(expansion,input),'complete batch failed to claim its future returns')
+        input[2],input[1]=nil,{}
+        assert(not settlement.claimBorrowedReturns(expansion,f.loans),'batch claim replay was accepted')
+    end
+    if not options.multi and (options.cancelBeforeExpansion or options.claim) and not options.unclaimed then
         assert(settlement.claimBorrowedReturn(expansion,f.loan))
     end
-    t.ActionQueueOperations.runWith(reading.toolkitQueueOperation,function() e.ISTimedActionQueue.add(expansion) end)
+    if options.dormant then
+        assert(settlement.onCancelBorrowedReturns(expansion,f.loans),'dormant cleanup registration was refused')
+        assert(not settlement.onCancelBorrowedReturns(expansion,f.loans),'dormant cleanup registration replayed')
+        assert(q:indexOf(expansion)==-1 and allocations(f,expansion)==0,'dormant registration scheduled native work')
+    else t.ActionQueueOperations.runWith(reading.toolkitQueueOperation,function() e.ISTimedActionQueue.add(expansion) end)end
     f.expansion=expansion
     e.ISInventoryPaneContextMenu.readItem(f.book(8103+offset,f.inventory),0)
     f.tail=q.queue[#q.queue]
@@ -154,17 +260,22 @@ local function fixture(client,options,reused,episode)
         -- retained cleanup must still restore an actual different hand item.
         local equip=e.ISEquipWeaponAction:new(f.player,f.borrowed,50,true,false)
         t.ActionQueueOperations.adopt(equip,reading.toolkitQueueOperation)
-        e.ISTimedActionQueue.addAfter(pickup,equip)
+        e.ISTimedActionQueue.addAfter(f.secondPickup or pickup,equip)
         f.preparationEquip=equip
     end
     f.dispatch(pickup,'perform')
+    if options.multi and not options.partialLoan then
+        assert(q.current==f.secondPickup,'second native fetch must precede body and owned restoration')
+        f.start(f.secondPickup);f.deliver(f.secondPickup);f.dispatch(f.secondPickup,'perform')
+        assert(settlement.earned(f.loans[2]) and f.borroweds[2]:getContainer()==f.inventory)
+    end
     if options.cancelBeforeExpansion then
         assert(q.current==f.preparationEquip)
         finish(f,f.preparationEquip)
         assert(f.player:getPrimaryHandItem()==f.borrowed)
     end
     assert(q.current==reading and settlement.earned(f.loan) and loanState(f)=='active'
-        and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1,'genuine native fetch did not earn its exact loan')
+        and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+f.paidCount,'genuine native fetch did not earn its exact loan')
     if not options.alreadyHeld and not options.cancelBeforeExpansion then
         -- A genuine native preparation equip, not a test hand write, establishes
         -- the different current primary that the cleanup is meant to restore.
@@ -174,6 +285,13 @@ local function fixture(client,options,reused,episode)
         f.preparationEquip=equip
     end
     f.start(reading)
+    if options.keepBeforeCancel then
+        local kept,reason=t.ActionQueue.cancel(q,originalReturn)
+        assert(kept,'native pending Keep was refused before batch cancellation: '..tostring(reason))
+        assert(q.current==reading and q:indexOf(originalReturn)==-1 and loanState(f)=='waived'
+            and f.borrowed:getContainer()==f.inventory and allocations(f,originalReturn)==0,
+            'native Keep rewrote another loan or performed a location effect')
+    end
     if options.cancelBeforeExpansion then
         local originalToken=reading.toolkitQueueOperation
         local accepted,reason=t.ActionQueue.cancelOperation(q,reading)
@@ -186,7 +304,7 @@ local function fixture(client,options,reused,episode)
             and expansion.toolkitQueueOperation~=originalToken
             and settlement.requiredStep(expansion) and settlement.isCleanup(expansion)
             and not f.tail.toolkitQueueOperation.toolkitCancelled
-            and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1,
+            and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+f.paidCount,
             'future return owner lost retained cleanup or synthesized an eager return')
         f.canceledToken=originalToken
         if options.unclaimed then
@@ -200,12 +318,17 @@ local function fixture(client,options,reused,episode)
         finish(f,f.preparationEquip)
         assert(f.player:getPrimaryHandItem()==f.borrowed,'native preparation equip did not change the real hand')
     end
+    if options.dormant and not options.cancelBeforeExpansion then
+        assert(q.current==f.tail and q:indexOf(expansion)==-1 and allocations(f,expansion)==0
+            and not f.returnedRows,'dormant cancellation owner executed during ordinary completion')
+        return f
+    end
     assert(q.current==expansion)
     if options.reserve then
         assert(not settlement.reserveClaimedReturn(expansion,f.loan),'claim was reserved outside its actual expansion')
     end
     f.start(expansion);f.dispatch(expansion,'perform')
-    if options.abandonExpansion then return f end
+    if options.abandonExpansion or options.direct then return f end
     if options.heldVeto then
         assert(q.current==f.restore and allocations(f,f.restore)==0 and allocations(f,f.continuation)==0)
     elseif options.veto then
@@ -230,6 +353,224 @@ local function tail(f)
     assert(allocations(f,f.tail)==1)
     f.start(f.tail);f.dispatch(f.tail,'perform')
     assert(#q.queue==0 and f.borrowed:getContainer()==f.inventory and #f.effects==f.initialEffects+1)
+end
+
+-- Generic batch plumbing uses the actual Queue.begin, native transfer/equip
+-- callbacks and full observer/receipt lifecycle. Its extra fetch and cleanup
+-- commands are explicit test topology, not a claimed automatic game producer.
+local function batchStates(f,expected)
+    local seen={}
+    for _,loan in ipairs(assert(f.t.ActionQueueSettlement.operationState(f.reading)).borrowings)do
+        seen[loan.id]=loan.state
+    end
+    for _,item in ipairs(f.borroweds)do
+        assert(seen[item:getID()]==expected,'a batch member lost its independent exact loan state')
+    end
+end
+local function batchDebts(f)
+    local notices=f.t.ActionQueueSettlement.blockedReturns(f.player)
+    local wanted={}
+    for _,item in ipairs(f.borroweds)do wanted[item:getID()]=item end
+    assert(#notices==#f.borroweds,'shared cleanup failure lost an exact unpaid batch member: '..tostring(f.batchLabel)..' notices='..#notices)
+    for _,notice in ipairs(notices)do
+        local item=assert(wanted[notice.itemId],'batch debt was duplicated or rebound')
+        assert(notice.itemType==item:getFullType() and notice.state=='blocked'
+            and item:getContainer()==f.inventory,'failed shared cleanup moved or rebound an unpaid item')
+        wanted[notice.itemId]=nil
+    end
+    assert(next(wanted)==nil and f.returnCalls==nil and not f.returnedRows
+        and allocations(f,f.continuation)==0 and #f.effects==f.initialEffects+#f.loans,
+        'failed shared cleanup issued its dependent continuation or native returns')
+    batchStates(f,'active')
+    return notices
+end
+for _,client in ipairs({false,true})do
+    for _,canceled in ipairs({false,true})do
+        local f=fixture(client,{multi=true,cancelBeforeExpansion=canceled})
+        local settlement,q=f.t.ActionQueueSettlement,f.queue
+        batchStates(f,'active')
+        finish(f,f.restore)
+        assert(q.current==f.continuation and settlement.earned(f.restoreHandle)
+            and allocations(f,f.continuation)==1,'successful shared restore did not release its one continuation')
+        f.start(f.continuation);f.dispatch(f.continuation,'perform')
+        assert(f.returnCalls==1 and #f.returnedRows==#f.loans
+            and q.queue[#q.queue]==f.tail,'shared continuation lost a loan or independent native tail')
+        for index,row in ipairs(f.returnedRows)do
+            assert(q.current==row and row.item==f.borroweds[index]
+                and row.srcContainer==f.inventory and row.destContainer==f.source
+                and allocations(f,row)==1,'batch return lost its exact native item/endpoints')
+            f.start(row);f.deliver(row);f.dispatch(row,'perform')
+        end
+        batchStates(f,'completed')
+        assert(q.current==f.tail and not f.tail.toolkitQueueOperation.toolkitCancelled
+            and #settlement.blockedReturns(f.player)==0 and #f.effects==f.initialEffects+2*#f.loans)
+        for _,item in ipairs(f.borroweds)do assert(item:getContainer()==f.source)end
+        f.start(f.tail);f.dispatch(f.tail,'perform')
+        assert(#q.queue==0 and f.returnCalls==1,'independent tail replayed a completed batch return')
+
+        local partial=fixture(client,{multi=true,multiEffects=true,cancelBeforeExpansion=canceled})
+        finish(partial,partial.restore)
+        assert(partial.queue.current==partial.secondRestore and partial.t.ActionQueueSettlement.earned(partial.restoreHandle)
+            and not partial.t.ActionQueueSettlement.earned(partial.secondRestoreHandle)
+            and allocations(partial,partial.continuation)==0,
+            'only a paid prefix of shared cleanup released the entire batch continuation')
+        partial.start(partial.secondRestore);partial.secondRestore:forceStop();partial.stop(partial.secondRestore,true)
+        if client then
+            assert(partial.queue.current==partial.secondRestore and allocations(partial,partial.continuation)==0)
+            partial.acknowledge(partial.secondRestore,'canceled');partial.queue:tick()
+        end
+        partial.batchLabel=tostring(client)..':'..tostring(canceled)..':partial-effect'
+        batchDebts(partial)
+        assert(partial.t.ActionQueueSettlement.earned(partial.restoreHandle)
+            and not partial.t.ActionQueueSettlement.earned(partial.secondRestoreHandle)
+            and partial.queue.current==partial.tail,'failed second dependency rewrote its already-earned predecessor')
+        partial.start(partial.tail);partial.dispatch(partial.tail,'perform')
+        assert(#partial.queue.queue==0 and #partial.effects==#partial.loans)
+
+        for _,failure in ipairs({'admission','stopped','abandoned'})do
+            local options={multi=true,cancelBeforeExpansion=canceled}
+            if failure=='admission'then options.veto=true;options.admit=function()return false end
+            elseif failure=='abandoned'then options.abandonExpansion=true end
+            local failed=fixture(client,options)
+            if failure=='stopped'then
+                failed.start(failed.restore);failed.restore:forceStop();failed.stop(failed.restore,true)
+                if client then
+                    assert(failed.queue.current==failed.restore and allocations(failed,failed.tail)==0,
+                        'stopped shared restore advanced before its exact Host terminal')
+                    failed.acknowledge(failed.restore,'canceled');failed.queue:tick()
+                end
+            end
+            failed.batchLabel=tostring(client)..':'..tostring(canceled)..':'..failure
+            local before=batchDebts(failed)
+            assert(failed.queue.current==failed.tail and allocations(failed,failed.tail)==1
+                and not failed.tail.toolkitQueueOperation.toolkitCancelled,
+                'failed batch cleanup discarded its independent native tail')
+            failed.start(failed.tail);failed.dispatch(failed.tail,'perform')
+            local after=failed.t.ActionQueueSettlement.blockedReturns(failed.player)
+            assert(#failed.queue.queue==0 and #after==#before and #failed.effects==#failed.loans)
+            for index,notice in ipairs(before)do assert(after[index].id==notice.id)end
+        end
+    end
+end
+
+-- A no-effect continuation returns only paid loans. Pending Keep and a full
+-- source retain independent per-item outcomes; dormant cancellation ownership
+-- must stay absent from the normal queue until an actual cancellation occurs.
+for _,client in ipairs({false,true})do
+    local partial=fixture(client,{multi=true,direct=true,partialLoan=true,alreadyHeld=true})
+    assert(#partial.returnedRows==1 and partial.queue.current==partial.returnedRows[1]
+        and partial.returnedRows[1].item==partial.borroweds[1]
+        and not partial.t.ActionQueueSettlement.earned(partial.loans[2])
+        and partial.borroweds[2]:getContainer()==partial.source,
+        'direct cleanup returned an unpaid loan or omitted its paid member')
+    local row=partial.returnedRows[1]
+    partial.start(row);partial.deliver(row);partial.dispatch(row,'perform')
+    assert(partial.queue.current==partial.tail and #partial.effects==2)
+    partial.start(partial.tail);partial.dispatch(partial.tail,'perform')
+    assert(#partial.queue.queue==0 and #partial.t.ActionQueueSettlement.blockedReturns(partial.player)==0)
+
+    local full=fixture(client,{multi=true,direct=true,alreadyHeld=true})
+    local t,q=full.t,full.queue;local first,second=unpack(full.returnedRows)
+    assert(q.current==first and q:indexOf(second)>1 and not second.action)
+    full.start(first);full.deliver(first);full.dispatch(first,'perform')
+    assert(q.current==second and full.borroweds[1]:getContainer()==full.source)
+    full.source.room=false
+    assert(second:isValid()==false,'full source did not reject the genuine second native return')
+    full.remove(second);q:tick()
+    local notices=t.ActionQueueSettlement.blockedReturns(full.player)
+    assert(q.current==full.tail and #notices==1 and notices[1].itemId==full.borroweds[2]:getID()
+        and full.borroweds[1]:getContainer()==full.source and full.borroweds[2]:getContainer()==full.inventory
+        and not full.tail.toolkitQueueOperation.toolkitCancelled and #full.effects==3,
+        'full origin lost its exact unpaid member or blocked the independent tail after a paid return')
+    full.start(full.tail);full.dispatch(full.tail,'perform')
+    assert(#q.queue==0 and #full.effects==3,'independent tail replayed a refused batch return')
+
+    -- Distinct origins prove refusal isolation is tied to the exact claimed
+    -- sibling, rather than a same-destination or transfer-kind shortcut.
+    local firstFull=fixture(client,{multi=true,direct=true,separateSources=true,alreadyHeld=true})
+    local settlement,queue=firstFull.t.ActionQueueSettlement,firstFull.queue
+    local refused,sibling=unpack(firstFull.returnedRows)
+    assert(queue.current==refused and sibling.destContainer==firstFull.secondSource
+        and refused.destContainer==firstFull.source and not sibling.action)
+    firstFull.source.room=false
+    assert(not refused:isValid(),'full first origin did not refuse native admission')
+    firstFull.remove(refused);queue:tick()
+    local unpaid=settlement.blockedReturns(firstFull.player)
+    assert(queue.current==sibling and #unpaid==1 and unpaid[1].itemId==firstFull.borroweds[1]:getID()
+        and firstFull.borroweds[1]:getContainer()==firstFull.inventory and allocations(firstFull,sibling)==1
+        and not firstFull.tail.toolkitQueueOperation.toolkitCancelled,
+        'first full origin lost exact debt or discarded its independently owned sibling return')
+    firstFull.start(sibling);firstFull.deliver(sibling);firstFull.dispatch(sibling,'perform')
+    assert(queue.current==firstFull.tail and firstFull.borroweds[2]:getContainer()==firstFull.secondSource
+        and firstFull.borroweds[1]:getContainer()==firstFull.inventory and #firstFull.effects==3,
+        'valid sibling did not retain its exact native return after another origin refused admission')
+    firstFull.start(firstFull.tail);firstFull.dispatch(firstFull.tail,'perform')
+    local after=settlement.blockedReturns(firstFull.player)
+    assert(#queue.queue==0 and #after==1 and after[1].id==unpaid[1].id and #firstFull.effects==3,
+        'independent tail retried the refused first return or lost its exact debt')
+
+    local boundaries=fixture(client,{multi=true,direct=true,separateSources=true,alreadyHeld=true})
+    local e,t,q=boundaries.env,boundaries.t,boundaries.queue
+    local first,sibling=unpack(boundaries.returnedRows)
+    assert(t.ActionQueuePolicy.returnFailureIndependent(q,first),'exact claimed sibling did not qualify refusal isolation')
+    local source,destination=sibling.srcContainer,sibling.destContainer
+    sibling.srcContainer,sibling.destContainer=destination,source
+    assert(not t.ActionQueuePolicy.returnFailureIndependent(q,first),'reverse movement inherited claimed sibling failure isolation')
+    sibling.srcContainer,sibling.destContainer=source,destination
+    local token=sibling.toolkitQueueOperation
+    sibling.toolkitQueueOperation={}
+    assert(not t.ActionQueuePolicy.returnFailureIndependent(q,first),'foreign operation token inherited claimed sibling failure isolation')
+    sibling.toolkitQueueOperation=token
+    local foreign=e.ISInventoryTransferUtil.newInventoryTransferAction(boundaries.player,boundaries.book(8199,boundaries.inventory),
+        boundaries.inventory,boundaries.secondSource)
+    foreign:setAllowMissingItems(true)
+    t.ActionQueueOperations.adopt(foreign,token);t.BulkActions.guardTransfer(foreign)
+    q.queue[2]=foreign
+    assert(not t.ActionQueuePolicy.returnFailureIndependent(q,first),'unclaimed native transfer inherited a sibling location capability')
+    q.queue[2]=sibling
+    table.insert(q.queue,3,sibling)
+    assert(not t.ActionQueuePolicy.returnFailureIndependent(q,first),'duplicate sibling queue row qualified refusal isolation')
+    table.remove(q.queue,3)
+    assert(t.ActionQueuePolicy.returnFailureIndependent(q,first),'rejected foreign suffix poisoned the untouched claimed batch')
+    for _,row in ipairs(boundaries.returnedRows)do
+        boundaries.start(row);boundaries.deliver(row);boundaries.dispatch(row,'perform')
+    end
+    boundaries.start(boundaries.tail);boundaries.dispatch(boundaries.tail,'perform')
+    assert(#q.queue==0 and #boundaries.effects==4)
+
+    local kept=fixture(client,{multi=true,direct=true,dormant=true,cancelBeforeExpansion=true,keepBeforeCancel=true})
+    assert(#kept.returnedRows==1 and kept.returnedRows[1].item==kept.borroweds[2]
+        and kept.borroweds[1]:getContainer()==kept.inventory and allocations(kept,kept.originalReturn)==0,
+        'batch cancellation resurrected the explicitly kept native loan')
+    local returned=kept.returnedRows[1]
+    kept.start(returned);kept.deliver(returned);kept.dispatch(returned,'perform')
+    local states={}
+    for _,loan in ipairs(kept.t.ActionQueueSettlement.operationState(kept.reading).borrowings)do states[loan.id]=loan.state end
+    assert(states[kept.borroweds[1]:getID()]=='waived'and states[kept.borroweds[2]:getID()]=='completed'
+        and kept.borroweds[1]:getContainer()==kept.inventory and kept.borroweds[2]:getContainer()==kept.source
+        and #kept.effects==3 and #kept.t.ActionQueueSettlement.blockedReturns(kept.player)==0,
+        'dormant cancellation cleanup changed the native Keep or omitted its independent paid loan')
+    assert(kept.queue.current==kept.tail)
+    kept.start(kept.tail);kept.dispatch(kept.tail,'perform');assert(#kept.queue.queue==0)
+
+    for _,canceled in ipairs({false,true})do
+        local f=fixture(client,{multi=true,direct=true,dormant=true,cancelBeforeExpansion=canceled,alreadyHeld=true})
+        if canceled then
+            assert(#f.returnedRows==#f.loans and f.expansion.toolkitQueueOperation~=f.canceledToken
+                and allocations(f,f.expansion)==1,'cancellation did not activate its one dormant native cleanup owner')
+            for _,returned in ipairs(f.returnedRows)do
+                assert(f.queue.current==returned)
+                f.start(returned);f.deliver(returned);f.dispatch(returned,'perform')
+            end
+            batchStates(f,'completed')
+        else
+            batchStates(f,'active')
+            assert(not f.returnedRows and #f.effects==#f.loans and allocations(f,f.expansion)==0)
+        end
+        assert(f.queue.current==f.tail)
+        f.start(f.tail);f.dispatch(f.tail,'perform')
+        assert(#f.queue.queue==0)
+    end
 end
 
 -- A private opt-in gate runs before Java can allocate the cleanup. Refusal
