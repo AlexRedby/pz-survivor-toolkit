@@ -141,6 +141,19 @@ settlement.beginIndependentRestoration=callback('ActionQueueSettlement.lua',nil,
     return true
 end)
 settlement.earned=callback('ActionQueueSettlement.lua',nil,function(handle) return handle.paid==true end)
+-- Group cancellation remains owned by the editor's existing cleanup command.
+-- These source-tagged doubles only let an editor-enabled producer bind it.
+local operations={
+    command=function(actor,fn) return {character=actor,addActionsFunction=fn} end,
+    adopt=function(action,token) action.toolkitQueueOperation=token end,
+    isCommand=function() return true end,
+}
+PZSurvivorToolkit.ActionQueueOperations=operations
+definitions.registerBehavior=function() end
+settlement.enqueueClaimedReturns=callback('ActionQueueSettlement.lua')
+settlement.cleanupAfter=callback('ActionQueueSettlement.lua')
+settlement.claimBorrowedReturns=callback('ActionQueueSettlement.lua')
+settlement.onCancelBorrowedReturns=callback('ActionQueueSettlement.lua')
 local restored={}
 ISCraftingUI.ReturnItemToContainer=callback('ISCraftingUI.lua',15,function(actor,item,destination)
     assert(actor==player and item:getContainer()==root)
@@ -154,6 +167,7 @@ local function movementFixture(options)
     options=options or {}
     enabled=options.enabled==true
     queue.queue={};queue.current=nil;queue.toolkitOperationGeneration=0
+    queue.toolkitCancel=nil;queue.toolkitGroupCancel=nil
     player.moving=false;player.nativeActive=false;player.dead=false
     inventoryItems={}
     local item,selection,sourceContainer=tool(20)
@@ -173,9 +187,11 @@ local function movementFixture(options)
     local beforeHandle=#handles
     observation.pickup(pickup)
     local handle=assert(handles[beforeHandle+1],'independent pickup was not observed')
-    local episode=assert(restorationEpisodes[#restorationEpisodes])
-    assert(episode.action==pickup and not Loans.ownsPickup(episode.episode,pickup),
-        'producer ownership escaped its synchronous pickup boundary')
+    if not enabled then
+        local episode=assert(restorationEpisodes[#restorationEpisodes])
+        assert(episode.action==pickup and not Loans.ownsPickup(episode.episode,pickup),
+            'producer ownership escaped its synchronous pickup boundary')
+    end
     local otherHandle
     if other then
         observation.pickup({Type='ISInventoryTransferAction',character=player,item=other,
@@ -204,7 +220,12 @@ end
 local function finishNativeStop()
     -- Native reset wipes Lua first, then its caller wipes Java. Deferring only
     -- until the Lua queue is empty would still start work inside the old clear.
-    for i=#queue.queue,1,-1 do queue.queue[i]=nil end;queue.current=nil
+    for i=#queue.queue,1,-1 do
+        local token=queue.queue[i].toolkitQueueOperation
+        if token then token.toolkitCancelled=true end
+        queue.queue[i]=nil
+    end
+    queue.current=nil
     queue.toolkitOperationGeneration=queue.toolkitOperationGeneration+1
     tick()
     player.nativeActive=false;player.moving=false
@@ -285,5 +306,60 @@ for _,progress in ipairs({0,1}) do
     Loans.movementStopped(fixture.body,queue);finishNativeStop()
     assert(#restored==restoredBefore,'unstarted or completed craft acquired movement cleanup')
 end
+-- Editor reset invalidates operation tokens as well as incrementing the
+-- generation. A native walk still owes the exact earned return after that reset.
+fixture=movementFixture({enabled=true})
+restoredBefore=#restored
+Loans.movementStopped(fixture.body,queue);finishNativeStop()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.item,
+    'editor token invalidation lost the paid native walk return')
+-- Editor reordering retains exact native rows and their edited return order.
+fixture=movementFixture({enabled=true,multiple=true})
+restoredBefore=#restored
+queue.queue[2],queue.queue[3]=queue.queue[3],queue.queue[2]
+Loans.movementStopped(fixture.body,queue);finishNativeStop()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.other
+    and restored[#restored].destination==fixture.otherSource,'edited first return lost its queue order')
+queue.queue[1]=nil;queue.current=nil;tick()
+assert(#restored==restoredBefore+2 and restored[#restored].item==fixture.item
+    and restored[#restored].destination==fixture.source,'edited second return lost its queue order')
+queue.queue[1]=nil;queue.current=nil;tick();tick()
+assert(#restored==restoredBefore+2,'reordered native returns repeated an original tool')
+-- Individual Keep removes its original return row before a later walk. The
+-- untouched sibling remains owed after shifting into the removed row's slot.
+fixture=movementFixture({enabled=true,multiple=true})
+restoredBefore=#restored
+table.remove(queue.queue,2)
+Loans.movementStopped(fixture.body,queue);finishNativeStop()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.other
+    and restored[#restored].destination==fixture.otherSource,
+    'individual Keep lost the shifted sibling or revived the removed return')
+queue.queue={};queue.current=nil;tick()
+assert(#restored==restoredBefore+1,'individual Keep was undone by a later restoration tick')
+-- An equivalent-looking replacement is not the captured native return. It
+-- cannot acquire the absent row's loan or hide the surviving original sibling.
+fixture=movementFixture({enabled=true,multiple=true})
+restoredBefore=#restored
+queue.queue[2]={Type=fixture.row.Type,character=player,item=fixture.item,srcContainer=root,
+    destContainer=fixture.source,allowMissingItems=true,toolkitQueueOperation=fixture.body.toolkitQueueOperation}
+Loans.movementStopped(fixture.body,queue);finishNativeStop()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.other,
+    'replacement row acquired the removed native return loan')
+-- A stopped body from explicit editor cancellation is not a native walk, even
+-- if the movement input happens to be held during the stop callback.
+for _,intent in ipairs({'action','group'}) do
+    fixture=movementFixture({enabled=true,multiple=true})
+    restoredBefore=#restored
+    fixture.body.toolkitQueueOperation.toolkitCancelled=true
+    if intent=='group' then queue.toolkitGroupCancel={action=fixture.body}
+    else queue.toolkitCancel=fixture.body end
+    Loans.movementStopped(fixture.body,queue);finishNativeStop()
+    assert(#restored==restoredBefore,'explicit editor cancellation acquired native walk restoration')
+end
+fixture=movementFixture({enabled=true})
+restoredBefore=#restored
+player.moving=false
+Loans.movementStopped(fixture.body,queue);finishNativeStop()
+assert(#restored==restoredBefore,'unrelated idle clear acquired native walk restoration')
 enabled=true
 print('Craft loan producer checks passed: exact pickups, independent disabled-editor restoration, paid native movement stop, refusal and duplicate boundaries.')

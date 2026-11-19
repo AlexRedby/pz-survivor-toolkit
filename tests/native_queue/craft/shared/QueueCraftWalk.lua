@@ -4,13 +4,17 @@ local config=require 'QueueTestSelection'
 local F=require 'QueueCraftFixture'
 local JSON=require 'QueueHealthEvents'
 local T=PZSurvivorToolkit
+local editorEnabled=config.mode=='toolkit'
 local step,phase,since,started,done=1,'prepare',0,false,false
 local state,ids,current,tail,receipt,walk,readySince,settledSince
 local picked,returned,starts,seenReturns={},{},{},{}
 local progress,tailProgress,stopped,idle=false,false,false,0
 local bodyEvidence,originalRows,stopEvidence
+local eventTrace,keepEvidence={},nil
 local diagnose
 local function case()return config.cases[step]end
+local function keeping()return case()=='walk-editor-keep-saw'end
+local function trace(event)if editorEnabled then eventTrace[#eventTrace+1]=event end end
 local function walking()return case()~='complete-pinned-tools'end
 local function q()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function sorted(set)local a={};for id in pairs(set)do a[#a+1]=id end;table.sort(a);return a end
@@ -63,7 +67,7 @@ end
 craftWalkStopped=function(action,ok)
  if action~=current then return end
  assert(ok and walking()and walk and not stopped,'unexpected or repeated native craft stop')
- stopped=true;walk.stoppedAt=getTimestampMs()
+ trace('native-stop');stopped=true;walk.stoppedAt=getTimestampMs()
  stopEvidence={x=getPlayer():getX(),y=getPlayer():getY(),queue=rows(),native=tostring(action.action),ok=ok}
 end
 require('QueuePreflight').onGameStart(Events,function()
@@ -94,6 +98,7 @@ local function enqueue(player)
   choices[index]={amount=1,resourceIds={item:getID()},generated=0,fullType=item:getFullType()};initial[item:getID()]=true
  end
  logic:canPerformCurrentRecipe();if not logic:canPerformCurrentRecipe()then return false end
+ assert(T.Settings.craftChains(),'craft chains disabled')
  assert(T.CraftChainRecipes.enqueue(player,{steps={{recipe={native=recipe,inputs=inputs},inputs=choices}},initialIds=initial},{player=player}),
   'real pinned producer refused')
  state.book:setAlreadyReadPages(state.book:getNumberOfPages()-1)
@@ -114,10 +119,15 @@ local function transfers(action)
  for _,item in ipairs(items)do for i,id in ipairs(ids.tools)do
   if item:getID()==id then
    local source=state.bags[i]:getItemContainer()
-   if action.srcContainer==source and action.destContainer==state.root then picked[id]=true end
+   if action.srcContainer==source and action.destContainer==state.root then
+    if not picked[id]then trace(i==1 and 'pickup-saw'or 'pickup-drill')end
+    picked[id]=true
+   end
    if action.srcContainer==state.root and action.destContainer==source then
     seenReturns[action]=seenReturns[action]or {}
-    if not seenReturns[action][id]then starts[#starts+1]=id;seenReturns[action][id]=true end
+    if not seenReturns[action][id]then
+     trace(i==1 and 'return-saw'or 'return-drill');starts[#starts+1]=id;seenReturns[action][id]=true
+    end
     returned[id]=true
    end
   end
@@ -127,10 +137,10 @@ local function returnsFinished()
  local seen={}
  for _,id in ipairs(starts)do
   assert(not seen[id],'native return started more than once for exact tool');seen[id]=true
-  assert(id~=ids.tools[1]or case()~='walk-pinned-full','blocked source received forbidden return')
+  assert(id~=ids.tools[1]or(case()~='walk-pinned-full'and case()~='walk-editor-keep-saw'),'retained saw received forbidden return')
  end
  for i,id in ipairs(ids.tools)do
-  local blocked=case()=='walk-pinned-full'and i==1
+  local blocked=(case()=='walk-pinned-full'or case()=='walk-editor-keep-saw')and i==1
   local item=state.root:getItemById(id)
   if blocked then
    assert(not returned[id],'blocked source received forbidden transfer progress')
@@ -139,6 +149,32 @@ local function returnsFinished()
    or item:getContainer()~=state.bags[i]:getItemContainer()then return false end
  end
  return true
+end
+local function keepSaw()
+ local pending={}
+ for _,action in ipairs(q().queue)do
+  if action.Type=='ISInventoryTransferAction'and action.allowMissingItems and action.srcContainer==state.root then
+   for i,id in ipairs(ids.tools)do
+    if action.item:getID()==id then
+     assert(not pending[i]and action.destContainer==state.bags[i]:getItemContainer(),'pending return identity/source changed')
+     pending[i]=action
+    end
+   end
+  end
+ end
+ local saw,drill=assert(pending[1],'pending saw row missing'),assert(pending[2],'pending drill row missing')
+ assert(not saw.action and not drill.action and not saw.started and not drill.started,'return already issued')
+ local native,token=current.action,current.toolkitQueueOperation
+ assert(native and token and tail.toolkitQueueOperation~=token,'current craft/independent reader scope differs')
+ local delta=current:getJobDelta()
+ local allowed,reason=T.ActionQueue.cancel(q(),saw);assert(allowed,reason)
+ assert(q():indexOf(saw)==-1 and q():indexOf(drill)>1 and q().current==current and q().queue[1]==current
+  and current.action==native and current.toolkitQueueOperation==token and not token.toolkitCancelled,
+  'Keep altered active craft or sibling pending return')
+ assert(state.root:getItemById(ids.tools[1]):getContainer()==state.root,'Keep moved exact saw')
+ keepEvidence={keptId=ids.tools[1],keptSourceId=ids.bags[1],siblingId=ids.tools[2],siblingSourceId=ids.bags[2],
+  keepSucceeded=true,keptRowPending=true,keptRowRemoved=true,siblingPreserved=true,craftPreservedAfterKeep=true,keepProgress=delta}
+ trace('keep-saw')
 end
 local function chooseDirection(player)
  -- Screen-forward and its rotations follow the cart native keyboard fixture.
@@ -150,12 +186,18 @@ local function chooseDirection(player)
  error('no free neighbouring square for genuine walk interruption')
 end
 local function finish()
- local value={event='case',id=case(),status='passed',producer='CraftChainRecipes.enqueue',queueEnabled=false,
+ local value={event='case',id=case(),status='passed',producer='CraftChainRecipes.enqueue',queueEnabled=editorEnabled,
   toolIds=ids.tools,pickupIds=sorted(picked),returnIds=sorted(returned),returnStarts=starts,
   craftProgress=progress,tailProgress=tailProgress,tailDiscarded=walking()and q():indexOf(tail)==-1 and not tailProgress,
   nativeStop=stopped,nativeDuration=150,authorityVerified=true,
   walkDistance=walk and walk.distance or 0,walkProgress=walk and walk.progress or 0,
   inputReleased=not walk or walk.released==true,blockedToolId=case()=='walk-pinned-full'and ids.tools[1]or false}
+ if editorEnabled then
+  value.eventTrace=eventTrace;value.instantActions=getPlayer():isTimedActionInstant()
+  value.pauseOnFocusLoss=getCore():getOptionPauseOnFocusloss();value.craftChainsEnabled=T.Settings.craftChains()
+  value.foreignReturnProvider=false
+  if keepEvidence then for key,result in pairs(keepEvidence)do value[key]=result end end
+ end
  for key,result in pairs(receipt)do if key~='case'then value[key]=result end end
  emit(value)
  if step==#config.cases then
@@ -164,19 +206,20 @@ local function finish()
  else
   step=step+1;phase='prepare';since=getTimestampMs();state,ids,current,tail,receipt,walk,readySince,settledSince=nil,nil,nil,nil,nil,nil,nil,nil
   picked,returned,starts,seenReturns={},{},{},{};progress,tailProgress,stopped,idle=false,false,false,0
-  bodyEvidence,originalRows,stopEvidence=nil,nil,nil
+  bodyEvidence,originalRows,stopEvidence=nil,nil,nil;eventTrace,keepEvidence={},nil
  end
 end
 require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()then return end
  local ok,problem=pcall(function()
-  assert(getTimestampMs()-since<180000,'editor-off craft deadline '..phase)
+  assert(getTimestampMs()-since<180000,'walking craft deadline '..phase)
   local player=getPlayer();if not player or player:isDead()or not player:getSquare()then return end
   if config.kind=='mp'and(not isClient()or player:getOnlineID()<0)then return end
-  assert(not T.Settings.actionQueue(),'craft editor unexpectedly enabled')
+  assert(T.Settings.actionQueue()==editorEnabled,'craft editor setting differs')
+  assert(not player:isTimedActionInstant()and not getCore():getOptionPauseOnFocusloss(),'native controls differ')
   if phase=='prepare'then
    assert(P4TidyUpMeister==nil and not getActivatedMods():contains('P4TidyUpMeister'),'foreign returns provider selected')
-   if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=false,nativeDurations=true})end
+   if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=editorEnabled,nativeDurations=true})end
    request('Prepare');phase='ready';return
   end
   if phase=='ready'then
@@ -189,15 +232,19 @@ require('QueuePreflight').onTick(Events,function()
   if phase=='running'then
    discover();transfers(q().current);F.fillFirstOrigin(state)
    if current and q().current==current and current.craftStarted==true and current:isStarted()and current:getJobDelta()>0 then
+    if not progress then trace('craft-progress')end
     progress=true;assert(current:getDuration()==150 and current.stopOnWalk==true and not player:isTimedActionInstant())
     if walking()and not walk then
+     local ack=editorEnabled and config.kind=='mp'and T.ActionQueueAcknowledgements.capture(current)
+     if editorEnabled and config.kind=='mp'and(not ack or T.ActionQueueAcknowledgements.state(current,ack)~='started')then return end
      assert(picked[ids.tools[1]]and picked[ids.tools[2]],'actual pickups missing before walk')
      assert(current:getJobDelta()<=.25,'missed early native craft progress')
      assert(case()~='walk-pinned-full'or state.fullOrigin,'source not blocked before walk')
+     if keeping()then keepSaw()end
      bodyEvidence=T.ActionQueueSettlement.operationState(current)or {unavailable=true}
      originalRows=rows()
      walk={x=player:getX(),y=player:getY(),progress=current:getJobDelta(),since=getTimestampMs(),distance=0}
-     craftWalkInput(player,chooseDirection(player))
+     trace('walk-input');craftWalkInput(player,chooseDirection(player))
     end
    end
    if walk and not walk.released then
@@ -226,7 +273,7 @@ require('QueuePreflight').onTick(Events,function()
  end)
  if not ok then
   pcall(diagnose,problem)
-  craftWalkInput(getPlayer(),-1);done=true;emit({event='error',message=tostring(problem)});print('[QUEUE_TEST] FAIL editor-off craft '..tostring(problem))
+  craftWalkInput(getPlayer(),-1);done=true;emit({event='error',message=tostring(problem)});print('[QUEUE_TEST] FAIL walking craft '..tostring(problem))
  end
 end)
 end

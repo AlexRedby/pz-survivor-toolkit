@@ -45,18 +45,10 @@ local function nativeReturnRow(row, body, member, root, afterPickup)
             and row.item:getID() == member.id and row.item:getFullType() == member.fullType)
 end
 
-local function bindCancelledReturns(player, body, returns, members)
-    if #members < 2 or #members ~= #returns then return end
-    local queue = ISTimedActionQueue.queues[player]
-    local index = queue and queue:indexOf(body)
-    local token = body.toolkitQueueOperation
-    if not index or index < 1 or not token then return end
+local function bindCancelledReturns(player, token, members)
+    if #members < 2 then return end
     local handles = {}
-    for i, member in ipairs(members) do
-        local row = queue.queue[index + i]
-        if returns[i] ~= member.item or not nativeReturnRow(row, body, member, player:getInventory()) then return end
-        handles[i] = member.handle
-    end
+    for i, member in ipairs(members) do handles[i] = member.handle end
     local settlement, operations, definitions = Toolkit.ActionQueueSettlement, Toolkit.ActionQueueOperations, Toolkit.ActionQueueDefinitions
     local issue = settlement.enqueueClaimedReturns
     if not origin(issue, "ActionQueueSettlement.lua") then return end
@@ -76,27 +68,38 @@ end
 -- Capture only the native return rows the walk is about to discard. The Java
 -- movement handler also clears characterActions *after* the Lua stop returns.
 -- Issue fresh timed transfers on a later stationary tick, one tool at a time.
-local function bindMovementReturns(player, body, items, members, live)
+local function bindNativeReturns(player, body, items, members, live, editor)
     local queue = ISTimedActionQueue.queues[player]
     local index = queue and queue:indexOf(body)
-    if not index or index < 1 or #items ~= #members then return end
+    local token = body.toolkitQueueOperation
+    if not index or index < 1 or not token or #items ~= #members then return end
     local list, root = queue.queue, player:getInventory()
+    local membersByRow, remaining = {}, #members
     for i, member in ipairs(members) do
         local row = list[index+i]
         if items[i] ~= member.item or not nativeReturnRow(row, body, member, root) then return end
-        member.row = row
+        membersByRow[row] = member
     end
     body[movementMarker] = function(stoppedQueue)
         if stoppedQueue ~= queue or queue.queue ~= list or queue.current ~= body or list[1] ~= body
+            or body.toolkitQueueOperation ~= token or token.toolkitCancelled or queue.toolkitGroupCancel or queue.toolkitCancel
             or not live() or not body.stopOnWalk or not body:isStarted()
             or not (player:isPlayerMoving() or player:pressedMovement(false)) then return end
         local progress = body:getJobDelta()
         if progress <= 0 or progress >= 1 then return end
         local pending = {}
-        for i, member in ipairs(members) do
-            if list[1+i] == member.row and nativeReturnRow(member.row, body, member, root, true)
-                and Toolkit.ActionQueueSettlement.earned(member.handle) then
-                pending[#pending+1] = member
+        -- Keep removes the native row. Read the surviving rows in their current
+        -- order, even if an edit shifted a sibling or moved another action here.
+        for i = 2, #list do
+            local row = list[i]
+            local member = membersByRow[row]
+            if member then
+                membersByRow[row] = nil
+                remaining = remaining - 1
+                if nativeReturnRow(row, body, member, root, true) and Toolkit.ActionQueueSettlement.earned(member.handle) then
+                    pending[#pending+1] = member
+                end
+                if remaining == 0 then break end
             end
         end
         if #pending == 0 then return end
@@ -134,6 +137,7 @@ local function bindMovementReturns(player, body, items, members, live)
         end
         Events.OnTick.Add(tick)
     end
+    if editor then bindCancelledReturns(player, token, members) end
 end
 
 function Loans.movementStopped(body, queue)
@@ -258,11 +262,7 @@ local function captureLoans(player, body, selected, kept)
         end,
         returns = function(items)
             if #members == 0 or not live() then return end
-            if editor then
-                bindCancelledReturns(player, body, items, members)
-            else
-                bindMovementReturns(player, body, items, members, live)
-            end
+            bindNativeReturns(player, body, items, members, live, editor)
         end,
         body = function(action)
             if #members > 0 and action == body and live() then remember(action,inspect) end

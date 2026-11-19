@@ -158,3 +158,33 @@ for keptIndex=1,2 do
  assert(not Fixture.verify(keptState,true),'Keep must not hide duplicate native material effects')
 end
 print('Keep craft authority: per-origin tool retention, independent return and single exact output passed.')
+
+-- Walking cases reuse the same authority verifier with exact original bag endpoints.
+package.preload.QueueCraftWalkFixture=function()
+ return assert(loadfile(ProjectRoot..'/tests/native_queue/craft/shared/QueueCraftWalkFixture.lua'))()
+end
+for _,case in ipairs({'walk-editor-pinned-tools','walk-editor-keep-saw'})do
+ local inventory=container()
+ local walkState={case=case,root=inventory,bags={},tools={},toolMeta={},outputBaseline={},sparePlanks={},
+  materialCondition=10,materialUses=0}
+ walkState.material=item(inventory,80,'Base.Plank')
+ local spare=item(inventory,81,'Base.Plank');walkState.sparePlanks={{id=81,condition=10,uses=0}}
+ for i,kind in ipairs({'Base.Saw','Base.HandDrill'})do
+  local bag=item(inventory,90+i,'Base.Bag_Schoolbag');bag.bag=true
+  local source=container();bag.getItemContainer=function()return source end
+  local tool=item(case=='walk-editor-keep-saw'and i==1 and inventory or source,100+i,kind)
+  walkState.bags[i],walkState.tools[i]=bag,tool
+  walkState.toolMeta[i]={id=tool:getID(),kind=kind,condition=10,uses=0}
+ end
+ local receipt=assert(Fixture.verify(walkState,true))
+ assert(receipt.consumed==0 and receipt.materialPresent and receipt.outputs==0 and #receipt.outputIds==0)
+ assert(receipt.toolsReturned==(case=='walk-editor-keep-saw'and 1 or 2))
+ assert(receipt.resources[2].sourceId==92 and receipt.resources[2].sourceCount==1 and receipt.resources[2].rootCount==0)
+ assert(receipt.resources[1].rootCount==(case=='walk-editor-keep-saw'and 1 or 0))
+ walkState.material.condition=9;assert(not Fixture.verify(walkState,true),'walking must preserve exact material');walkState.material.condition=10
+ spare.condition=9;assert(not Fixture.verify(walkState,true),'walking must preserve spare inputs');spare.condition=10
+ local drill=walkState.tools[2];drill.container=inventory
+ assert(not Fixture.verify(walkState,true),'recursive lookup cannot prove original drill endpoint');drill.container=walkState.bags[2]:getItemContainer()
+ item(inventory,110,'Base.WoodenStick2');assert(not Fixture.verify(walkState,true),'walking cancellation cannot create output')
+end
+print('Walking craft authority: exact material, zero output, original returns and explicit saw retention passed.')

@@ -1,4 +1,4 @@
-"""Queue-off pinned craft requires genuine native walking and exact physical returns."""
+"""Pinned craft requires genuine native walking and exact physical returns."""
 import copy
 import json
 from pathlib import Path
@@ -13,43 +13,53 @@ from queue_checks.adapters import craft, craft_walk
 
 
 class CraftWalkTests(unittest.TestCase):
-    def selection(self, kind='sp', cases=None):
-        return dict(suite='craft', cases=cases or list(craft.EDITOR_OFF_CASES), kind=kind, mode='native',
+    def selection(self, kind='sp', cases=None, enabled=False):
+        return dict(suite='craft', cases=cases or list(craft.EDITOR_ON_WALK_CASES if enabled else craft.EDITOR_OFF_CASES),
+                    kind=kind, mode='toolkit' if enabled else 'native',
                     languages=['EN'], mods=list(craft.MODS), clients=1, options={})
 
-    def evidence(self, kind='sp'):
+    def evidence(self, kind='sp', enabled=False):
         records = []; raw = []
-        for index, case in enumerate(craft.EDITOR_OFF_CASES):
+        for index, case in enumerate(craft.EDITOR_ON_WALK_CASES if enabled else craft.EDITOR_OFF_CASES):
             base = 100 + 20 * index
             tools = [base, base+1]; bags = [base+2, base+3]
-            complete = index == 0; blocked = index == 2
+            complete = case == 'complete-pinned-tools'; blocked = case == 'walk-pinned-full'
+            kept = case == 'walk-editor-keep-saw'; retained = blocked or kept
             prep = dict(case=case, tools=tools, bags=bags, material=base+4, book=base+5,
                         outputs=0, materialCondition=10, materialUses=0, outputBaseline=[], sparePlanks=[],
                         playerId=42 if kind == 'mp' else -1,
                         toolMeta=[dict(id=id, kind=tool, condition=10, uses=0)
                                   for id, tool in zip(tools, ('Base.Saw', 'Base.HandDrill'))])
-            returned = tools[1:] if blocked else tools
+            returned = tools[1:] if retained else tools
             receipt = dict(case=case, materialId=prep['material'], materialPresent=not complete,
                            materialCondition=10, materialUses=0, consumed=int(complete), outputs=int(complete),
                            outputIds=[900] if complete else [], toolsReturned=len(returned), sparePlanks=[], fullOrigin=blocked,
-                           resources=[dict(meta, sourceId=bags[i], sourceCount=int(not blocked or i != 0),
-                                           rootCount=int(blocked and i == 0)) for i, meta in enumerate(prep['toolMeta'])])
+                           resources=[dict(meta, sourceId=bags[i], sourceCount=int(not retained or i != 0),
+                                           rootCount=int(retained and i == 0)) for i, meta in enumerate(prep['toolMeta'])])
             row = dict({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'}, event='case',
-                       id=case, status='passed', producer='CraftChainRecipes.enqueue', queueEnabled=False,
+                       id=case, status='passed', producer='CraftChainRecipes.enqueue', queueEnabled=enabled,
                        toolIds=tools, pickupIds=tools, returnIds=returned, returnStarts=returned,
                        craftProgress=True, tailProgress=complete, tailDiscarded=not complete,
                        nativeStop=not complete, nativeDuration=150, authorityVerified=True,
                        walkDistance=0 if complete else .3, walkProgress=0 if complete else .1,
                        inputReleased=True, blockedToolId=tools[0] if blocked else False)
+            if enabled:
+                row.update(instantActions=False, pauseOnFocusLoss=False, craftChainsEnabled=True, foreignReturnProvider=False,
+                           eventTrace=['pickup-saw', 'pickup-drill', 'craft-progress'] + (['keep-saw'] if kept else []) +
+                                      ['walk-input', 'native-stop'] + (['return-drill'] if kept else ['return-saw', 'return-drill']))
+                if kept:
+                    row.update(keptId=tools[0], keptSourceId=bags[0], siblingId=tools[1], siblingSourceId=bags[1],
+                               keepSucceeded=True, keptRowPending=True, keptRowRemoved=True, siblingPreserved=True,
+                               craftPreservedAfterKeep=True, keepProgress=.1)
             records.append(row);raw.extend([('PREPARED', prep), ('WALK_AUTHORITY', receipt)])
         return records, raw
 
-    def verify(self, kind='sp', evidence=None):
-        rows, raw = evidence or self.evidence(kind)
-        cases = list(craft.EDITOR_OFF_CASES)
-        records = [dict(event='setup', cases=cases, expected=3, queueEnabled=False, nativeDurations=True), *rows,
-                   dict(event='complete', cases=cases, expected=3, performed=3, failed=0, skipped=0)]
-        text = '\n'.join('[QUEUE_CHECK] ' + json.dumps(dict(row, suite='craft', kind=kind, mode='native', actor='client1'))
+    def verify(self, kind='sp', evidence=None, enabled=False):
+        rows, raw = evidence or self.evidence(kind, enabled)
+        selection = self.selection(kind, enabled=enabled); cases = selection['cases']
+        records = [dict(event='setup', cases=cases, expected=len(cases), queueEnabled=enabled, nativeDurations=True), *rows,
+                   dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0)]
+        text = '\n'.join('[QUEUE_CHECK] ' + json.dumps(dict(row, suite='craft', kind=kind, mode=selection['mode'], actor='client1'))
                          for row in records)
         authority = '\n'.join('[CRAFT_QUEUE_TEST] ' + marker + ' ' + json.dumps(row) for marker, row in raw)
         with tempfile.TemporaryDirectory() as directory:
@@ -57,7 +67,7 @@ class CraftWalkTests(unittest.TestCase):
             (root / 'client1-launch.log').write_text(text + ('\n' + authority if kind == 'sp' else ''))
             if kind == 'mp':
                 (root / 'server-launch.log').write_text(authority)
-            return craft.verify(root, self.selection(kind), {})
+            return craft.verify(root, selection, {})
 
     def test_registered_isolated_native_sp_and_host(self):
         for kind in ('sp', 'mp'):
@@ -167,7 +177,67 @@ class CraftWalkTests(unittest.TestCase):
             assert(returnsFinished(),'blocked tool root plus sibling return did not settle')
             starts={101,102};returned[101]=true
             assert(not pcall(returnsFinished),'blocked source accepted forbidden return')
+            selected='walk-editor-keep-saw';starts={102};returned={[102]=true}
+            assert(returnsFinished(),'explicit Keep saw plus completed drill return did not settle')
+            starts={101,102};returned[101]=true
+            assert(not pcall(returnsFinished),'waived saw return was resurrected')
         """)
+
+    def test_editor_on_native_walk_and_exact_saw_keep_sp_host(self):
+        for kind in ('sp', 'mp'):
+            craft.validate(self.selection(kind, enabled=True))
+            self.assertEqual([], self.verify(kind, enabled=True)['issues'])
+        registered = {row['id']: row for row in craft.definitions()['craft']['cases']}
+        for case in craft.EDITOR_ON_WALK_CASES:
+            self.assertEqual(['toolkit'], registered[case]['modes'])
+        for change in ({'mode': 'native'}, {'cases': craft.WALK_CASES},
+                       {'cases': [craft.KEEP_CASE, *craft.EDITOR_ON_WALK_CASES]},
+                       {'mods': craft.MODS + ['P4TidyUpMeister']}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                craft.validate(dict(self.selection(enabled=True), **change))
+
+    def test_editor_on_exact_pending_keep_and_native_controls_required(self):
+        for key, value in [('keptId', 121), ('keptSourceId', 123), ('siblingId', 120), ('siblingSourceId', 122),
+                           ('keepSucceeded', False), ('keptRowPending', False), ('keptRowRemoved', False),
+                           ('siblingPreserved', False), ('craftPreservedAfterKeep', False), ('keepProgress', 0),
+                           ('keepProgress', .2), ('walkProgress', 'invalid'), ('instantActions', True),
+                           ('pauseOnFocusLoss', True), ('craftChainsEnabled', False), ('foreignReturnProvider', True),
+                           ('nativeStop', False), ('walkDistance', 0), ('queueEnabled', False),
+                           ('returnStarts', [120, 121]), ('returnIds', [120, 121]), ('pickupIds', [121])]:
+            evidence = self.evidence(enabled=True); evidence[0][1][key] = value
+            with self.subTest(key=key, value=value):
+                self.assertTrue(self.verify(evidence=evidence, enabled=True)['issues'])
+
+    def test_editor_on_causal_order_and_no_unearned_return_required(self):
+        for mutation in ('missing-keep', 'duplicate-stop', 'walk-before-keep', 'return-before-stop',
+                         'craft-before-pickup', 'saw-return', 'wrong-shape'):
+            evidence = self.evidence(enabled=True); trace = evidence[0][1]['eventTrace']
+            if mutation == 'missing-keep': trace.remove('keep-saw')
+            elif mutation == 'duplicate-stop': trace.append('native-stop')
+            elif mutation == 'walk-before-keep': trace[3], trace[4] = trace[4], trace[3]
+            elif mutation == 'return-before-stop': trace[-1], trace[-2] = trace[-2], trace[-1]
+            elif mutation == 'craft-before-pickup': trace[0], trace[2] = trace[2], trace[0]
+            elif mutation == 'saw-return': trace.append('return-saw')
+            else: trace[0] = 1
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.verify(evidence=evidence, enabled=True)['issues'])
+
+    def test_editor_on_server_endpoints_and_intact_material_are_required(self):
+        for mutation in ('saw-returned', 'drill-root', 'wrong-origin', 'changed-saw', 'changed-material',
+                         'consumed', 'output', 'authority-only'):
+            rows, raw = self.evidence('mp', enabled=True); receipt = raw[-1][1]
+            if mutation == 'saw-returned': receipt['resources'][0].update(sourceCount=1, rootCount=0)
+            elif mutation == 'drill-root': receipt['resources'][1].update(sourceCount=0, rootCount=1)
+            elif mutation == 'wrong-origin': receipt['resources'][1]['sourceId'] = receipt['resources'][0]['sourceId']
+            elif mutation == 'changed-saw': receipt['resources'][0]['condition'] = 9
+            elif mutation == 'changed-material': receipt['materialCondition'] = 9
+            elif mutation == 'consumed': receipt.update(consumed=1, materialPresent=False)
+            elif mutation == 'output': receipt.update(outputs=1, outputIds=[900])
+            else: receipt['toolsReturned'] = 2
+            if mutation != 'authority-only':
+                rows[-1].update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.verify('mp', (rows, raw), enabled=True)['issues'])
 
     def test_staging_builds_only_disposable_input_mod_and_tracks_its_sources(self):
         with tempfile.TemporaryDirectory() as directory:

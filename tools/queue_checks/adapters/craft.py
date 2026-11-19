@@ -13,7 +13,9 @@ PINNED_CANCELLATIONS = [PINNED_CANCEL, PINNED_FULL]
 PINNED_CASES = ['keep-craft-tool', *PINNED_CANCELLATIONS]
 KEEP_CASE = 'keep-craft-tool'
 EDITOR_OFF_CASES = ['complete-pinned-tools', 'walk-pinned-tools', 'walk-pinned-full']
-CASES = PRESTART_CASES + ACTIVE_CASES + PINNED_CASES + EDITOR_OFF_CASES
+EDITOR_ON_WALK_CASES = ['walk-editor-pinned-tools', 'walk-editor-keep-saw']
+WALK_CASES = EDITOR_OFF_CASES + EDITOR_ON_WALK_CASES
+CASES = PRESTART_CASES + ACTIVE_CASES + PINNED_CASES + WALK_CASES
 MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 
 
@@ -21,12 +23,16 @@ def definitions():
     return {'craft': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                                  'kinds': ['sp', 'mp'], 'languages': ['EN'],
-                                 'modes': ['toolkit'] if case in PINNED_CASES else ['native'] if case in EDITOR_OFF_CASES else ['native', 'toolkit']}
+                                 'modes': ['toolkit'] if case in PINNED_CASES + EDITOR_ON_WALK_CASES else ['native'] if case in EDITOR_OFF_CASES else ['native', 'toolkit']}
                                 for case in CASES]}}
 
 
 def validate(selection):
     cases = selection.get('cases')
+    if isinstance(cases, list) and any(case in EDITOR_ON_WALK_CASES for case in cases):
+        if (any(case not in EDITOR_ON_WALK_CASES for case in cases) or selection.get('mode') != 'toolkit'
+                or 'P4TidyUpMeister' in selection.get('mods', [])):
+            raise ValueError('Editor-on walking craft requires an isolated Toolkit selection without P4TidyUpMeister')
     if isinstance(cases, list) and any(case in EDITOR_OFF_CASES for case in cases):
         if (any(case not in EDITOR_OFF_CASES for case in cases) or selection.get('mode') != 'native'
                 or 'P4TidyUpMeister' in selection.get('mods', [])):
@@ -53,7 +59,7 @@ def sources(project, selection):
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     stage_common(project, output, game, jdk, selection, locations, runtime)
-    if selection['cases'][0] in EDITOR_OFF_CASES:
+    if selection['cases'][0] in WALK_CASES:
         from . import craft_walk
         craft_walk.stage(project, output, game, jdk, selection, runtime)
 
@@ -129,7 +135,7 @@ def _prepared_valid(prep, case):
     if not _ids(ids) or any(type(prep.get(key)) is not int or prep[key] < 0 for key in
                             ('outputs', 'materialCondition', 'materialUses')):
         return False
-    kinds = ('Base.Saw', 'Base.HandDrill') if case in PINNED_CASES + EDITOR_OFF_CASES else ('Base.Hammer', 'Base.Saw')
+    kinds = ('Base.Saw', 'Base.HandDrill') if case in PINNED_CASES + WALK_CASES else ('Base.Hammer', 'Base.Saw')
     for index, kind in enumerate(kinds):
         meta = prep['toolMeta'][index]
         if (type(meta) is not dict or set(meta) != {'id', 'kind', 'condition', 'uses'}
@@ -412,7 +418,7 @@ def _keep(selection, row, prep, receipt):
 
 
 def verify(root, selection, catalog):
-    if selection['cases'][0] in EDITOR_OFF_CASES:
+    if selection['cases'][0] in WALK_CASES:
         from . import craft_walk
         return craft_walk.verify(root, selection)
     from ..report import events

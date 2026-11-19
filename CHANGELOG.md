@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.26
+
+- Without P4, walking away from a pinned craft also returns borrowed tools when the queue editor is enabled. Choosing Keep on a tool leaves it in inventory while the remaining tools return to their own bags.
+
 ### 0.2.25
 
 - With the queue editor off and P4 absent, walking away from a pinned craft returns borrowed tools to their carried bags once you stop moving. A full bag leaves its tool in inventory while other tools can return.
