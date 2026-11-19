@@ -448,6 +448,30 @@ return function(client,options)
         env.sendHumanVisual=function()end;env.triggerEvent=function()end
         env.sendEquip=function(actor)assert(actor==player)end
     end
+    local hotbar
+    if options.belt then
+        -- Execute the native assignment/equip helpers; attachment storage itself
+        -- is the modeled Java boundary, never a Toolkit restoration shortcut.
+        env.ISHotbar={}
+        for _,signature in ipairs({'function ISHotbar:setAttachAnim(', 'function ISHotbar:isItemAttached(',
+            'function ISHotbar:attachItem (', 'function ISHotbar:reloadIcons('})do
+            nativeFunction('client/Hotbar/ISHotbar.lua',signature)
+        end
+        nativeFunction('client/ISUI/PlayerData/ISPlayerData.lua','function getPlayerHotbar(')
+        local attached={}
+        player.setAttachedItem=function(_,slot,item)
+            attached[slot]=item;engineTrace[#engineTrace+1]={event='native-attach',slot=slot,item=item}
+        end
+        player.getAttachedItem=function(_,slot)return attached[slot]end
+        player.removeAttachedItem=function(_,item)
+            for slot,value in pairs(attached)do if value==item then attached[slot]=nil end end
+        end
+        player.SetVariable=function()end;player.setVariable=player.SetVariable
+        local kind,model='SmallBeltLeft','Belt Left Screwdriver'
+        hotbar=setmetatable({chr=player,availableSlot={[2]={slotType=kind,
+            def={name=kind,type=kind,animset='belt',attachments={Screwdriver=model}}}},attachedItems={}}, {__index=env.ISHotbar})
+        env.getPlayerData=function()return {playerHotbar=hotbar}end
+    end
     if options.ackFirst then env.require('PZSurvivorToolkit/ActionQueueAcknowledgements')end
     env.require('PZSurvivorToolkit/ActionQueueOperations')
     env.require('PZSurvivorToolkit/ActionQueueDefinitions')
@@ -458,7 +482,9 @@ return function(client,options)
     if options.razor then
         env.require('PZSurvivorToolkit/ActionQueueTidyIntent')
         local razor=env.require('PZSurvivorToolkit/ActionQueueRazorRestoration')
-        assert(razor.install(),'qualification razor installation failed')
+        if options.belt then
+            for _,callback in ipairs(events.OnGameStart or {})do callback()end
+        else assert(razor.install(),'qualification razor installation failed')end
     end
     local queue=env.ISTimedActionQueue.getTimedActionQueue(player)
     local function phase(action,name)
@@ -540,20 +566,30 @@ return function(client,options)
     end
     local function tool(id,fullType,location)
         local value=book(id,location)
-        value.class='ComboItem'
+        value.class=options.belt and fullType=='Base.Scissors'and 'HandWeapon'or 'ComboItem'
         value.getFullType=function()return fullType end
         value.getType=function()return fullType:match('[^.]+$')end
         value.getCategory=function()return 'Item'end
         value.isBroken=function()return false end
         value.getClothingItem=function()end;value.getUnequipSound=function()end;value.isTwoHandWeapon=function()return false end
         value.getStaticModel=function()return 'DisposableRazor'end
+        if options.belt and fullType=='Base.Scissors'then
+            value.getSwingAnim=function()return 'Stab'end
+            value.getAttachmentType=function()return 'Screwdriver'end
+            value.getAttachedSlot=function(self)return self.attachedSlot or -1 end
+            value.setAttachedSlot=function(self,slot)self.attachedSlot=slot end
+            value.getAttachedSlotType=function(self)return self.attachedSlotType end
+            value.setAttachedSlotType=function(self,kind)self.attachedSlotType=kind end
+            value.getAttachedToModel=function(self)return self.attachedModel end
+            value.setAttachedToModel=function(self,model)self.attachedModel=model end
+        end
         value.hasTag=function(_,tag)return fullType=='Base.Razor'and tag==env.ItemTag.RAZOR
             or fullType=='Base.Scissors'and tag==env.ItemTag.SCISSORS end
         return value
     end
     return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,tool=tool,
         dispatch=dispatch,phase=phase,remove=remove,start=start,deliver=deliver,stop=stop,transactions=transactions,events=events,adjacent=adjacent,
-        effects=effects,engineTrace=engineTrace,bag=bag,acknowledge=acknowledge,
+        effects=effects,engineTrace=engineTrace,bag=bag,hotbar=hotbar,acknowledge=acknowledge,
         setQueueEnabled=function(value)options.queue=value end,
         advance=function(milliseconds)
             assert(type(milliseconds)=='number'and milliseconds>=0,'clock advance must be nonnegative')

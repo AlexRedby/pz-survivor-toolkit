@@ -7,7 +7,8 @@ local function fixture(change)
  local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
  f.native('shared/TimedActions/ISEquipWeaponAction.lua');f.native('shared/TimedActions/ISTrimBeard.lua')
  f.native('shared/TimedActions/ISInventoryTransferUtil.lua');f.native('shared/luautils.lua')
- local actor,tool=f.player,f.item('Base.Razor')
+ local belt=change=='belt' or change=='belt-extra' or change=='belt-occupied'
+ local actor,tool=f.player,f.item(belt and 'Base.Scissors' or 'Base.Razor')
  actor.class='IsoPlayer';actor.isLocalPlayer=function()return true end
  actor.getPrimaryHandItem=function()return actor.primary end
  actor.hasTrait=function()return false end;actor.isWearingAwkwardGloves=function()return false end
@@ -19,9 +20,9 @@ local function fixture(change)
    isInCharacterInventory=function()return true end,isVehicleSeat=function()return false end}
  end
  local root,bag=container(),container();actor.inventory=root
- tool.container=bag;tool.getContainer=function()return tool.container end
- tool.isBroken=function()return false end;tool.hasTag=function(_,tag)return tag==ItemTag.RAZOR end
- tool.getType=function()return'Razor'end;tool.getActualWeight=function()return .1 end
+ tool.container=belt and root or bag;tool.getContainer=function()return tool.container end
+ tool.isBroken=function()return false end;tool.hasTag=function(_,tag)return tag==(belt and ItemTag.SCISSORS or ItemTag.RAZOR) end
+ tool.getType=function()return belt and 'Scissors' or 'Razor'end;tool.getActualWeight=function()return .1 end
  tool.isFavorite=function()return false end;tool.isHumanCorpse=function()return false end
  tool.isRequiresEquippedBothHands=function()return false end;tool.getName=function()return'Razor'end
  root.getFirstEvalRecurse=function(_,predicate)return predicate(tool)and tool or nil end
@@ -32,6 +33,35 @@ local function fixture(change)
    parts[#parts+1]=source:sub(at,a-1):gsub('[^\n]','')..source:sub(a,b-1);at=b
   end
   return assert(loadstring(table.concat(parts),'@'..relative))()
+ end
+ if belt then
+  local slotType,model='SmallBeltLeft','Belt Left Screwdriver'
+  ISHotbar={}
+  ranges('client/Hotbar/ISHotbar.lua',{{'function ISHotbar:setAttachAnim','function ISHotbar:removeItem'},
+   {'function ISHotbar:isItemAttached','function ISHotbar:attachItem'}})
+  ranges('client/ISUI/PlayerData/ISPlayerData.lua',{{'function getPlayerHotbar','function getPlayerInfoPanel'}})
+  local slot={slotType=slotType,def={name=slotType,type=slotType,animset='belt',attachments={Screwdriver=model}}}
+  local hotbar=setmetatable({chr=actor,availableSlot={[2]=slot},attachedItems={[2]=tool}},{__index=ISHotbar})
+  getPlayerData=function()return {playerHotbar=hotbar}end
+  tool.getAttachedSlot=function()return 2 end
+  tool.getAttachedSlotType=function()return slotType end
+  tool.getAttachedToModel=function()return model end
+  tool.getAttachmentType=function()return 'Screwdriver' end
+  tool.canBeActivated=function()return false end
+  tool.isForceDropHeavyItem=function()return false end
+  tool.getIsCraftingConsumed=function()return false end
+  tool.isTwoHandWeapon=function()return false end
+  local className,instance=getClassSimpleName,instanceof
+  getClassSimpleName=function(value)if value==tool then return 'HandWeapon' end;return className(value)end
+  instanceof=function(value,name)return value==tool and name=='HandWeapon' or instance(value,name)end
+  root.getItemById=function(_,id)return tool:getID()==id and tool or nil end
+  local occupant=change=='belt-occupied' and f.item('Base.Screwdriver') or tool
+  actor.getAttachedItem=function(_,key)return key==model and occupant or nil end
+  actor.isEquippedClothing=function()return false end
+  actor.getSecondaryHandItem=function()end
+  actor.getMoodles=function()return {getMoodleLevel=function()return 0 end}end
+  actor.getTimedActionTimeModifier=function()return 1 end
+  MoodleType={UNHAPPY={},DRUNK={}}
  end
  ISCharacterScreen={};ISWorldObjectContextMenu={}
  ranges('client/XpSystem/ISUI/ISCharacterScreen.lua',{{'local function predicateRazor','local function predicateDoHairdo'},
@@ -72,6 +102,12 @@ local function fixture(change)
  local enabled=true;local seen,finished={},{}
  PZSurvivorToolkit.ActionQueueRazorRestoration={enabled=function()return enabled end}
  local consumer=PZSurvivorToolkit.ActionQueueRazorRestoration
+ local beltTools=f.project('ActionQueueBeltTool')
+ local baseRequire=require
+ require=function(module)
+  if module=='PZSurvivorToolkit/ActionQueueBeltTool' then return beltTools end
+  return baseRequire(module)
+ end
  local producer=f.project('ActionQueueRazorProducer')
  assert(producer.dispatch==nil and not producer.bind(function()end),'a public foreign runner acquired dispatch authority')
  local dispatcher=assert(producer.bind(run),'real private Operations runner did not bind')
@@ -82,7 +118,11 @@ local function fixture(change)
  end
  consumer.finish=function(episode)
   assert(producer.owns(episode)and episode.source());finished[#finished+1]=episode
-  assert(episode.pickup==seen[1]and episode.equip==seen[2]and episode.body==seen[3])
+  if belt then
+   assert(episode.pickup==nil and episode.equip==seen[1]and episode.body==seen[2])
+  else
+   assert(episode.pickup==seen[1]and episode.equip==seen[2]and episode.body==seen[3])
+  end
  end
  local callback=ISCharacterScreen.onTrimBeard
  local record={owner=ISCharacterScreen,method='onTrimBeard',callback=callback}
@@ -100,21 +140,36 @@ local function fixture(change)
  elseif change=='root'then tool.container=root
  elseif change=='held'then actor.primary=tool;tool.container=root
  elseif change=='helper'then ISWorldObjectContextMenu.equip=function()end
- elseif change=='extra'then
+ elseif change=='extra' or change=='belt-extra'then
   local prior=ISTimedActionQueue.add
   ISTimedActionQueue.add=function(action)prior(action);if action.Type=='ISTrimBeard'then prior({Type='Unknown',character=actor})end end
  end
  wrapper(actor,'Moustache')
- return producer,finished,seen,queued,function()selected=true end
+ return producer,finished,seen,queued,function()selected=true end,beltTools
 end
 local producer,finished,seen,queued,revoke=fixture()
 assert(#finished==1 and #seen==3 and #queued==3,'native menu/equip/transfer/trim chain was not qualified')
 assert(queued[1].Type=='ISInventoryTransferAction'and queued[2].Type=='ISEquipWeaponAction'and queued[3].Type=='ISTrimBeard')
 assert(not producer.owns(finished[1])and finished[1].source(),'synchronous ownership leaked or lasting source lease expired')
 revoke();assert(not finished[1].source(),'selected P4 retained lasting source lease')
-for _,case in ipairs({'disabled','p4-selected','p4-global','root','held','helper','source','extra','metadata-throws','observer-throws'})do
+local _,beltFinished,beltSeen,beltNative,_,beltTools=fixture('belt')
+assert(#beltNative==2 and beltNative[1].Type=='ISEquipWeaponAction' and beltNative[1].fromHotbar
+ and beltNative[2].Type=='ISTrimBeard','native belt grooming must equip and trim without a transfer')
+assert(#beltFinished==1 and #beltSeen==2 and beltFinished[1].source(),'belt producer did not qualify the native pair')
+local episode=beltFinished[1]
+local tool,actor=episode.tool,episode.actor
+local bar=episode.equip.hotbar
+bar.attachedItems[2]=nil
+tool.getAttachedSlot=function()return -1 end
+tool.getAttachedSlotType=function()return '' end
+tool.getAttachedToModel=function()return '' end
+assert(beltTools.current(actor,tool).detached and not beltTools.capture(actor,tool),
+ 'native cleared wire strings must release hands without acquiring an attachment')
+tool.getAttachedToModel=function()return 'Belt Left Screwdriver' end
+assert(not beltTools.current(actor,tool),'a stale slot model must not qualify as detached')
+for _,case in ipairs({'disabled','p4-selected','p4-global','root','held','helper','source','extra','belt-extra','belt-occupied','metadata-throws','observer-throws'})do
  local _,done,_,native=fixture(case)
  assert(#done==0,'unsupported producer earned finish: '..case)
  assert(#native>=1,'fallback lost native work: '..case)
 end
-print('PASS actual native beard producer, transfer/equip/body chain, private scope, source revocation and fallback')
+print('PASS actual native bag and belt grooming producers, exact slot occupancy, private scope, source revocation and fallback')

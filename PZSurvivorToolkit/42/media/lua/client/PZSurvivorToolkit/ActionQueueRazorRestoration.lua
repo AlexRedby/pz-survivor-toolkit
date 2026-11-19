@@ -1,17 +1,18 @@
 -- P4 owns the selected pack until cutover. In P4-free games, install the
--- qualified generator path at startup. Full grooming qualification can opt in explicitly.
+-- qualified generator and belt paths at startup. Other grooming paths remain opt-in.
 local Toolkit = PZSurvivorToolkit
 local Hand = require 'PZSurvivorToolkit/ActionQueueHandRestoration'
 local Heavy = require 'PZSurvivorToolkit/ActionQueueHeavyPickup'
 local Generator = require 'PZSurvivorToolkit/ActionQueueGeneratorReturn'
+local Belt = require 'PZSurvivorToolkit/ActionQueueBeltTool'
 local Razor = {}
 Toolkit.ActionQueueRazorRestoration = Razor
 local installed = false
 local commandMarker = {}
 
-local generatorsOnly
+local defaultPathsOnly
 function Razor.enabled(actor)
-    return installed and (not generatorsOnly or not actor or Generator.holding(actor))
+    return installed and (not defaultPathsOnly or not actor or Generator.holding(actor) or Belt.available(actor))
 end
 
 local function command(actor, callback)
@@ -22,9 +23,9 @@ local function command(actor, callback)
     return action
 end
 
-function Razor.install(onlyGenerators)
+function Razor.install(useDefaultPaths)
     if installed then
-        if not onlyGenerators then generatorsOnly = false end
+        if not useDefaultPaths then defaultPathsOnly = false end
         return true
     end
     local definitions, ops = Toolkit.ActionQueueDefinitions, Toolkit.ActionQueueOperations
@@ -42,14 +43,16 @@ function Razor.install(onlyGenerators)
                 equipment=action.character, deferred=true, cancelWaiting=true}
         end,
     })
-    generatorsOnly = onlyGenerators == true
+    defaultPathsOnly = useDefaultPaths == true
     installed = true
     return true
 end
 
-local function isPrimaryEquip(action, actor, item, bothHands)
+local function isPrimaryEquip(action, actor, item, bothHands, belt)
     return action.character == actor and action.item == item and action.primary == true
-        and (action.twoHands == true) == (bothHands == true) and not action.fromHotbar and not action.alwaysTurnOn
+        and (action.twoHands == true) == (bothHands == true)
+        and (belt and action.fromHotbar == true and action.hotbar == belt.hotbar or not belt and not action.fromHotbar)
+        and not action.alwaysTurnOn
         and Toolkit.ActionQueuePolicy.matchesNative(action)
 end
 
@@ -60,11 +63,22 @@ local function currentTool(episode)
         and (item == episode.tool or isClient()) then return item end
 end
 
+local function episodeHands(episode, incoming, bothHands)
+    local tool = episode.belt and currentTool(episode)
+    if episode.belt and (not tool or not Belt.current(episode.actor, tool)) then return end
+    return Toolkit.ActionQueueEquip.restorationHands(episode.actor, incoming, bothHands, tool)
+end
+
 function Razor.observe(episode, action)
     if not Toolkit.ActionQueueRazorProducer.owns(episode) then return end
     local settlement, policy = Toolkit.ActionQueueSettlement, Toolkit.ActionQueuePolicy
     local actor, tool = episode.actor, episode.tool
+    if episode.belt and action == episode.equip then
+        episode.itemId, episode.itemType = tool:getID(), tool:getFullType()
+        if not Toolkit.Settings.actionQueue() and not settlement.beginIndependentRestoration(episode, action) then return end
+    end
     if action == episode.pickup then
+        if defaultPathsOnly and not Generator.holding(actor) then return end
         local itemType = tool:getFullType()
         if (itemType ~= 'Base.Razor' and itemType ~= 'Base.Scissors') or not policy.matchesNative(action)
             or not policy.isOrdinaryTransfer(action) or not policy.isCarriedContainer(action.srcContainer, actor)
@@ -81,7 +95,7 @@ function Razor.observe(episode, action)
             capture = function() return {source=source} end,
             observed = function() return false end, -- Settlement verifies the native transfer itself.
         })
-    elseif episode.loan and action == episode.equip then
+    elseif (episode.loan or episode.belt) and action == episode.equip then
         settlement.rememberPreparation(action, Toolkit.ActionQueueDefinitions.inspect)
         local function guard(value)
             -- Native Host isValid resolves the inventory ID after begin. The
@@ -89,7 +103,8 @@ function Razor.observe(episode, action)
             local canonical = currentTool(episode)
             return canonical ~= nil and value == action and episode.source()
                 and (value.item == canonical or isClient() and value.item == tool)
-                and isPrimaryEquip(value, actor, value.item)
+                and isPrimaryEquip(value, actor, value.item, false, episode.belt)
+                and (not episode.belt or Belt.current(actor, canonical) ~= nil)
         end
         local intent = Toolkit.ActionQueueTidyIntent
         local primaryRevision = intent.handRequestRevision(actor, false)
@@ -98,15 +113,15 @@ function Razor.observe(episode, action)
             guard = guard,
             capture = function()
                 local before, drop
-                if Generator.holding(actor) then
+                if not episode.belt and Generator.holding(actor) then
                     local reason
                     episode.generator, reason = Generator.arm(actor, currentTool(episode), action)
                     if Generator.trace then pcall(Generator.trace, action, 'arm', reason or 'armed') end
                     drop = episode.generator
                     if not drop then return end
                 else
-                    before = Toolkit.ActionQueueEquip.restorationHands(actor)
-                    if not before then drop = Heavy.capture(actor) end
+                    before = episodeHands(episode)
+                    if not before and not episode.belt then drop = Heavy.capture(actor) end
                 end
                 if drop then
                     local grip = {item=drop.item, requiresBoth=true, handWeapon=false, handgun=false}
@@ -118,7 +133,7 @@ function Razor.observe(episode, action)
                 if episode.revision ~= nil then return {hands=before, drop=drop} end
             end,
             observed = function(_, before)
-                local after = Toolkit.ActionQueueEquip.restorationHands(actor)
+                local after = episodeHands(episode)
                 if not after or not after.primary or after.primary.item ~= currentTool(episode) then return false end
                 if before.drop and not episode.generator and Heavy.placed(before.drop) then episode.drop = before.drop end
                 if not episode.hand then
@@ -129,7 +144,7 @@ function Razor.observe(episode, action)
                 return episode.hand ~= nil
             end,
         })
-    elseif episode.loan and action == episode.body then
+    elseif (episode.loan or episode.belt) and action == episode.body then
         settlement.rememberPreparation(action, Toolkit.ActionQueueDefinitions.inspect)
     end
 end
@@ -140,12 +155,12 @@ local function restore(episode, parent)
     local function report(stage, value)
         if episode.generator and Generator.trace then pcall(Generator.trace, episode.equip, stage, value) end
     end
-    if not settlement.reserveClaimedReturn(parent, loan) then report('return', 'loan-unavailable'); return end
+    if loan and not settlement.reserveClaimedReturn(parent, loan) then report('return', 'loan-unavailable'); return end
     if not episode.source() or not episode.hand or not settlement.earned(episode.equipHandle) then
         report('return', 'preparation-unconfirmed')
         return
     end
-    local hands = Toolkit.ActionQueueEquip.restorationHands
+    local function hands(_, incoming, bothHands) return episodeHands(episode, incoming, bothHands) end
     local revision = Toolkit.ActionQueueTidyIntent.handRequestRevision
     local function eligible()
         return episode.source() and revision(actor, episode.bothHands) == episode.revision
@@ -159,7 +174,7 @@ local function restore(episode, parent)
     local bothHands = plan.mode == 'both'
     local token = parent.toolkitQueueOperation
     local drop = episode.drop
-    local action, pickup, pickupHandle
+    local action, pickup, pickupHandle, unequipBelt
     local generator = episode.generator
     if generator then
         if not bothHands or previous ~= generator.item then return end
@@ -179,6 +194,8 @@ local function restore(episode, parent)
         if not enrolled then return end
         action = ISEquipWeaponAction:new(actor, floorItem, 50, true, true)
     elseif plan.mode == 'unequip' then
+        unequipBelt = episode.belt and Belt.current(actor, borrowed)
+        if episode.belt and not unequipBelt then return end
         action = ISUnequipAction:new(actor, borrowed, 50)
     else
         if not previous or not hands(actor, previous, bothHands) then return end
@@ -194,8 +211,15 @@ local function restore(episode, parent)
                 and isPrimaryEquip(value, actor, value.item, true)
         end
         if previous then return isPrimaryEquip(value, actor, previous, bothHands) end
+        local current = episode.belt and Belt.current(actor, borrowed)
+        local attachmentSafe = not episode.belt and not value.fromHotbar
+            or current and unequipBelt and current.hotbar == unequipBelt.hotbar
+                and current.index == unequipBelt.index and current.kind == unequipBelt.kind
+                and current.model == unequipBelt.model and current.definition == unequipBelt.definition
+                and (current.detached == true) == (unequipBelt.detached == true)
+                and (value.fromHotbar == true) == (not current.detached)
         return getmetatable(value) == ISUnequipAction and value.character == actor and value.item == borrowed
-            and not value.fromHotbar and value.reason == nil and Toolkit.ActionQueuePolicy.matchesNative(value)
+            and attachmentSafe and value.reason == nil and Toolkit.ActionQueuePolicy.matchesNative(value)
     end
     local effect = settlement.observeCleanupEffect(action, {
         guard = function(value)
@@ -230,6 +254,7 @@ local function restore(episode, parent)
         end,
     })
     if not effect then report('return', 'effect-unobserved'); return end
+    if not loan then ISTimedActionQueue.add(action); return end
     local continuation = command(actor, function()
         if settlement.earned(effect) then settlement.enqueueBorrowedReturn(loan) end
     end)
@@ -246,18 +271,20 @@ local function restore(episode, parent)
 end
 
 function Razor.finish(episode)
-    if not Toolkit.ActionQueueRazorProducer.owns(episode) or not episode.loan or not episode.equipHandle then return end
+    if not Toolkit.ActionQueueRazorProducer.owns(episode) or not (episode.loan or episode.belt) or not episode.equipHandle then return end
     local body, actor = episode.body, episode.actor
     local token = body.toolkitQueueOperation
     local queue = ISTimedActionQueue.queues[actor]
-    if not token or episode.pickup.toolkitQueueOperation ~= token or episode.equip.toolkitQueueOperation ~= token
+    if not token or episode.pickup and episode.pickup.toolkitQueueOperation ~= token or episode.equip.toolkitQueueOperation ~= token
         or not queue or queue.queue[#queue.queue] ~= body or queue.queue[#queue.queue - 1] ~= episode.equip
         or not Toolkit.ActionQueueDefinitions.inspect(body) or not episode.source() then return end
     local parent
     parent = command(actor, function() restore(episode, parent) end)
     local ops, settlement = Toolkit.ActionQueueOperations, Toolkit.ActionQueueSettlement
     ops.adopt(parent, token)
-    if settlement.cleanup(parent, episode.loan) and settlement.claimBorrowedReturn(parent, episode.loan) then
+    if episode.belt then episode.cleanup = parent end
+    if settlement.cleanup(parent, episode.loan or episode.equipHandle)
+        and (not episode.loan or settlement.claimBorrowedReturn(parent, episode.loan)) then
         ops.runWith(token, ISTimedActionQueue.add, parent)
     end
 end

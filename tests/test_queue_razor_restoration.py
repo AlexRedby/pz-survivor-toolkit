@@ -36,6 +36,11 @@ def control_observation(case):
     if case == 'cut-hair-scissors':
         ids.update(initialHair='Fabian', targetHair='Bald')
         ids['baseline']['appearance'].update(hair='Fabian', nonAttached=False)
+    if case in v.BELT_CASES:
+        ids.update(beltIndex=4,beltConfigured=True)
+        ids['baseline']['belt']=v.belt_seed(ids)
+        ids['baseline']['origin']['sourceCount']=0
+        next(item for item in ids['baseline']['items'] if item['id']==ids['items']['razor']['id'])['container']='root'
     roles = {'trim': [dict(actionRef='trim', nativeRef='native', operationRef='episode', startedAt=1)],
              'tail': [dict(actionRef='tail', operationRef='independent', startedAt=10)],
              'command': [dict(actionRef='command')], 'restore': [dict(admittedAt=9)]}
@@ -82,6 +87,57 @@ class RazorRestorationTests(unittest.TestCase):
         for kind in ('sp', 'mp'):
             a.validate(selection(kind))
 
+    def test_belt_receipts_require_exact_root_tool_and_native_newer_slot_request(self):
+        # Receipt sub-schema only; never a fabricated successful native run.
+        ids, roles, _ = control_observation('belt-scissors-replace')
+        ids['baseline']['belt'] = v.belt_seed(ids)
+        ids['baseline']['origin']['sourceCount'] = 0
+        next(item for item in ids['baseline']['items'] if item['id'] == ids['items']['razor']['id'])['container'] = 'root'
+        roles.update(slotDetach=[dict(actionRef='detach')], slotAttach=[dict(actionRef='attach', startedAt=12, operationRef='new-slot')])
+        during = v.borrowed_snapshot(ids)
+        self.assertFalse(during['belt']['occupant'])
+        self.assertEqual(during['belt']['tool']['slot'], 4)
+        value = dict(source='ISHotbar.attachItem', at=3, trimRef='trim', trimNative='native', trimDelta=.4,
+                     detachRef='detach', attachRef='attach', before=copy.deepcopy(during), after=copy.deepcopy(during))
+        ev = dict(replacement=value)
+        self.assertEqual(v.replacement_errors(ev, roles, ids, 'sp'), [])
+        for mutate in (lambda e: e['replacement'].update(source='fixture-setter'),
+                       lambda e: e['replacement'].update(at=11),
+                       lambda e: e['replacement'].update(attachRef='foreign'),
+                       lambda e: e['replacement']['before']['belt']['tool'].update(root=False),
+                       lambda e: e['replacement']['after']['belt'].update(occupant=ids['items']['replacement']['id'])):
+            changed=copy.deepcopy(ev);mutate(changed)
+            self.assertTrue(v.replacement_errors(changed, roles, ids, 'sp'))
+        final=v.expected(ids,True)
+        self.assertEqual(final['primary'], ids['items']['previous']['id'])
+        self.assertEqual(final['belt']['occupant'], ids['items']['replacement']['id'])
+        self.assertEqual(final['belt']['tool']['slot'], -1)
+        self.assertTrue(final['belt']['tool']['root'])
+        self.assertTrue(v.replacement_errors(ev,roles,ids,'mp'))
+        roles['trim'][0]['ack']=[dict(state='started',at=2)]
+        self.assertEqual(v.replacement_errors(ev,roles,ids,'mp'),[])
+
+    def test_host_detached_belt_tool_requires_exact_empty_wire_strings(self):
+        # Endpoint receipt sub-schema, not a fabricated native run.
+        ids, _, _ = control_observation('belt-scissors-replace')
+        host = v.expected(ids, True, authority_wire=True)
+        local = v.expected(ids, False)
+        self.assertEqual(host['belt']['tool']['slotType'], '')
+        self.assertEqual(host['belt']['tool']['model'], '')
+        self.assertIs(local['belt']['tool']['slotType'], False)
+        self.assertEqual(v.belt_endpoint_errors(host, ids, True, 'mp'), [])
+        self.assertEqual(v.belt_endpoint_errors(local, ids, False, 'mp'), [])
+        self.assertTrue(v.belt_endpoint_errors(host, ids, True, 'sp'))
+        for mutate in (lambda value: value['belt']['tool'].update(slotType=False),
+                       lambda value: value['belt']['tool'].update(slotType='SmallBeltLeft'),
+                       lambda value: value['belt']['tool'].update(model='Belt Left Screwdriver'),
+                       lambda value: value['belt']['tool'].update(id=ids['items']['replacement']['id']),
+                       lambda value: value['belt'].update(occupant=ids['items']['razor']['id']),
+                       lambda value: value['belt']['replacement'].update(id=ids['items']['razor']['id'])):
+            changed=copy.deepcopy(host);mutate(changed)
+            self.assertTrue(v.belt_endpoint_errors(changed,ids,True,'mp'))
+        self.assertEqual(host['belt']['tool']['slotType'], '')
+
     def test_selection_refuses_wrong_provider_and_dedicated_host(self):
         mutations = [lambda s: s.update(mode='native'), lambda s: s['mods'].append('P4TidyUpMeister'),
                      lambda s: s['options'].pop('mp_host'), lambda s: s.update(cases=list(reversed(a.CASES))),
@@ -97,7 +153,8 @@ class RazorRestorationTests(unittest.TestCase):
                                   'two-handed-axe', 'two-handed-axe-new-primary-intent',
                                   'one-handed-axe', 'one-handed-axe-new-primary-intent',
                                   'mandatory-both-stone-wheel', 'mandatory-both-wood-axe-new-primary-intent',
-                                  'heavy-stone-anvil', 'heavy-stone-anvil-new-primary-intent', 'heavy-stone-anvil-unavailable'))
+                                  'heavy-stone-anvil', 'heavy-stone-anvil-new-primary-intent', 'heavy-stone-anvil-unavailable',
+                                  'belt-scissors', 'belt-scissors-cancel', 'belt-scissors-replace'))
         for kind in ('sp', 'mp'):
             for cases in (list(a.CASES[:2]), *([case] for case in a.CASES), list(a.CASES[2:])):
                 value = selection(kind); value['cases'] = cases

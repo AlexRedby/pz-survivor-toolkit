@@ -5,7 +5,7 @@ import zipfile
 
 from .tv_controls import MODS as SELECTED_MODS
 
-CASES = ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active', 'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'two-handed-axe-new-primary-intent', 'one-handed-axe', 'one-handed-axe-new-primary-intent', 'mandatory-both-stone-wheel', 'mandatory-both-wood-axe-new-primary-intent', 'heavy-stone-anvil', 'heavy-stone-anvil-new-primary-intent', 'heavy-stone-anvil-unavailable')
+CASES = ('restore-success', 'empty-primary', 'new-primary-intent', 'cancel-active', 'full-origin', 'unavailable-origin', 'keep-return', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'two-handed-axe-new-primary-intent', 'one-handed-axe', 'one-handed-axe-new-primary-intent', 'mandatory-both-stone-wheel', 'mandatory-both-wood-axe-new-primary-intent', 'heavy-stone-anvil', 'heavy-stone-anvil-new-primary-intent', 'heavy-stone-anvil-unavailable', 'belt-scissors', 'belt-scissors-cancel', 'belt-scissors-replace')
 MODS = [identifier for identifier in SELECTED_MODS if identifier != 'P4TidyUpMeister']
 PREFIX = '[RAZOR_RESTORATION] '
 

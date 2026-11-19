@@ -219,3 +219,38 @@ for _, obstacle in ipairs({'unavailable', 'full', 'full-empty-hand'}) do
 end
 
 string.contains=originalContains
+
+-- The shipped P4-free startup path must also restore an originally empty hand
+-- with the editor disabled. This native root-inventory pair earns no transfer.
+do
+ local f=create(false,{p4=false,razor=true,queue=false,belt=true})
+ local e,q,t=f.env,f.queue,f.env.PZSurvivorToolkit
+ local scissors=f.tool(851,'Base.Scissors',f.inventory)
+ local secondary=f.tool(852,'Base.Pen',f.inventory)
+ f.player.secondary=secondary
+ local slot=f.hotbar.availableSlot[2].def
+ f.hotbar:attachItem(scissors,slot.attachments.Screwdriver,2,slot,false)
+ assert(t.ActionQueueRazorRestoration.enabled(f.player),'default P4-free startup did not enable native belt tools')
+ e.ISCharacterScreen.onTrimBeard(f.player,'Moustache')
+ assert(#q.queue==3,'belt grooming added a pickup/borrowed-return continuation or lost its cleanup')
+ local equip,body,cleanup=unpack(q.queue)
+ assert(equip.Type=='ISEquipWeaponAction'and equip.fromHotbar and equip.item==scissors
+  and body.Type=='ISTrimBeard'and cleanup.Type=='ISQueueActionsAction')
+ local state=assert(t.ActionQueueSettlement.operationState(equip))
+ assert(#state.borrowings==0,'a root belt tool acquired borrowed-transfer debt')
+ f.start(equip);f.dispatch(equip,'perform')
+ assert(f.player.primary==scissors and f.player.secondary==secondary
+  and f.player:getAttachedItem(slot.attachments.Screwdriver)==nil)
+ f.start(body);f.dispatch(body,'perform')
+ f.start(cleanup);f.dispatch(cleanup,'perform')
+ local restore=q.current
+ assert(#q.queue==1 and restore.Type=='ISUnequipAction'and restore.fromHotbar and restore.item==scissors,
+  'empty hand cleanup must issue exactly the native belt unequip, without a return transfer')
+ f.start(restore);f.dispatch(restore,'perform')
+ assert(#q.queue==0 and f.player.primary==nil and f.player.secondary==secondary
+  and scissors.container==f.inventory and scissors:getAttachedSlot()==2
+  and f.hotbar.attachedItems[2]==scissors and f.player:getAttachedItem(slot.attachments.Screwdriver)==scissors,
+  'native belt unequip did not restore original assignment and independent secondary hand')
+ assert(#f.effects==0 and #t.ActionQueueSettlement.operationState(body).borrowings==0,
+  'root belt cleanup performed an inventory transfer')
+end

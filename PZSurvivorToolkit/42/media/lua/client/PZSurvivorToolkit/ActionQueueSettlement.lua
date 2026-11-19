@@ -244,7 +244,8 @@ end
 function Settlement.beginIndependentRestoration(episode, action)
     local producer = Toolkit.ActionQueueRazorProducer
     if not producer or not executionProof.closure(producer.owns, "ActionQueueRazorProducer.lua")
-        or not producer.owns(episode) or action ~= episode.pickup or action ~= episode.currentAction
+        or not producer.owns(episode) or (action ~= episode.pickup and not (episode.belt and action == episode.equip))
+        or action ~= episode.currentAction
         or action.character ~= episode.actor then return false end
     local token = action.toolkitQueueOperation
     local queue = ISTimedActionQueue.getTimedActionQueue(episode.actor)
@@ -264,7 +265,7 @@ function Settlement.restorationActive(action)
     if not episode then return false end
     local step = record.actions[action]
     return action == episode.pickup or action == episode.equip or action == episode.body
-        or step ~= nil and step.phase == "cleanup" and (step.returnClaim ~= nil or step.returnClaims ~= nil or step.required == true or step.returning ~= nil)
+        or step ~= nil and step.phase == "cleanup" and (episode.belt and action == episode.cleanup or step.returnClaim ~= nil or step.returnClaims ~= nil or step.required == true or step.returning ~= nil)
 end
 
 function Settlement.admitCancellation(queue, request, decision)

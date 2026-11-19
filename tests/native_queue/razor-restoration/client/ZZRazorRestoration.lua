@@ -28,7 +28,7 @@ local Approach=T.ActionQueueApproach
 local isContainerApproach=Approach and Approach.isContainer
 local phase,index,since='prepare',1,getTimestampMs()
 local started,ready,done=false,false,false
-local state,authority,previous,ids,receipt,placement,placing,placementProof,quiet
+local state,authority,previous,ids,receipt,placement,placing,placementProof,quiet,beltRequested,beltTraceAt,beltClientWorn,beltClientConfigured
 local evidence,actions,tracks,order={},{},{},{}
 local menu,cutMenu,primaryMenu,nativeMethods
 local originReceipt,originRequestedAt,heavyReceipt,heavyRequestedAt
@@ -65,6 +65,8 @@ end
 local function role(action)
  if action.Type==(ids.case=='cut-hair-scissors'and'ISCutHair'or'ISTrimBeard')then return 'trim'end
  if action.Type=='ISReadABook'then return 'tail'end
+ if F.beltCase(ids.case)and action.Type=='ISDetachItemHotbar'then return 'slotDetach'end
+ if F.beltCase(ids.case)and action.Type=='ISAttachItemHotbar'then return 'slotAttach'end
  if F.heavyCase(ids.case)and action.Type=='ISInventoryTransferAction'and action.item and action.item:getID()==ids.items.previous.id then return'heavyPickup'end
  if action.Type=='ISInventoryTransferAction'and action.item and action.item:getID()==ids.items.razor.id then
   return action.destContainer==getPlayer():getInventory()and'pickup'or'returned'
@@ -83,7 +85,7 @@ local function track(action)
   local row=tracks[action]
   if row.operation~=action.toolkitQueueOperation then
    local original=actions.trim and actions.trim.toolkitQueueOperation;local token=action.toolkitQueueOperation
-   assert(ids.case=='cancel-active'and evidence.control and row.role=='command'and not row.operationTransition
+   assert(F.cancelCase(ids.case)and evidence.control and row.role=='command'and not row.operationTransition
     and row.actionRef==evidence.producerQueue[#evidence.producerQueue]and row.operation==original
     and token and token~=original and token~=actions.tail.toolkitQueueOperation and not action.action and not row.native,
     'operation changed outside exact preallocated canceled razor cleanup command')
@@ -97,12 +99,12 @@ local function track(action)
  local name=role(action);assert(name~='unknown','unexpected native producer action '..tostring(action.Type))
  if name~='command'then assert(not actions[name]or actions[name]==action,'duplicate exact native action '..name);actions[name]=action end
  local row={role=name,type=action.Type,actionRef=tostring(action),operationRef=tostring(action.toolkitQueueOperation),itemId=action.item and action.item:getID()or false,
-  constructorDuration=action.maxTime,hairStyle=action.Type=='ISCutHair'and action.hairStyle or nil,sourceRef=action.srcContainer and tostring(action.srcContainer)or false,allocated=false,started=false,progress=false,events={},ack={},transfers={}}
+  constructorDuration=action.maxTime,fromHotbar=action.fromHotbar==true,hairStyle=action.Type=='ISCutHair'and action.hairStyle or nil,sourceRef=action.srcContainer and tostring(action.srcContainer)or false,allocated=false,started=false,progress=false,events={},ack={},transfers={}}
  if action.Type=='ISEquipWeaponAction'then row.equipPrimary=action.primary==true;row.equipTwoHands=action.twoHands==true end
  row.actor,row.queue,row.root,row.item,row.operation=action.character,q(),action.character:getInventory(),action.item,action.toolkitQueueOperation
  row.source,row.destination=action.srcContainer,action.destContainer
  tracks[action]=row;order[#order+1]=row
- raw('ACTION',{case=ids.case,action={role=name,type=row.type,actionRef=row.actionRef,itemId=row.itemId,constructorDuration=row.constructorDuration,hairStyle=row.hairStyle,equipPrimary=row.equipPrimary,equipTwoHands=row.equipTwoHands}})
+ raw('ACTION',{case=ids.case,action={role=name,type=row.type,actionRef=row.actionRef,itemId=row.itemId,constructorDuration=row.constructorDuration,fromHotbar=row.fromHotbar,hairStyle=row.hairStyle,equipPrimary=row.equipPrimary,equipTwoHands=row.equipTwoHands}})
  return row
 end
 local function itemIdentity(action,row,boundary)
@@ -198,7 +200,7 @@ assert(T.ActionQueueLifecycle.registerObserver('fixture-razor-restoration',{
 local function request(command)
  local args={case=config.cases[index],placement=placement,clientPlacement=placementProof,requestedAt=command=='ChangeHeavy'and heavyRequestedAt or originRequestedAt}
  if isClient()then sendClientCommand('RazorRestorationTest',command,args)
- elseif command=='Prepare'then authority=F.prepare(getPlayer(),args.case,placement,placementProof,previous);previous=nil;ids=authority.ids;raw('PREPARED',ids)
+ elseif command=='Prepare'then authority=F.prepare(getPlayer(),args.case,placement,placementProof,previous);previous=nil;ids=authority.ids;if not F.beltCase(ids.case)then raw('PREPARED',ids)end
  elseif command=='ChangeHeavy'then heavyReceipt=F.removeHeavy(authority,heavyRequestedAt);raw('HEAVY_REMOVED',heavyReceipt)
  elseif command=='ChangeOrigin'then originReceipt=F.changeOrigin(authority,originRequestedAt);raw('ORIGIN',originReceipt)
  else receipt=assert(F.verify(authority),'SP exact physical authority differs');receipt.transfers=authority.transfers or{};receipt.heavyTransitions=authority.heavy or{};raw('VERIFIED',receipt)end
@@ -207,7 +209,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  if module~='RazorRestorationTest'or done then return end
  if command=='Failed'then fail(args.error)
  elseif args and args.case==config.cases[index]then
-  if command=='Prepared'then ids=args elseif command=='Verified'then receipt=args elseif command=='OriginChanged'then originReceipt=args elseif command=='HeavyChanged'then heavyReceipt=args end
+  if command=='Prepared'or command=='BeltConfigured'then ids=args elseif command=='Verified'then receipt=args elseif command=='OriginChanged'then originReceipt=args elseif command=='HeavyChanged'then heavyReceipt=args end
  end
 end)
 local function callbacksUnchanged()
@@ -215,8 +217,73 @@ local function callbacksUnchanged()
  for class,methods in pairs(nativeMethods)do for name,callback in pairs(methods)do if class[name]~=callback then return false end end end
  return true
 end
+local function beltWaiting(gate,details)
+ if beltTraceAt and getTimestampMs()-beltTraceAt<2000 then return end
+ beltTraceAt=getTimestampMs();details=details or{};details.case=ids.case;details.gate=gate;raw('BELT_READY',details)
+end
+local function beltReady()
+ if not F.beltCase(ids.case)then return true end
+ local player=getPlayer();local tool=F.find(player,ids.items.razor.id);local belt=F.find(player,ids.items.belt.id)
+ if not tool or not belt then
+  beltWaiting('replicated-items',{tool=tool and tool:getID()or false,expectedTool=ids.items.razor.id,belt=belt and belt:getID()or false,expectedBelt=ids.items.belt.id});return false
+ end
+ local root=player:getInventory()
+ if root:getItemById(tool:getID())~=tool or tool:getContainer()~=root or root:getItemById(belt:getID())~=belt or belt:getContainer()~=root then
+  beltWaiting('canonical-root',{toolRoot=tool:getContainer()==root,beltRoot=belt:getContainer()==root});return false
+ end
+ if isClient()and not beltClientWorn then
+  assert(phase=='prepared'and empty(),'client belt fixture setup escaped pre-menu boundary')
+  -- Match the qualified equipment fixture: disposable replica setup uses the
+  -- authority-created exact root provider before discovering its actual slots.
+  player:setWornItem(belt:getBodyLocation(),belt);beltClientWorn=true
+ end
+ if player:getWornItem(belt:getBodyLocation())~=belt then
+  local worn=player:getWornItem(belt:getBodyLocation())
+  beltWaiting('provider-worn',{expected=belt:getID(),worn=worn and worn:getID()or false,sameReference=worn==belt});return false
+ end
+ local bar=getPlayerHotbar(player:getPlayerNum());if not bar then beltWaiting('native-hotbar');return false end
+ bar:refresh();bar:reloadIcons()
+ local index=bar:getThisSlotIndex('SmallBeltLeft');local slot=index and bar.availableSlot[index]
+ local definition=slot and slot.def
+ local mapped=definition and definition.attachments and definition.attachments[tool:getAttachmentType()]
+ if not index or not definition or definition.type~='SmallBeltLeft'or slot.slotType~='SmallBeltLeft'or mapped~='Belt Left Screwdriver'then
+  error('native left belt slot unavailable or incompatible: '..JSON.encode({index=index or false,kind=definition and definition.type or false,map=mapped or false}))
+ end
+ if not ids.beltConfigured then
+  beltWaiting('authority-configure',{requested=beltRequested==true,index=index})
+  if not beltRequested then
+   beltRequested=true
+   if isClient()then sendClientCommand('RazorRestorationTest','ConfigureBelt',{case=ids.case,slotIndex=index})
+   else ids=F.configureBelt(authority,index);raw('PREPARED',ids)end
+  end
+  return false
+ end
+ if isClient()and not beltClientConfigured then
+  assert(phase=='prepared'and empty()and index==ids.beltIndex,'replica belt configuration escaped confirmed authority setup')
+  assert(ids.baseline.belt.tool.id==tool:getID()and ids.baseline.belt.tool.slot==index
+   and ids.baseline.belt.provider==belt:getID(),'authority exact belt baseline differs from replica setup')
+  -- Native attach(..., false) is disposable initial fixture setup only. No
+  -- hand, ownership or attachment repair is permitted after the real menu.
+  bar:attachItem(tool,mapped,index,definition,false);bar:reloadIcons();beltClientConfigured=true
+ end
+ local Belt=require 'PZSurvivorToolkit/ActionQueueBeltTool';local captured=Belt.capture(player,tool)
+ local ready=index==ids.beltIndex and tool:getAttachedSlot()==index and tool:getAttachedSlotType()=='SmallBeltLeft'
+  and tool:getAttachedToModel()==mapped and bar.attachedItems[index]==tool and bar:isItemAttached(tool)
+  and player:getAttachedItem(mapped)==tool and captured~=nil
+ if not ready and(not beltTraceAt or getTimestampMs()-beltTraceAt>2000)then
+  beltTraceAt=getTimestampMs()
+  raw('BELT_READY',{case=ids.case,index=index,expected=ids.beltIndex,slot=tool:getAttachedSlot(),kind=tool:getAttachedSlotType()or false,
+   model=tool:getAttachedToModel()or false,map=mapped,cache=bar.attachedItems[index]and bar.attachedItems[index]:getID()or false,
+   physical=player:getAttachedItem(mapped)and player:getAttachedItem(mapped):getID()or false,class=getClassSimpleName(tool),
+   canonical=player:getInventory():getItemById(tool:getID())==tool,enabled=Razor.enabled(player)==true,captured=captured~=nil,
+   nativeGetter=Proof.closure(getPlayerHotbar,'ISPlayerData.lua')==true,nativeAttached=Proof.closure(ISHotbar.isItemAttached,'ISHotbar.lua')==true,
+   nativeAnimate=Proof.closure(ISHotbar.setAttachAnim,'ISHotbar.lua')==true})
+ end
+ return ready
+end
 local function produce()
  assert(empty()and F.same(F.snapshot(state),ids.baseline),'native producer baseline differs')
+ assert(beltReady(),'exact native belt cache/slot not ready at menu boundary')
  actions,tracks,order={},{},{}
  local cut=ids.case=='cut-hair-scissors'
  evidence={before=F.snapshot(state),producer=cut and'ISCharacterScreen.onCutHair'or'ISCharacterScreen.onTrimBeard',target=cut and ids.targetHair or ids.targetBeard,installed=Razor.enabled()==true,
@@ -269,9 +336,9 @@ local function produce()
  if cut then ISCharacterScreen.onCutHair(getPlayer(),ids.targetHair,300)
  else ISCharacterScreen.onTrimBeard(getPlayer(),ids.targetBeard)end
  for _,action in ipairs(q().queue)do track(action)end
- assert(actions.pickup and actions.preparationEquip and actions.trim,'actual razor menu did not produce native pickup/equip/trim')
+ assert((F.beltCase(ids.case)or actions.pickup)and actions.preparationEquip and actions.trim,'actual razor menu did not produce native pickup/equip/trim')
  local queue=q();local list=queue.queue;local prefix=actions.approach and 1 or 0
- local expected=prefix==1 and {'approach','pickup','preparationEquip','trim','command'}or{'pickup','preparationEquip','trim','command'}
+ local expected=F.beltCase(ids.case)and{'preparationEquip','trim','command'}or prefix==1 and {'approach','pickup','preparationEquip','trim','command'}or{'pickup','preparationEquip','trim','command'}
  assert(#list==#expected,'actual producer cleanup topology differs')
  evidence.producerQueue,evidence.producerEntries={},{}
  for position,action in ipairs(list)do
@@ -322,7 +389,7 @@ local function cancellationState(trim,row,boundary)
 end
 observeCancelStop=function(boundary,nextAction)
  local control=evidence.control
- if not ids or ids.case~='cancel-active'or not control or not control.nativeStop or control.nativeStop.after or control.accepted~=true then return end
+ if not ids or not F.cancelCase(ids.case)or not control or not control.nativeStop or control.nativeStop.after or control.accepted~=true then return end
  local trim=actions.trim;local row=tracks[trim];local sample=cancellationState(trim,row,boundary)
  assert(sample.actionSame and sample.nativeSame and sample.actorSame and sample.queueSame and sample.rootSame and sample.beard==ids.initialBeard,'canceled trim escaped exact native actor/queue/item episode')
  if not sample.member and not sample.current then
@@ -422,7 +489,7 @@ local function observe()
   if F.unavailableHeavy(ids.case)and not heavyRequestedAt then
    heavyRequestedAt=getTimestampMs();request('ChangeHeavy')
   end
-  if ids.case=='cancel-active'and not evidence.control then cancelActive(trim,row)end
+  if F.cancelCase(ids.case)and not evidence.control then cancelActive(trim,row)end
   if originCase()and not originRequestedAt then
    originRequestedAt=getTimestampMs()
    evidence.control={source='authority.ChangeOrigin',input='authority-command',at=originRequestedAt,requestedAt=originRequestedAt,
@@ -450,6 +517,17 @@ local function observe()
   raw('CONTROL',{case=ids.case,observation=evidence.control});raw('ORIGIN_CLIENT',originReceipt)
  end
  if originCase()then keepBlocked()end
+ if ids.case=='belt-scissors-replace'and row.progress and q().current==trim and not evidence.replacement then
+  if isClient()and(not row.receipt or T.ActionQueueAcknowledgements.state(trim,row.receipt)~='started')then return end
+  local bar=assert(getPlayerHotbar(getPlayer():getPlayerNum()));bar:refresh();bar:reloadIcons()
+  local slot=assert(bar.availableSlot[ids.beltIndex]);local replacement=assert(F.find(getPlayer(),ids.items.replacement.id))
+  assert(slot.def.type=='SmallBeltLeft'and slot.def.attachments[replacement:getAttachmentType()]=='Belt Left Screwdriver')
+  local before=F.snapshot(state);bar:attachItem(replacement,'Belt Left Screwdriver',ids.beltIndex,slot.def,true)
+  for _,action in ipairs(q().queue)do track(action)end
+  assert(actions.slotDetach and actions.slotAttach and not actions.slotDetach.action and not actions.slotAttach.action)
+  evidence.replacement={at=getTimestampMs(),source='ISHotbar.attachItem',before=before,after=F.snapshot(state),trimRef=row.actionRef,trimNative=tostring(trim.action),trimDelta=trim:getJobDelta(),detachRef=tracks[actions.slotDetach].actionRef,attachRef=tracks[actions.slotAttach].actionRef}
+  raw('REPLACEMENT',{case=ids.case,observation=evidence.replacement})
+ end
  if F.intentCase(ids.case)and row.progress and q().current==trim and not evidence.explicitRequested then
   assert(getPlayer():getPrimaryHandItem()==F.find(getPlayer(),ids.items.razor.id),'explicit request missed actual razor held during trim')
   local before=T.ActionQueueTidyIntent.primaryRequestRevision(getPlayer())
@@ -474,7 +552,7 @@ require('QueuePreflight').onTick(Events,function()
    assert(config.mode=='toolkit'and not player:isTimedActionInstant(),'ordinary Toolkit native durations required')
    assert(not P4TidyUpMeister and not getActivatedMods():contains('P4TidyUpMeister'),'native own return provider required')
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not editorOff)
-   assert(Razor.install()and Razor.enabled(),'real Razor.install consumer did not install')
+   if not F.beltCase(config.cases[index])then assert(Razor.install()and Razor.enabled(),'real Razor.install consumer did not install')else assert(Razor.enabled(),'shipped grooming activation unavailable')end
    player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false);getCore():setOptionAutoDrink(false);getCore():setOptionPauseOnFocusloss(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
    menu,cutMenu,primaryMenu=ISCharacterScreen.onTrimBeard,ISCharacterScreen.onCutHair,ISInventoryPaneContextMenu.OnPrimaryWeapon
@@ -494,7 +572,17 @@ require('QueuePreflight').onTick(Events,function()
    assert(empty());placement=placement or P.choose(player);placing=placing or P.beginCentered(player,placement);placementProof=P.poll(placing);if not placementProof then return end
    raw('CLIENT_PLACEMENT',{case=config.cases[index],proof=placementProof});phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
-   state=F.resolve(player,ids);if not state then return end
+   if not beltReady()then return end
+   state=F.resolve(player,ids);if not state then
+    if F.beltCase(ids.case)then
+     local missing={};for name,spec in pairs(ids.items)do if not F.find(player,spec.id)then missing[#missing+1]=name..':'..tostring(spec.id)end end
+     local primary=player:getPrimaryHandItem();local secondary=player:getSecondaryHandItem();local bag=F.find(player,ids.bag.id)
+     beltWaiting('baseline-resolve',{missing=missing,primary=primary and primary:getID()or false,expectedPrimary=ids.baseline.primary,
+      secondary=secondary and secondary:getID()or false,expectedSecondary=ids.baseline.secondary,beard=player:getHumanVisual():getBeardModel(),
+      bagWorn=bag and player:getWornItems():contains(bag)or false})
+    end
+    return
+   end
    local pane=assert(getPlayerInventory(player:getPlayerNum()));pane:refreshBackpacks();local available=false
    local bag=F.find(player,ids.bag.id)
    for _,entry in ipairs(pane.backpacks)do if entry.inventory==bag:getItemContainer()then available=true end end
@@ -504,12 +592,17 @@ require('QueuePreflight').onTick(Events,function()
    assert(actions.trim and tracks[actions.trim].started and tracks[actions.trim].progress,'real native trim did not progress')
    assert(actions.tail and tracks[actions.tail].started and tracks[actions.tail].progress,'independent native reader did not progress')
    local debts=T.ActionQueueSettlement.blockedReturns(player)
-   if handDelay then
+   if F.beltCase(ids.case)then
+    assert(not actions.pickup and not actions.returned and #debts==0,'belt tool created inventory loan/debt')
+    if ids.case=='belt-scissors-replace'then assert(evidence.replacement and actions.slotAttach and actions.slotDetach ,'newer native slot intent lost native actions')
+    else assert(actions.restore,'belt grooming hand restoration missing')end
+    if F.cancelCase(ids.case)then assert(evidence.control and evidence.control.nativeStop.after,'belt active cancel lacked native stop')end
+   elseif handDelay then
     evidence.handAuthority=handAuthority.complete()
     assert(actions.restore and not actions.returned and #debts==0,'hand Keep constructed a location return or lost debt retirement')
    elseif F.returnedCase(ids.case)then
     assert((not F.heavyCase(ids.case)or actions.heavyPickup)and actions.restore and actions.returned and #debts==0 and not evidence.explicitRequested,'ordinary producer restore/return missing')
-    if ids.case=='cancel-active'then assert(evidence.control and evidence.control.nativeStop and evidence.control.nativeStop.after,'exact native trim cancellation was not observed before cleanup')end
+    if F.cancelCase(ids.case)then assert(evidence.control and evidence.control.nativeStop and evidence.control.nativeStop.after,'exact native trim cancellation was not observed before cleanup')end
    elseif F.unavailableHeavy(ids.case)then
     assert(evidence.heavyRemoval and not actions.heavyPickup and not actions.restore and not actions.returned,'unavailable heavy recovery constructed native work')
     assert(#debts==1 and debts[1].itemId==ids.items.razor.id and debts[1].state=='blocked','unavailable heavy lost exact unpaid razor debt')
@@ -538,7 +631,7 @@ require('QueuePreflight').onTick(Events,function()
    if not config.cases[index]then emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
    for _,debt in ipairs(T.ActionQueueSettlement.blockedReturns(player))do assert(T.ActionQueueExecution.keepReturn(player,debt.id),'explicit fixture debt retirement refused')end
    state,authority,ids,receipt,placement,placing,placementProof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
-   originReceipt,originRequestedAt,heavyReceipt,heavyRequestedAt=nil,nil,nil,nil
+   originReceipt,originRequestedAt,heavyReceipt,heavyRequestedAt,beltRequested,beltTraceAt,beltClientWorn,beltClientConfigured=nil,nil,nil,nil,nil,nil,nil,nil
    actions,tracks,order,evidence={},{},{},{};phase='prepare';since=getTimestampMs()
   end
  end)

@@ -122,7 +122,7 @@ local function pending(action)
   and finite(action.maxTimeInit)and action.maxTimeInit>=1 and finite(action.maxTime)and action.maxTime>=1
   and(action.maxTime==1 or action.maxTime==action.maxTimeInit)
 end
-local function itemFacts(actor,root,item)
+local function itemFacts(actor,root,item,attachedTool)
  if item==nil then return false end
  if not instanceof(item,'InventoryItem')then return end
  local javaClass=getClassSimpleName(item)
@@ -130,7 +130,7 @@ local function itemFacts(actor,root,item)
  local id,fullType=item:getID(),item:getFullType()
  if not finite(id)or id%1~=0 or id==-1 or kind(fullType)~='string'or fullType==''
   or item:getContainer()~=root or root:getItemWithID(id)~=item
-  or item:getAttachedSlot()~=-1 or item:isForceDropHeavyItem()~=false or item:canBeActivated()~=false
+  or item:getAttachedSlot()~=-1 and item~=attachedTool or item:isForceDropHeavyItem()~=false or item:canBeActivated()~=false
   or item:getWorldItem()or item:getIsCraftingConsumed()~=false or item:hasTag(ItemTag.REPLACE_PRIMARY)~=false
   or item:hasTag(ItemTag.WEARABLE)~=false or actor:isEquippedClothing(item)~=false then return end
  local both=item:isRequiresEquippedBothHands()
@@ -283,14 +283,14 @@ end
 -- Exact current ordinary hand state at a native tool boundary. A held item
 -- must still be the same root inventory object; equipment with extra native
 -- side effects is outside the automatic primary-hand restoration contract.
-function Equip.restorationHands(actor, incoming, incomingBoth)
+function Equip.restorationHands(actor, incoming, incomingBoth, attachedTool)
  local function read()
   if not actor or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead() or actor:isAsleep() then return end
   local root,back=actor:getInventory(),actor:getClothingItem_Back()
   if back and back:hasTag(ItemTag.REPLACE_PRIMARY) then return end
   local function ordinary(item, sharedGrip)
    if not item then return false end
-   local valid,both,weapon,handgun=itemFacts(actor,root,item)
+   local valid,both,weapon,handgun=itemFacts(actor,root,item,attachedTool)
    if not valid or handgun or both and not sharedGrip then return end
    if sharedGrip and not (both or weapon and item:isTwoHandWeapon()==true) then return end
    return {item=item,requiresBoth=both,handWeapon=weapon,handgun=handgun}

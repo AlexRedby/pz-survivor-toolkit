@@ -11,7 +11,9 @@ TYPES = {'razor': 'Base.Razor', 'previous': 'Base.Hammer', 'replacement': 'Base.
 ACTION_TYPES = {'heavyPickup': 'ISInventoryTransferAction', 'pickup': 'ISInventoryTransferAction', 'preparationEquip': 'ISEquipWeaponAction', 'trim': 'ISTrimBeard',
                 'restore': 'ISEquipWeaponAction', 'returned': 'ISInventoryTransferAction', 'tail': 'ISReadABook',
                 'explicitEquip': 'ISEquipWeaponAction', 'command': 'ISQueueActionsAction', 'approach': 'ISQueueActionsAction'}
-ACTION_FIELDS = ('role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle', 'equipPrimary', 'equipTwoHands')
+BELT_CASES = {'belt-scissors', 'belt-scissors-cancel', 'belt-scissors-replace'}
+CANCEL_CASES = {'cancel-active', 'belt-scissors-cancel'}
+ACTION_FIELDS = ('fromHotbar', 'role', 'type', 'actionRef', 'itemId', 'constructorDuration', 'hairStyle', 'equipPrimary', 'equipTwoHands')
 RETURNED_CASES = {'heavy-stone-anvil', 'restore-success', 'empty-primary', 'cancel-active', 'trim-scissors', 'cut-hair-scissors', 'two-handed-axe', 'one-handed-axe', 'mandatory-both-stone-wheel'}
 TWO_HANDED_AXE_CASES = {'two-handed-axe', 'two-handed-axe-new-primary-intent'}
 ONE_HANDED_AXE_CASES = {'one-handed-axe', 'one-handed-axe-new-primary-intent'}
@@ -31,11 +33,12 @@ SCISSORS_CASES = {'trim-scissors', 'cut-hair-scissors'}
 
 def item_types(case):
     values = dict(TYPES)
-    if case in SCISSORS_CASES: values['razor'] = 'Base.Scissors'
+    if case in SCISSORS_CASES | BELT_CASES: values['razor'] = 'Base.Scissors'
     if case in HEAVY_CASES: values['previous'] = 'Base.StoneAnvil'
     if case in AXE_CASES: values['previous'] = 'Base.Axe'
     if case in MANDATORY_BOTH_CASES: values['previous'] = MANDATORY_BOTH_TYPES[case]
     if case in ONE_HANDED_AXE_CASES: values['secondary'] = 'Base.Pen'
+    if case in BELT_CASES: values['belt'] = 'Base.Belt2'
     return values
 
 
@@ -97,12 +100,12 @@ def action_key(value):
     return ('literal', value)
 
 
-def expected(ids, authority):
+def expected(ids, authority, authority_wire=False):
     row = copy.deepcopy(ids['baseline'])
     if ids['case'] == 'cut-hair-scissors':
         row['appearance'].update(hair=ids['targetHair'], nonAttached=False)
     else:
-        row['appearance']['beard'] = ids['initialBeard'] if ids['case'] == 'cancel-active' else ids['targetBeard']
+        row['appearance']['beard'] = ids['initialBeard'] if ids['case'] in CANCEL_CASES else ids['targetBeard']
     row['primary'] = ids['items']['razor']['id'] if ids.get('handAckDelay') else False if ids['case'] == 'empty-primary' else ids['items']['replacement' if ids['case'] in INTENT_CASES else 'previous']['id']
     if ids['case'] in SHARED_HAND_CASES and (ids['case'] in INTENT_CASES or ids['case'] == UNAVAILABLE_HEAVY): row['secondary'] = False
     if ids['case'] == UNAVAILABLE_HEAVY: row['primary'] = ids['items']['razor']['id']
@@ -112,7 +115,12 @@ def expected(ids, authority):
         for item in row['items']:
             if item['id'] == ids['items']['previous']['id']: item['container'] = state
     row['tail']['pages'] = row['tail']['characterPages'] = ids['items']['tail']['total']
-    if ids.get('handAckDelay') or ids['case'] not in RETURNED_CASES:
+    if ids['case'] in BELT_CASES:
+        if ids['case'] == 'belt-scissors-replace':
+            row['belt']['tool'].update(slot=-1, slotType='' if authority_wire else False, model='' if authority_wire else False)
+            row['belt']['replacement'].update(slot=ids['beltIndex'], slotType='SmallBeltLeft', model='Belt Left Screwdriver')
+            row['belt']['occupant'] = ids['items']['replacement']['id']
+    elif ids.get('handAckDelay') or ids['case'] not in RETURNED_CASES:
         row['origin']['sourceCount'] = 0
         for item in row['items']:
             if item['id'] == ids['items']['razor']['id']:
@@ -198,7 +206,7 @@ def validate_prepared(ids, selection):
     for name, spec in owned.items():
         item = by_id[spec['id']]
         if (item['type'] != spec['type'] or item['favorite'] is not True
-                or item['container'] != (bag['id'] if name == 'razor' else 'root')):
+                or item['container'] != (bag['id'] if name == 'razor' and ids['case'] not in BELT_CASES else 'root')):
             raise ValueError('owned initial inventory location differs')
     if (by_id[bag['id']]['container'] != 'root' or by_id[bag['id']]['type'] != bag['type']
             or len([item for item in baseline['worn'] if item.get('id') == bag['id']]) != 1
@@ -206,7 +214,7 @@ def validate_prepared(ids, selection):
             or any(type(baseline.get(slot)) is not type(value) or baseline[slot] != value for slot, value in seed_hands(ids).items())
             or baseline['appearance'].get('beard') != ids['initialBeard']):
         raise ValueError('authority seed equipment/appearance differs')
-    if baseline.get('origin') != dict(id=bag['id'], type=bag['type'], container='root', worn=True, sourceCount=1):
+    if baseline.get('origin') != dict(id=bag['id'], type=bag['type'], container='root', worn=True, sourceCount=0 if ids['case'] in BELT_CASES else 1):
         raise ValueError('origin baseline exact carried/worn inventory differs')
     tail = owned['tail']; checkpoint = baseline['tail']
     if (type(tail.get('total')) is not int or type(tail.get('initial')) is not int
@@ -293,7 +301,7 @@ def authority_transfer_errors(receipt, ids):
 def producer_errors(ev, roles, ids):
     errors = []
     prefix = ['approach'] if 'approach' in roles else []
-    names = prefix + ['pickup', 'preparationEquip', 'trim', 'command']
+    names = prefix + ([] if ids.get('case') in BELT_CASES else ['pickup']) + ['preparationEquip', 'trim', 'command']
     expected = [roles[name][0]['actionRef'] for name in names]
     entries = ev.get('producerEntries')
     if ev.get('producerQueue') != expected or type(entries) is not list or len(entries) != len(names):
@@ -325,6 +333,7 @@ def producer_errors(ev, roles, ids):
 
 def borrowed_snapshot(ids):
     row = copy.deepcopy(ids['baseline']); row['primary'] = ids['items']['razor']['id']
+    if ids['case'] in BELT_CASES: row['belt']['occupant'] = False
     if ids['case'] in SHARED_HAND_CASES: row['secondary'] = False
     if ids['case'] in HEAVY_CASES:
         row['heavy'] = heavy_physical(ids, 'world')
@@ -356,7 +365,7 @@ def reader_snapshot_errors(snapshot, ids):
 
 def control_errors(ev, roles, ids, kind='sp'):
     case = ids['case']; control = ev.get('control'); errors = []
-    if case not in ORIGIN_CASES and case != 'cancel-active':
+    if case not in ORIGIN_CASES and case not in CANCEL_CASES:
         return [] if all(key not in ev for key in ('control', 'origin', 'originReplica', 'blocked', 'keep')) else ['Unrequested live control evidence']
     trim, tail = roles['trim'][0], roles['tail'][0]
     if (type(control) is not dict or not number(control.get('at'))
@@ -365,7 +374,7 @@ def control_errors(ev, roles, ids, kind='sp'):
             or not number(control.get('trimDelta')) or not 0 < control['trimDelta'] < 1
             or control.get('before') != borrowed_snapshot(ids) or control.get('accepted') is not True):
         return ['Control lacks exact genuinely progressing native trim identity/state']
-    if case == 'cancel-active':
+    if case in CANCEL_CASES:
         members = control.get('members')
         if (control.get('source') != 'ActionQueuePanel.List' or control.get('input') != 'programmatic-press-release'
                 or control.get('after') != control['before'] or control.get('reason') is not False
@@ -728,6 +737,8 @@ def intent_errors(ev, roles, ids):
 
 
 def check_case(row, selection, prepared, verified):
+    if row.get('id') in BELT_CASES:
+        return check_belt_case(row, selection, prepared, verified)
     errors = []
     try:
         case = row['id']; ids = row['ids']; ev = row['evidence']; delayed = ids.get('handAckDelay') is True
@@ -865,6 +876,113 @@ def check_case(row, selection, prepared, verified):
     return errors
 
 
+def belt_seed(ids):
+    return dict(tool=dict(id=ids['items']['razor']['id'], slot=ids['beltIndex'], slotType='SmallBeltLeft', model='Belt Left Screwdriver', root=True),
+                replacement=dict(id=ids['items']['replacement']['id'], slot=-1, slotType=False, model=False, root=True),
+                occupant=ids['items']['razor']['id'], provider=ids['items']['belt']['id'])
+
+
+def replacement_errors(ev, roles, ids, kind):
+    value = ev.get('replacement'); errors = []
+    if ids['case'] != 'belt-scissors-replace':
+        return [] if value is None else ['Unrequested native belt replacement']
+    try:
+        trim, tail, detach, attach = (roles[name][0] for name in ('trim', 'tail', 'slotDetach', 'slotAttach'))
+        during = borrowed_snapshot(ids)
+        if (value.get('source') != 'ISHotbar.attachItem' or value.get('trimRef') != trim['actionRef']
+                or value.get('trimNative') != trim['nativeRef'] or value.get('detachRef') != detach['actionRef']
+                or value.get('attachRef') != attach['actionRef'] or value.get('before') != during or value.get('after') != during
+                or not number(value.get('at')) or not trim['startedAt'] <= value['at'] <= tail['startedAt']
+                or not number(value.get('trimDelta')) or not 0 < value['trimDelta'] < 1
+                or not tail['startedAt'] <= attach['startedAt']
+                or operation_key(attach['operationRef']) == operation_key(trim['operationRef'])):
+            errors.append('Newer native slot request lacks exact active trim and queued detach/attach identity')
+        if kind == 'mp' and not any(ack.get('state') == 'started' and ack['at'] <= value['at'] for ack in trim['ack']):
+            errors.append('Belt replacement preceded genuine Host grooming admission')
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        errors.append('Malformed native slot replacement: ' + str(error))
+    return errors
+
+
+def belt_endpoint_errors(value, ids, authority, kind):
+    # Preserve the raw observed strings; only the Host authority detached tool
+    # has the exact native nil -> zero-length UTF wire transform.
+    wanted = expected(ids, authority, authority_wire=authority and kind == 'mp')
+    return [] if value == wanted else ['Exact authority/client belt slot, hands, root tool or native effects differ']
+
+
+def check_belt_case(row, selection, prepared, verified):
+    errors = []
+    try:
+        ids=row['ids']; ev=row['evidence']; case=row['id']; kind=selection['kind']; canceled=case in CANCEL_CASES
+        if (ids != prepared or ids['case'] != case or row.get('status') != 'passed' or row.get('actor') != 'client1'
+                or row.get('kind') != kind or row.get('mode') != 'toolkit'):
+            raise ValueError('belt case identity differs')
+        validate_prepared(ids, selection)
+        if ids.get('beltConfigured') is not True or type(ids.get('beltIndex')) is not int or not 1 < ids['beltIndex'] < 100: raise ValueError('actual native belt ordering unconfirmed')
+        if ids['baseline'].get('belt') != belt_seed(ids): raise ValueError('exact root belt seed differs')
+        placement.validate(row['clientPlacement'], ids['placement'], 'local', centered=True)
+        authoritative=dict(verified); authoritative.pop('transfers', None); authoritative.pop('heavyTransitions', None)
+        if (verified.get('transfers') != [] or verified.get('heavyTransitions') != [] or row.get('server') != verified
+                or belt_endpoint_errors(authoritative, ids, True, kind) or belt_endpoint_errors(row.get('client'), ids, kind == 'sp', kind)
+                or ev.get('after') != row['client'] or ev.get('before') != ids['baseline']):
+            errors.append('Exact authority/client belt slot, hands, root tool or native effects differ')
+        if any(ev.get(key) != value for key,value in dict(producer=grooming(case)[0], target='Moustache', installed=True,
+                explicitRequested=False, nativeCallbacksUntouched=True, queueIdle=True, debts=[]).items()):
+            errors.append('Belt producer, callback integrity, idle or debt differs')
+        roles={}
+        for action in ev['actions']: roles.setdefault(action['role'], []).append(action)
+        required={'preparationEquip','trim','tail','command','restore'}
+        if case == 'belt-scissors-replace': required.update(('slotDetach','slotAttach'))
+        if set(roles) != required or any(len(value) != 1 for name,value in roles.items()):
+            raise ValueError('belt native producer/cleanup topology differs')
+        refs=[a['actionRef'] for a in ev['actions']]
+        if len(set(refs)) != len(refs): raise ValueError('duplicate native belt action')
+        errors.extend(producer_errors(ev, roles, ids)); errors.extend(hand_seed_errors(ev.get('handSeed'), ids))
+        get=lambda name: roles[name][0]
+        equip,trim,tail,restore=(get(name) for name in ('preparationEquip','trim','tail','restore'))
+        for name,kind_name,item in (('preparationEquip','ISEquipWeaponAction','razor'),('trim','ISTrimBeard','razor'),
+                ('tail','ISReadABook','tail'),('restore','ISEquipWeaponAction','previous')):
+            action=get(name)
+            if (action['type'] != kind_name or action.get('itemId') != ids['items'][item]['id']
+                    or any(action.get(key) is not True for key in ('allocated','started','progress'))
+                    or not number(action.get('effectiveDuration')) or action['effectiveDuration'] <= 1):
+                errors.append('Belt native allocation/progress/item differs: '+name)
+            errors.extend(lifecycle_errors(action,kind,canceled and name=='trim'))
+        if equip.get('fromHotbar') is not True or restore.get('fromHotbar') is not False:
+            errors.append('Belt native equip hotbar origin or plain hand restoration differs')
+        if not equip['startedAt'] <= trim['startedAt'] <= restore['startedAt'] <= tail['startedAt']:
+            errors.append('Belt native grooming/restore/reader ordering differs')
+        token=operation_key(trim['operationRef'])
+        if operation_key(equip['operationRef']) != token or operation_key(tail['operationRef']) == token:
+            errors.append('Belt producer ownership or independent reader token differs')
+        if canceled:
+            errors.extend(control_errors(ev,roles,ids,kind))
+            command=get('command');transition=command.get('operationTransition',{})
+            if (operation_key(command.get('originalOperationRef')) != token or not transition.get('sameAction')
+                    or not transition.get('preallocation') or operation_key(restore['operationRef']) == token):
+                errors.append('Canceled belt cleanup lacks fresh exact preallocation operation')
+        elif operation_key(restore['operationRef']) != token:
+            errors.append('Belt hand restore escaped producer operation')
+        if case=='belt-scissors-replace':
+            for name,type_name,item in (('slotDetach','ISDetachItemHotbar','razor'),('slotAttach','ISAttachItemHotbar','replacement')):
+                action=get(name)
+                if action.get('type') != type_name or action.get('itemId') != ids['items'][item]['id'] or action.get('fromHotbar') is not True:
+                    errors.append('Newer belt action exact native item/type differs: '+name)
+                if not action.get('events') or not number(action.get('admittedAt')):
+                    errors.append('Newer belt action native admission/lifecycle absent: '+name)
+            errors.extend(lifecycle_errors(get('slotAttach'),kind))
+        errors.extend(replacement_errors(ev,roles,ids,kind))
+        boundary=ev.get('tailBoundary',{}); at_tail=expected(ids,kind=='sp');at_tail.pop('authority')
+        at_tail['tail']['pages']=at_tail['tail']['characterPages']=ids['items']['tail']['initial']
+        at_tail['belt']=belt_seed(ids); at_tail['belt']['occupant']=False
+        if boundary.get('snapshot') != at_tail or boundary.get('debts') != []:
+            errors.append('Belt independent tail admission state differs')
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        errors.append('Malformed native belt evidence: '+str(error))
+    return errors
+
+
 def verify(root, selection, catalog):
     issues = []; outcomes = []; cases = selection['cases']; root = Path(root)
     try:
@@ -921,7 +1039,7 @@ def verify(root, selection, catalog):
             issues.append('Raw exact native action records differ from published case actions')
         if [value for _, value in intent_rows] != [dict(case=row['id'], observation=row['evidence']['intent']) for _, row in rows if 'intent' in row['evidence']]:
             issues.append('Raw accepted primary intent records differ')
-        for marker, field in (('CONTROL', 'control'), ('BLOCKED', 'blocked'), ('KEEP', 'keep'), ('ORIGIN_REPLICA', 'originReplica'), ('RESTORE_BOUNDARY', 'restoreBoundary'), ('PREPARATION_BOUNDARY', 'preparationBoundary')):
+        for marker, field in (('CONTROL', 'control'), ('BLOCKED', 'blocked'), ('KEEP', 'keep'), ('ORIGIN_REPLICA', 'originReplica'), ('RESTORE_BOUNDARY', 'restoreBoundary'), ('PREPARATION_BOUNDARY', 'preparationBoundary'), ('REPLACEMENT', 'replacement')):
             values = records(client, PREFIX + marker + ' ')
             observations = [(row['id'], row['evidence'][field]) for _, row in rows if field in row['evidence']]
             if marker == 'ORIGIN_REPLICA':
@@ -954,7 +1072,7 @@ def verify(root, selection, catalog):
                 issues.append('Editor observation escaped exact case boundaries')
         native_cancels = records(client, PREFIX + 'CANCEL_NATIVE ')
         wanted_cancels = [dict(case=row['id'], observation=row['evidence']['control']['nativeStop'])
-                          for _, row in rows if row['id'] == 'cancel-active']
+                          for _, row in rows if row['id'] in CANCEL_CASES]
         if [value for _, value in native_cancels] != wanted_cancels:
             issues.append('Raw exact native canceled trim observation differs from published evidence')
         retokens = records(client, PREFIX + 'RETOKEN ')

@@ -1,6 +1,7 @@
 -- Observe the actual synchronous native menu producer; never synthesize its work.
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Toolkit=PZSurvivorToolkit
+local Belt=require 'PZSurvivorToolkit/ActionQueueBeltTool'
 local Producer={}
 Toolkit.ActionQueueRazorProducer=Producer
 local active
@@ -124,6 +125,16 @@ local function observeAction(action)
  episode.seen[action]=true
  local root=episode.actor:getInventory()
  if episode.stage==1 then
+  if action.Type=='ISEquipWeaponAction'and not episode.approach then
+   local belt=Belt.capture(episode.actor,action.item)
+   if not belt or action.primary~=true or action.twoHands~=nil and action.twoHands~=false
+    or action.maxTime~=50 or action.fromHotbar~=true or action.hotbar~=belt.hotbar then episode.invalid=true;return end
+   episode.tool,episode.equip,episode.belt=action.item,action,belt
+   episode.stage,episode.currentAction=3,action
+   local ok=pcall(episode.consumer.observe,episode,action)
+   if not ok then episode.invalid=true end
+   return
+  end
   if action.Type=='ISQueueActionsAction'and not episode.approach and episode.approachOwner then
    local command=own(action,'toolkitQueueCommand')
    local snapshot=type(command)=='table'and getmetatable(command)==nil and own(command,'snapshot')

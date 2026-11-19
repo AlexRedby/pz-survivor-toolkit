@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.23
+
+- Without P4 Tidy Up Meister, grooming with scissors from a belt slot restores the previous hand item after completion or cancellation. A later belt-slot choice takes precedence.
+
 ### 0.2.22
 
 - In a P4-free game, cancelling a pinned craft can return its borrowed kept tools to their individual bags in pickup order. Each tool keeps its own return status if its original bag is unavailable.
