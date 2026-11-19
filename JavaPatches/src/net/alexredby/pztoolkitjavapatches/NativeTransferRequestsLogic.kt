@@ -106,6 +106,16 @@ internal object NativeTransferRequestsLogic {
     }
 
     private val histories = WeakHashMap<UdpConnection, ConnectionHistory>()
+    private class Allocation(val connection: UdpConnection, val id: Byte)
+    private val allocatedBeforeAdd = WeakHashMap<Transaction, Allocation>()
+
+    // An interrupted-pickup watcher may outlive native local retirement. Never
+    // correlate a later packet after this byte was reused on the connection.
+    internal fun uniqueWire(connection: UdpConnection, id: Byte): Boolean =
+        synchronized(cursorLock) {
+            val history = histories[connection]
+            history != null && history.known && history.uses[id.toInt() and 255] == 1
+        }
 
     private fun invalidate(actor: IsoPlayer?) {
         if (actor != null) synchronized(cursorLock) { cursors.remove(actor) }
@@ -117,7 +127,9 @@ internal object NativeTransferRequestsLogic {
         }
 
     @JvmStatic
-    fun allocated(transaction: Transaction?) {
+    fun allocated(transaction: Transaction?) = observeAllocation(transaction, true)
+
+    private fun observeAllocation(transaction: Transaction?, pairAdd: Boolean) {
         if (!SUPPORTED || !GameClient.client || transaction == null) return
         val scope = manager.get()
         val actor = Accessor.tryGet<ConnectionPlayer>(transaction, "player", null)?.getPlayer()
@@ -133,6 +145,7 @@ internal object NativeTransferRequestsLogic {
             val history = histories.getOrPut(connection) { ConnectionHistory(historyArmed) }
             val index = id.toInt() and 255
             history.uses[index] = minOf(2, history.uses[index] + 1)
+            if (pairAdd) allocatedBeforeAdd[transaction] = Allocation(connection, id)
         }
     }
 
@@ -192,10 +205,17 @@ internal object NativeTransferRequestsLogic {
     @JvmStatic
     fun added(transaction: Transaction?) {
         val scope = manager.get()
+        val allocatedHere = transaction != null && synchronized(cursorLock) {
+            val allocated = allocatedBeforeAdd.remove(transaction)
+            allocated != null && allocated.connection === GameClient.connection &&
+                allocated.id == Accessor.tryGet<Byte>(transaction, "id", null)
+        }
         if (scope == null) {
             // A direct add can bypass native allocation entirely. Conservatively
             // taint its byte even when its packet omits an identifiable actor.
-            allocated(transaction)
+            // A normal unregistered native set/add is one allocation, however.
+            if (!allocatedHere) observeAllocation(transaction, false)
+            else invalidate(Accessor.tryGet<ConnectionPlayer>(transaction, "player", null)?.getPlayer())
             return
         }
         if (scope.connection !== GameClient.connection) scope.nested = true

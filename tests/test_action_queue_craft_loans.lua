@@ -37,6 +37,7 @@ end
 local player={getPlayerNum=function() return 0 end,getInventory=function() return root end,
     isDead=function(self) return self.dead==true end,isAsleep=function() return false end,
     isPlayerMoving=function(self) return self.moving==true end,
+    isRunning=function(self) return self.running==true end,isSprinting=function(self) return self.sprinting==true end,
     pressedMovement=function(self) return self.moving==true end,
     hasTimedActions=function(self) return self.nativeActive==true end,
     isLocalPlayer=function() return true end,getOnlineID=function() return 7 end,
@@ -77,7 +78,11 @@ local function tool(id,opts)
         getOnBreak=function() return opts.onBreak end}
     local item={container=opts.root and root or source,getID=function() return id end,
         getFullType=function() return 'Base.Tool'..id end,
-        getScriptItem=function() return script end,getContainer=function(self) return self.container end}
+        getScriptItem=function() return script end,getContainer=function(self) return self.container end,
+        getIsCraftingConsumed=function() return opts.craftingConsumed==true end}
+    source.getItemById=function(_,wanted)
+        if wanted==id and item:getContainer()==source then return item end
+    end
 
     local input={isKeep=function() return not opts.consume end,hasConsumeFromItem=function() return false end,
         hasCreateToItem=function() return false end,isReplace=function() return false end,isApplyOnTick=function() return false end}
@@ -168,7 +173,7 @@ local function movementFixture(options)
     enabled=options.enabled==true
     queue.queue={};queue.current=nil;queue.toolkitOperationGeneration=0
     queue.toolkitCancel=nil;queue.toolkitGroupCancel=nil
-    player.moving=false;player.nativeActive=false;player.dead=false
+    player.moving=false;player.nativeActive=false;player.dead=false;player.running=false;player.sprinting=false
     inventoryItems={}
     local item,selection,sourceContainer=tool(20)
     local other,otherSelection,otherSource
@@ -192,10 +197,11 @@ local function movementFixture(options)
         assert(episode.action==pickup and not Loans.ownsPickup(episode.episode,pickup),
             'producer ownership escaped its synchronous pickup boundary')
     end
-    local otherHandle
+    local otherHandle,otherPickup
     if other then
-        observation.pickup({Type='ISInventoryTransferAction',character=player,item=other,
-            srcContainer=otherSource,destContainer=root,toolkitQueueOperation=token})
+        otherPickup={Type='ISInventoryTransferAction',character=player,item=other,
+            srcContainer=otherSource,destContainer=root,toolkitQueueOperation=token}
+        observation.pickup(otherPickup)
         otherHandle=assert(handles[beforeHandle+2])
     end
     observation.body(body)
@@ -206,6 +212,10 @@ local function movementFixture(options)
         queue.queue[3]={Type='ISInventoryTransferAction',character=player,item=other,srcContainer=root,
             destContainer=otherSource,allowMissingItems=true,toolkitQueueOperation=token}
     end
+    if options.pickup then
+        assert(otherPickup,'pickup interruption requires distinct pinned tools')
+        table.insert(queue.queue,1,otherPickup);queue.current=otherPickup
+    end
     observation.returns(keptItems)
     if other then
         other.container=root;inventoryItems[other:getID()]=other
@@ -215,7 +225,15 @@ local function movementFixture(options)
     handle.paid=options.paid~=false
     body.started=true;body.craftStarted=true;body.action={};body.delta=0.25
     player.moving=true;player.nativeActive=true
-    return {item=item,source=sourceContainer,row=row,handle=handle,body=body,other=other,otherSource=otherSource}
+    if options.pickup then
+        other.container=otherSource;otherHandle.paid=false
+        body.started=false;body.craftStarted=false;body.action=nil;body.delta=0
+        otherPickup.action={};otherPickup.started=true;otherPickup.stopOnRun=true
+        otherPickup.isStarted=function(self) return self.started==true end
+        otherPickup.getJobDelta=function(self) return self.delta end;otherPickup.delta=.1
+        player.running=true
+    end
+    return {item=item,source=sourceContainer,row=row,handle=handle,body=body,other=other,otherSource=otherSource,otherHandle=otherHandle,pickup=otherPickup}
 end
 local function finishNativeStop()
     -- Native reset wipes Lua first, then its caller wipes Java. Deferring only
@@ -361,5 +379,127 @@ restoredBefore=#restored
 player.moving=false
 Loans.movementStopped(fixture.body,queue);finishNativeStop()
 assert(#restored==restoredBefore,'unrelated idle clear acquired native walk restoration')
+
+-- An interrupted second pickup shares the producer's pending body and exact
+-- put-back rows. Only already earned tools can use ordinary Settlement proof.
+-- The Host receipt double models the native observer's opaque public contract.
+local pickupWatches={}
+pzWatchInterruptedPickup=function(action)
+    local watch=assert(pickupWatches[action],'watched a foreign pickup')
+    watch.calls=watch.calls+1
+    return watch.receipt
+end
+local function pickupFixture(options)
+    options=options or {}
+    host=options.host==true
+    local value=movementFixture({enabled=options.editor~=false,multiple=true,pickup=true})
+    local state={confirmed=false,expired=false,releases=0,calls=0}
+    state.receipt={isConfirmed=function()return state.confirmed end,
+        isExpired=function()return state.expired end,release=function()state.releases=state.releases+1 end}
+    pickupWatches[value.pickup]=state;value.watch=state
+    return value
+end
+local function finishReturn()
+    for i=#queue.queue,1,-1 do queue.queue[i]=nil end
+    queue.current=nil;tick()
+end
+for _,runKind in ipairs({'running','sprinting'})do
+    fixture=pickupFixture();restoredBefore=#restored
+    player.running=runKind=='running';player.sprinting=runKind=='sprinting'
+    Loans.movementStopped(fixture.pickup,queue)
+    Loans.movementStopped(fixture.pickup,queue)
+    assert(#restored==restoredBefore,'pickup restoration issued inside native stop')
+    finishNativeStop()
+    assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.item
+        and restored[#restored].destination==fixture.source,'run during second pickup lost the earned first saw')
+    finishReturn();tick()
+    assert(#restored==restoredBefore+1,'unearned source drill received a return')
+end
+-- Native pre-stop can arrive before the Lua started flag or at either UI
+-- progress endpoint. The live native instance and owned run boundary matter.
+for _,progress in ipairs({0,1})do
+    fixture=pickupFixture();restoredBefore=#restored
+    fixture.pickup.started=false;fixture.pickup.delta=progress
+    Loans.movementStopped(fixture.pickup,queue);finishNativeStop()
+    assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.item,
+        'native pickup pre-stop lost earned saw at UI progress endpoint')
+    finishReturn();tick()
+    assert(#restored==restoredBefore+1,'UI progress endpoint manufactured unearned drill return')
+end
+fixture=pickupFixture({editor=false});restoredBefore=#restored
+Loans.movementStopped(fixture.pickup,queue);finishNativeStop();finishReturn()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.item,
+    'editor-off interruption lost the previously collected tool')
+fixture=pickupFixture();restoredBefore=#restored
+Loans.movementStopped(fixture.pickup,queue);finishNativeStop()
+fixture.other.container=root;inventoryItems[fixture.other:getID()]=fixture.other
+finishReturn();tick()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.item,
+    'root-only unearned SP drill manufactured an interrupted pickup return')
+-- Root membership alone cannot promote the interrupted Host request to a
+-- completed pickup. A late exact-root replica needs positive native proof.
+fixture=pickupFixture({host=true});restoredBefore=#restored
+Loans.movementStopped(fixture.pickup,queue);finishNativeStop()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.item,
+    'unconfirmed Host drill hid earned first-tool restoration')
+fixture.other.container=root;inventoryItems[fixture.other:getID()]=fixture.other
+finishReturn();tick();tick()
+assert(#restored==restoredBefore+1,'root-only unconfirmed drill acquired cleanup authority')
+fixture.watch.expired=true;tick()
+assert(fixture.watch.releases==1,'expired interrupted request receipt was not released')
+fixture.watch.confirmed=true;tick()
+assert(#restored==restoredBefore+1,'expired request revived after late confirmation')
+-- Accept/Done and physical inventory arrival are independent observations.
+-- Confirmation while still in source must wait, then issue exactly one return.
+fixture=pickupFixture({host=true});restoredBefore=#restored
+Loans.movementStopped(fixture.pickup,queue);finishNativeStop();finishReturn()
+fixture.watch.confirmed=true;tick();tick()
+assert(#restored==restoredBefore+1,'confirmed receipt returned drill before physical root arrival')
+fixture.other.container=root;inventoryItems[fixture.other:getID()]=fixture.other
+tick()
+assert(#restored==restoredBefore+2 and restored[#restored].item==fixture.other
+    and restored[#restored].destination==fixture.otherSource,'late confirmed exact-root drill did not return')
+finishReturn();tick()
+assert(#restored==restoredBefore+2 and fixture.watch.releases==1,'confirmed drill returned repeatedly or retained its receipt')
+-- Later user work and unrelated resets revoke a deferred pickup watch, even
+-- when a native confirmation and physical root item subsequently appear.
+for _,replacement in ipairs({'foreign-work','extra-clear'})do
+    fixture=pickupFixture({host=true});restoredBefore=#restored
+    Loans.movementStopped(fixture.pickup,queue);finishNativeStop()
+    assert(#restored==restoredBefore+1,'earned first return did not start before deferred revocation')
+    for i=#queue.queue,1,-1 do queue.queue[i]=nil end
+    queue.current=nil
+    if replacement=='foreign-work'then
+        local foreign={Type='ISReadABook',character=player};queue.queue[1]=foreign;queue.current=foreign
+    else queue.toolkitOperationGeneration=queue.toolkitOperationGeneration+1 end
+    tick()
+    assert(fixture.watch.releases==1,'foreign work/reset failed to release interrupted pickup watch')
+    fixture.watch.confirmed=true;fixture.other.container=root;inventoryItems[fixture.other:getID()]=fixture.other
+    for i=#queue.queue,1,-1 do queue.queue[i]=nil end
+    queue.current=nil;tick();tick()
+    assert(#restored==restoredBefore+1,'revoked pickup watch returned a late drill')
+end
+fixture=pickupFixture({host=true});restoredBefore=#restored
+-- Keep removes only the drill's original pending put-back row.
+table.remove(queue.queue,4)
+Loans.movementStopped(fixture.pickup,queue);finishNativeStop();finishReturn()
+fixture.watch.confirmed=true;fixture.other.container=root;inventoryItems[fixture.other:getID()]=fixture.other
+tick();tick()
+assert(#restored==restoredBefore+1 and restored[#restored].item==fixture.item,
+    'Keep on pending drill revived its return or hid first saw')
+assert(fixture.watch.calls==0 or fixture.watch.releases==1,'Keep leaked an interrupted pickup watch')
+for _,invalid in ipairs({'walking','idle','no-stop-run','foreign-source','foreign-destination','unstarted'})do
+    fixture=pickupFixture();restoredBefore=#restored
+    if invalid=='walking'then player.running=false
+    elseif invalid=='idle'then player.moving=false
+    elseif invalid=='no-stop-run'then fixture.pickup.stopOnRun=false
+    elseif invalid=='foreign-source'then fixture.pickup.srcContainer={carried=true}
+    elseif invalid=='foreign-destination'then fixture.pickup.destContainer={}
+    elseif invalid=='unstarted'then fixture.pickup.action=nil end
+    Loans.movementStopped(fixture.pickup,queue);finishNativeStop()
+    assert(#restored==restoredBefore,'invalid pickup movement boundary acquired restoration: '..invalid)
+end
+host=false
+
 enabled=true
 print('Craft loan producer checks passed: exact pickups, independent disabled-editor restoration, paid native movement stop, refusal and duplicate boundaries.')

@@ -76,10 +76,11 @@ def verify(root, selection):
         row = next((row for row in rows if row.get('id') == case), {})
         prep = next((value for marker, value in raw if marker == 'PREPARED' and value.get('case') == case), {})
         receipt = next((value for marker, value in raw if marker == 'WALK_AUTHORITY' and value.get('case') == case), {})
+        running = case == craft.RUN_PICKUP_CASE
         complete = case == 'complete-pinned-tools'; blocked = case == 'walk-pinned-full'
         kept = case == 'walk-editor-keep-saw'; retained = blocked or kept
         expected = dict(status='passed', producer='CraftChainRecipes.enqueue', queueEnabled=enabled,
-                        craftProgress=True, tailProgress=complete, tailDiscarded=not complete,
+                        craftProgress=not running, tailProgress=complete, tailDiscarded=not complete,
                         nativeStop=not complete, nativeDuration=150, authorityVerified=True, inputReleased=True,
                         consumed=int(complete), materialPresent=not complete, outputs=int(complete),
                         toolsReturned=1 if retained else 2, fullOrigin=blocked)
@@ -87,7 +88,7 @@ def verify(root, selection):
             issues.append('Walking craft native effects/progress differ: ' + case)
         if (not _number(row.get('walkDistance')) or (row['walkDistance'] != 0 if complete else row['walkDistance'] < .25)
                 or not _number(row.get('walkProgress')) or (row['walkProgress'] != 0 if complete
-                        else not 0 < row['walkProgress'] <= .25)):
+                        else not 0 < row['walkProgress'] <= (.5 if running else .25))):
             issues.append('Walking craft genuine movement/early-stop evidence differs: ' + case)
         if (not craft._prepared_valid(prep, case) or not craft._ids(prep.get('outputBaseline'))
                 or len(prep['outputBaseline']) != prep['outputs'] or type(prep.get('playerId')) is not int
@@ -95,7 +96,7 @@ def verify(root, selection):
             issues.append('Walking craft exact preparation differs: ' + case)
         else:
             ids = prep['tools']; returned = ids[1:] if retained else ids
-            if not craft._matches(row, dict(toolIds=ids, pickupIds=sorted(ids), returnIds=sorted(returned),
+            if not craft._matches(row, dict(toolIds=ids, pickupIds=sorted(ids), returnIds=sorted(row.get('returnStarts', [])) if running else sorted(returned),
                     materialId=prep['material'], materialCondition=prep['materialCondition'], materialUses=prep['materialUses'],
                     blockedToolId=ids[0] if blocked else False)):
                 issues.append('Walking craft exact paid pickup/return identities differ: ' + case)
@@ -104,14 +105,17 @@ def verify(root, selection):
                                                craftChainsEnabled=True, foreignReturnProvider=False)):
                     issues.append('Walking craft native controls differ: ' + case)
                 trace = row.get('eventTrace')
-                required = ['pickup-saw', 'pickup-drill', 'craft-progress'] + (['keep-saw'] if kept else []) + [
+                required = (['pickup-saw', 'pickup-drill', 'drill-progress', 'run-input', 'native-stop', 'return-saw']
+                            + (['return-drill'] if ids[1] in row.get('returnStarts', []) else [])) if running else ['pickup-saw', 'pickup-drill', 'craft-progress'] + (['keep-saw'] if kept else []) + [
                     'walk-input', 'native-stop'] + (['return-drill'] if kept else ['return-saw', 'return-drill'])
                 if (type(trace) is not list or any(type(event) is not str for event in trace)
                         or sorted(trace) != sorted(required)):
                     issues.append('Walking craft exact event trace differs: ' + case)
                 else:
                     before = lambda left, right: trace.index(left) < trace.index(right)
-                    ordered = (all(before(pickup, 'craft-progress') for pickup in ('pickup-saw', 'pickup-drill'))
+                    ordered = (before('pickup-saw', 'pickup-drill') and before('pickup-drill', 'drill-progress')
+                               and before('drill-progress', 'run-input') and before('run-input', 'native-stop')
+                               and all(before('native-stop', event) for event in required if event.startswith('return-'))) if running else (all(before(pickup, 'craft-progress') for pickup in ('pickup-saw', 'pickup-drill'))
                                and before('craft-progress', 'walk-input') and before('walk-input', 'native-stop')
                                and all(before('native-stop', event) for event in required if event.startswith('return-')))
                     if kept:
@@ -125,8 +129,25 @@ def verify(root, selection):
                             or not _number(row.get('keepProgress')) or not _number(row.get('walkProgress'))
                             or not 0 < row['keepProgress'] <= row['walkProgress']):
                         issues.append('Walking craft exact pending saw Keep differs: ' + case)
+            if running:
+                pickup = row.get('pickup', {})
+                entry = pickup.get('stopEntry', {})
+                if (not craft._matches(pickup, dict(itemId=ids[1], sourceId=prep['bags'][1], firstId=ids[0],
+                        firstConfirmed=True, sourcePresent=True, rootPresent=False, started=True, craftStarted=False, stopOnRun=True))
+                        or not craft._matches(entry, dict(transaction=pickup.get('transaction'), current=True))
+                        or any(type(entry.get(key)) is not bool for key in ('done', 'rejected', 'sourcePresent', 'rootPresent'))
+                        or any(type(pickup.get(key)) is not bool for key in ('stopDone', 'stopRejected', 'finalDone', 'finalRejected'))
+                        or any(type(pickup.get(key)) is not int for key in ('stopTransaction', 'finalTransaction'))
+                        or row.get('runObserved') is not True or not _number(pickup.get('progress'))
+                        or not 0 < pickup['progress'] <= .5 or pickup.get('progress') != row.get('walkProgress')
+                        or not _number(pickup.get('duration')) or pickup['duration'] <= 0
+                        or type(pickup.get('transaction')) is not int
+                        or selection['kind'] == 'mp' and (pickup.get('watchEnrolled') is not True or pickup['transaction'] == 0
+                            or pickup.get('done') is not False or pickup.get('rejected') is not False)):
+                    issues.append('Running pickup exact initial progress/in-flight transaction differs: ' + case)
             starts = row.get('returnStarts')
-            if not craft._ids(starts) or sorted(starts or []) != sorted(returned):
+            if (not craft._ids(starts) or (ids[0] not in (starts or []) or not set(starts or []) <= set(ids)
+                    if running else sorted(starts or []) != sorted(returned))):
                 issues.append('Walking craft actual return starts differ or repeated: ' + case)
             resources = [dict(meta, sourceId=prep['bags'][i], sourceCount=int(not retained or i != 0),
                               rootCount=int(retained and i == 0)) for i, meta in enumerate(prep['toolMeta'])]
@@ -153,7 +174,7 @@ def verify(root, selection):
             issues.append('Walking craft client/authority differs: ' + case)
         outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in RECEIPT_KEYS +
                         ('pickupIds', 'returnIds', 'returnStarts', 'nativeStop', 'walkDistance', 'walkProgress',
-                         'queueEnabled', 'eventTrace', 'keptId', 'keptSourceId', 'keepSucceeded', 'keptRowPending',
+                         'queueEnabled', 'eventTrace', 'pickup', 'runObserved', 'keptId', 'keptSourceId', 'keepSucceeded', 'keptRowPending',
                          'keptRowRemoved', 'siblingPreserved', 'craftPreservedAfterKeep', 'keepProgress')}))
     if not craft._ids(all_ids):
         issues.append('Walking craft prepared/output IDs overlap between cases')

@@ -43,10 +43,14 @@ Events.OnTick.Add(function()
  if not ok then fail(pending.player,result);pending=nil
  elseif result then
   if session.case=='borrowed-tools' then print('[CRAFT_QUEUE_TEST] AUTHORITY consumed=1 outputs=1 toolsReturned=2 tailRead=true')
-  elseif session.case=='walk-editor-pinned-tools'or session.case=='walk-editor-keep-saw'or session.case=='complete-pinned-tools'or session.case=='walk-pinned-tools'or session.case=='walk-pinned-full'then print('[CRAFT_QUEUE_TEST] WALK_AUTHORITY '..JSON.encode(result))
+  elseif session.case=='run-editor-pickup-drill'or session.case=='walk-editor-pinned-tools'or session.case=='walk-editor-keep-saw'or session.case=='complete-pinned-tools'or session.case=='walk-pinned-tools'or session.case=='walk-pinned-full'then print('[CRAFT_QUEUE_TEST] WALK_AUTHORITY '..JSON.encode(result))
   elseif session.case=='keep-craft-tool'then print('[CRAFT_QUEUE_TEST] KEEP_AUTHORITY '..JSON.encode(result))
   elseif session.case=='cancel-craft'or session.case=='late-input'or session.case=='cancel-pinned-tools'or session.case=='cancel-pinned-full'then print('[CRAFT_QUEUE_TEST] ACTIVE_AUTHORITY '..JSON.encode(result))
   else print('[CRAFT_QUEUE_TEST] ABORT_AUTHORITY '..JSON.encode(result)) end
   reply(pending.player,'Verified',result);pending=nil;session=nil;step=step+1
- elseif getTimestampMs()-pending.since>20000 then fail(pending.player,problem);pending=nil end
+ elseif getTimestampMs()-pending.since>20000 then
+  if session.case=='run-editor-pickup-drill'then
+   print('[CRAFT_QUEUE_TEST] FAILURE_AUTHORITY '..JSON.encode(require('QueueCraftWalkFixture').inspect(session)))
+  end
+  fail(pending.player,problem);pending=nil end
 end)

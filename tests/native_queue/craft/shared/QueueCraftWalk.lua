@@ -6,13 +6,34 @@ local JSON=require 'QueueHealthEvents'
 local T=PZSurvivorToolkit
 local editorEnabled=config.mode=='toolkit'
 local step,phase,since,started,done=1,'prepare',0,false,false
-local state,ids,current,tail,receipt,walk,readySince,settledSince
+local state,ids,current,tail,receipt,walk,readySince,settledSince,interrupted,pickupEvidence
 local picked,returned,starts,seenReturns={},{},{},{}
 local progress,tailProgress,stopped,idle=false,false,false,0
 local bodyEvidence,originalRows,stopEvidence
 local eventTrace,keepEvidence={},nil
 local diagnose
+local originalPickupWatch,pickupWatchForwarder
 local function case()return config.cases[step]end
+local function running()return case()=='run-editor-pickup-drill'end
+local function restorePickupWatch()
+ if pickupWatchForwarder and pzWatchInterruptedPickup==pickupWatchForwarder then
+  pzWatchInterruptedPickup=originalPickupWatch
+ end
+ originalPickupWatch,pickupWatchForwarder=nil,nil
+end
+local function observePickupWatch(action)
+ if config.kind~='mp'then return end
+ pickupEvidence.watchEnrolled=false
+ local watch=pzWatchInterruptedPickup
+ if type(watch)~='function'then return end
+ originalPickupWatch=watch
+ pickupWatchForwarder=function(candidate)
+  local result=watch(candidate)
+  if candidate==action then pickupEvidence.watchEnrolled=result~=nil end
+  return result
+ end
+ pzWatchInterruptedPickup=pickupWatchForwarder
+end
 local function keeping()return case()=='walk-editor-keep-saw'end
 local function trace(event)if editorEnabled then eventTrace[#eventTrace+1]=event end end
 local function walking()return case()~='complete-pinned-tools'end
@@ -60,14 +81,31 @@ diagnose=function(problem)
  end
  print('[CRAFT_QUEUE_TEST] FAILURE_DIAGNOSTICS '..JSON.encode({case=case(),problem=tostring(problem),phase=phase,
   body=bodyEvidence,originalRows=originalRows,stop=stopEvidence,queue=rows(),endpoints=endpoints,
+  authority=config.kind=='sp'and require('QueueCraftWalkFixture').inspect(state)or false,
   returnStarts=starts,pickupIds=sorted(picked),returnIds=sorted(returned),
-  walk=walk,nativeStop=stopped,tailProgress=tailProgress,idle=idle}))
+  walk=walk,pickup=pickupEvidence,nativeStop=stopped,tailProgress=tailProgress,idle=idle}))
+end
+-- Read-only transaction state before the actual native stop removes its cursor.
+craftWalkStopEntering=function(action)
+ if not running()or action~=interrupted then return end
+ assert(not pickupEvidence.stopEntry,'repeated interrupted pickup stop entry')
+ local tx=action.transactionId or 0
+ pickupEvidence.stopEntry={transaction=tx,done=isItemTransactionDone(tx)==true,
+  rejected=isItemTransactionRejected(tx)==true,current=q().current==action,
+  sourcePresent=action.srcContainer:getItemById(ids.tools[2])~=nil,
+  rootPresent=state.root:getItemById(ids.tools[2])~=nil and state.root:getItemById(ids.tools[2]):getContainer()==state.root}
 end
 -- Read-only receipt from the actual engine stop after the original Lua delegate.
 craftWalkStopped=function(action,ok)
- if action~=current then return end
- assert(ok and walking()and walk and not stopped,'unexpected or repeated native craft stop')
+ if action~=(running()and interrupted or current)then return end
+ assert(ok and walking()and walk and not stopped,'unexpected or repeated native craft/pickup stop')
  trace('native-stop');stopped=true;walk.stoppedAt=getTimestampMs()
+ if running()then
+  restorePickupWatch()
+  pickupEvidence.stopTransaction=action.transactionId or 0
+  pickupEvidence.stopDone=isItemTransactionDone(action.transactionId or 0)==true
+  pickupEvidence.stopRejected=isItemTransactionRejected(action.transactionId or 0)==true
+ end
  stopEvidence={x=getPlayer():getX(),y=getPlayer():getY(),queue=rows(),native=tostring(action.action),ok=ok}
 end
 require('QueuePreflight').onGameStart(Events,function()
@@ -145,6 +183,8 @@ local function returnsFinished()
   if blocked then
    assert(not returned[id],'blocked source received forbidden transfer progress')
    if not item or item:getContainer()~=state.root then return false end
+  elseif running()and i==2 and not returned[id]then
+   if not item or item:getContainer()~=state.bags[i]:getItemContainer()then return false end
   elseif not returned[id]or not seen[id]or not item
    or item:getContainer()~=state.bags[i]:getItemContainer()then return false end
  end
@@ -186,6 +226,12 @@ local function chooseDirection(player)
  error('no free neighbouring square for genuine walk interruption')
 end
 local function finish()
+ restorePickupWatch()
+ if running()then
+  pickupEvidence.finalTransaction=interrupted.transactionId or 0
+  pickupEvidence.finalDone=isItemTransactionDone(interrupted.transactionId or 0)==true
+  pickupEvidence.finalRejected=isItemTransactionRejected(interrupted.transactionId or 0)==true
+ end
  local value={event='case',id=case(),status='passed',producer='CraftChainRecipes.enqueue',queueEnabled=editorEnabled,
   toolIds=ids.tools,pickupIds=sorted(picked),returnIds=sorted(returned),returnStarts=starts,
   craftProgress=progress,tailProgress=tailProgress,tailDiscarded=walking()and q():indexOf(tail)==-1 and not tailProgress,
@@ -196,6 +242,7 @@ local function finish()
   value.eventTrace=eventTrace;value.instantActions=getPlayer():isTimedActionInstant()
   value.pauseOnFocusLoss=getCore():getOptionPauseOnFocusloss();value.craftChainsEnabled=T.Settings.craftChains()
   value.foreignReturnProvider=false
+  if pickupEvidence then value.pickup=pickupEvidence;value.runObserved=walk.running==true end
   if keepEvidence then for key,result in pairs(keepEvidence)do value[key]=result end end
  end
  for key,result in pairs(receipt)do if key~='case'then value[key]=result end end
@@ -206,7 +253,7 @@ local function finish()
  else
   step=step+1;phase='prepare';since=getTimestampMs();state,ids,current,tail,receipt,walk,readySince,settledSince=nil,nil,nil,nil,nil,nil,nil,nil
   picked,returned,starts,seenReturns={},{},{},{};progress,tailProgress,stopped,idle=false,false,false,0
-  bodyEvidence,originalRows,stopEvidence=nil,nil,nil;eventTrace,keepEvidence={},nil
+  interrupted,pickupEvidence=nil,nil;bodyEvidence,originalRows,stopEvidence=nil,nil,nil;eventTrace,keepEvidence={},nil
  end
 end
 require('QueuePreflight').onTick(Events,function()
@@ -231,6 +278,29 @@ require('QueuePreflight').onTick(Events,function()
   end
   if phase=='running'then
    discover();transfers(q().current);F.fillFirstOrigin(state)
+   if running()and not walk then
+    local action=q().current
+    if action and action.Type=='ISInventoryTransferAction'and action.item and action.item:getID()==ids.tools[2]
+     and action.srcContainer==state.bags[2]:getItemContainer()and action.destContainer==state.root
+     and action:isStarted()and action:getJobDelta()>0 then
+     local tx=action.transactionId or 0
+     if config.kind=='mp'and(tx==0 or isItemTransactionDone(tx)or isItemTransactionRejected(tx))then return end
+     local saw=state.root:getItemById(ids.tools[1])
+     assert(picked[ids.tools[1]]and saw and saw:getContainer()==state.root,'first saw pickup not confirmed before run')
+     assert(state.tools[2]:getContainer()==state.bags[2]:getItemContainer(),'interrupted drill already moved')
+     assert(current and not current.craftStarted and not current.action,'craft started before interrupted drill pickup')
+     assert(action:getJobDelta()<=.5 and action.stopOnRun==true,'missed native pickup run window')
+     interrupted=action
+     pickupEvidence={itemId=ids.tools[2],sourceId=ids.bags[2],firstId=ids.tools[1],firstConfirmed=true,
+      sourcePresent=true,rootPresent=false,progress=action:getJobDelta(),duration=action:getDuration(),
+      started=true,transaction=tx,done=isItemTransactionDone(tx)==true,rejected=isItemTransactionRejected(tx)==true,
+      craftStarted=false,stopOnRun=true}
+     bodyEvidence=T.ActionQueueSettlement.operationState(action)or {unavailable=true};originalRows=rows()
+     walk={x=player:getX(),y=player:getY(),progress=action:getJobDelta(),since=getTimestampMs(),distance=0,running=false}
+     observePickupWatch(action)
+     trace('drill-progress');trace('run-input');craftWalkInput(player,chooseDirection(player)+4)
+    end
+   end
    if current and q().current==current and current.craftStarted==true and current:isStarted()and current:getJobDelta()>0 then
     if not progress then trace('craft-progress')end
     progress=true;assert(current:getDuration()==150 and current.stopOnWalk==true and not player:isTimedActionInstant())
@@ -248,9 +318,10 @@ require('QueuePreflight').onTick(Events,function()
     end
    end
    if walk and not walk.released then
+    if running()and player:isRunning()then walk.running=true end
     walk.distance=math.sqrt((player:getX()-walk.x)^2+(player:getY()-walk.y)^2)
     assert(getTimestampMs()-walk.since<7000,'genuine native walk/stop timed out')
-    if stopped and walk.distance>=.25 then
+    if stopped and walk.distance>=.25 and(not running()or walk.running)then
      craftWalkInput(player,0);walk.released=true;walk.releasedAt=getTimestampMs();idle=0;settledSince=nil
     end
    end
@@ -259,19 +330,20 @@ require('QueuePreflight').onTick(Events,function()
     assert(getTimestampMs()-walk.releasedAt<20000,'native earned return settlement timed out')
    end
    if #q().queue>0 or player:hasTimedActions()or player:isPlayerMoving()or idle<3
-    or walk and not walk.released or not returnsFinished()then settledSince=nil;return end
+    or walk and not walk.released or not running()and not returnsFinished()then settledSince=nil;return end
    -- Native movement clears the queue before its deferred restoration can start.
    -- Only settle after actual expected transfers, stationary native idle and a
    -- quiet interval; idle accumulated while walking cannot pay this gate.
    settledSince=settledSince or getTimestampMs()
-   if getTimestampMs()-settledSince<250 then return end
-   assert(current and progress and picked[ids.tools[1]]and picked[ids.tools[2]],'native craft/pickup progress missing')
+   if getTimestampMs()-settledSince<(running()and 1000 or 250)then return end
+   assert(current and(progress or running()and pickupEvidence)and picked[ids.tools[1]]and picked[ids.tools[2]],'native craft/pickup progress missing')
    assert(walking()and stopped and not tailProgress or not walking()and not stopped and tailProgress,'native stop/tail differs')
    request('Verify');phase='receipt';return
   end
   if phase=='receipt'and receipt then finish()end
  end)
  if not ok then
+  restorePickupWatch()
   pcall(diagnose,problem)
   craftWalkInput(getPlayer(),-1);done=true;emit({event='error',message=tostring(problem)});print('[QUEUE_TEST] FAIL walking craft '..tostring(problem))
  end

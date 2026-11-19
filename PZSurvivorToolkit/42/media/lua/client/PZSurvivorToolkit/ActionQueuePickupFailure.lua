@@ -143,6 +143,9 @@ local function plan(s)
  return value
 end
 function Failure.beforeStop(action)
+ -- Native transfer.stop retires the MP transaction before the base stop bridge.
+ local loans=Toolkit.ActionQueueCraftLoans
+ if action and loans and loans.movementStopped then pcall(loans.movementStopped,action,ISTimedActionQueue.queues[action.character]) end
  local s=action and active[action.character]
  if not s or s.action~=action or s.refused or not current(s)or not s.native or s.native~=action.action then return false end
  local r=s.request;local tx=action.transactionId

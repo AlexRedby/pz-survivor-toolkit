@@ -1,5 +1,5 @@
 local Fixture={}
-local function walkCase(case)return case=='walk-editor-pinned-tools'or case=='walk-editor-keep-saw'or case=='complete-pinned-tools'or case=='walk-pinned-tools'or case=='walk-pinned-full'end
+local function walkCase(case)return case=='run-editor-pickup-drill'or case=='walk-editor-pinned-tools'or case=='walk-editor-keep-saw'or case=='complete-pinned-tools'or case=='walk-pinned-tools'or case=='walk-pinned-full'end
 local function active(case)return walkCase(case) or case=='cancel-craft' or case=='late-input'or case=='keep-craft-tool'or case=='cancel-pinned-tools'or case=='cancel-pinned-full'end
 local function count(container,kind)
  local total=0

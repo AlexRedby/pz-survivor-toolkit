@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.27
+
+- Without P4, running during tool collection for a pinned recipe returns tools already picked up to their original bags. In Host, a tool whose transfer was interrupted can also return once the server confirms the pickup and the tool arrives in inventory.
+
 ### 0.2.26
 
 - Without P4, walking away from a pinned craft also returns borrowed tools when the queue editor is enabled. Choosing Keep on a tool leaves it in inventory while the remaining tools return to their own bags.
@@ -1843,6 +1847,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.5
+
+- Toolkit can recognize a matching server confirmation that arrives after the player interrupts a crafting tool pickup.
 
 ### 0.2.4
 

@@ -65,9 +65,59 @@ local function bindCancelledReturns(player, token, members)
     end
 end
 
--- Capture only the native return rows the walk is about to discard. The Java
--- movement handler also clears characterActions *after* the Lua stop returns.
--- Issue fresh timed transfers on a later stationary tick, one tool at a time.
+-- Java clears characterActions after its stop callback. Return earned tools on
+-- a later stationary tick. A still-pending Host pickup cannot hold up its siblings.
+local function returnAfterStop(player, queue, root, pending, interrupted, receipt, live)
+    local list, generation = queue.queue, (queue.toolkitOperationGeneration or 0) + 1
+    local cursor, issued = 1, nil
+    local function issue(member, item)
+        if not item or item:getFullType() ~= member.fullType or item:getContainer() ~= root
+            or player:isEquipped(item) or not Toolkit.ActionQueuePolicy.isCarriedContainer(member.source, player)
+            or not member.source:hasRoomFor(player, item) then return false end
+        ISCraftingUI.ReturnItemToContainer(player, item, member.source)
+        issued = list[1]
+        return issued and issued.Type == "ISInventoryTransferAction" and issued.character == player
+            and issued.srcContainer == root and issued.destContainer == member.source
+            and issued.item == item and issued.allowMissingItems == true
+    end
+    local function advance()
+        if ISTimedActionQueue.queues[player] ~= queue or queue.queue ~= list
+            or queue.toolkitOperationGeneration ~= generation or player:isDead() or player:isAsleep()
+            or getSpecificPlayer(player:getPlayerNum()) ~= player then return false end
+        if cursor > #pending and (not receipt or receipt:isExpired()) then return false end
+        if list[1] or queue.current then
+            return issued ~= nil and list[1] == issued and queue.current == issued and #list == 1
+        end
+        if player:hasTimedActions() or player:isPlayerMoving() or player:pressedMovement(false) then return true end
+        if cursor <= #pending then
+            if not live() then return false end
+            while cursor <= #pending do
+                local member = pending[cursor]
+                cursor = cursor + 1
+                if issue(member, root:getItemById(member.id)) then return cursor <= #pending or receipt ~= nil end
+                if list[1] or queue.current then return false end
+            end
+        end
+        if not receipt or receipt:isExpired() then return false end
+        if not receipt:isConfirmed() then return true end
+        -- The Done packet and the physical inventory update can arrive apart.
+        local item = root:getItemById(interrupted.id)
+        if not item or item:getContainer() ~= root or item:getFullType() ~= interrupted.fullType then return true end
+        local old = interrupted.source:getItemById(interrupted.id)
+        if old and old:getContainer() == interrupted.source then return true end
+        if live() and not item:getIsCraftingConsumed() then issue(interrupted, item) end
+        return false
+    end
+    local function tick()
+        local ok, waiting = pcall(advance)
+        if not ok or not waiting then
+            Events.OnTick.Remove(tick)
+            if receipt then receipt:release() end
+        end
+    end
+    Events.OnTick.Add(tick)
+end
+
 local function bindNativeReturns(player, body, items, members, live, editor)
     local queue = ISTimedActionQueue.queues[player]
     local index = queue and queue:indexOf(body)
@@ -80,14 +130,22 @@ local function bindNativeReturns(player, body, items, members, live, editor)
         if items[i] ~= member.item or not nativeReturnRow(row, body, member, root) then return end
         membersByRow[row] = member
     end
-    body[movementMarker] = function(stoppedQueue)
-        if stoppedQueue ~= queue or queue.queue ~= list or queue.current ~= body or list[1] ~= body
+    local function stopped(stoppedQueue, pickup)
+        local current = pickup and pickup.action or body
+        if stoppedQueue ~= queue or queue.queue ~= list or queue.current ~= current or list[1] ~= current
             or body.toolkitQueueOperation ~= token or token.toolkitCancelled or queue.toolkitGroupCancel or queue.toolkitCancel
-            or not live() or not body.stopOnWalk or not body:isStarted()
-            or not (player:isPlayerMoving() or player:pressedMovement(false)) then return end
-        local progress = body:getJobDelta()
-        if progress <= 0 or progress >= 1 then return end
-        local pending = {}
+            or not live() or not (player:isPlayerMoving() or player:pressedMovement(false)) then return end
+        if pickup then
+            if current.character ~= player or current.toolkitQueueOperation ~= token or not current.action
+                or not current.stopOnRun or not (player:isRunning() or player:isSprinting())
+                or current.srcContainer ~= pickup.source or current.destContainer ~= root
+                or body.action or body.started or queue:indexOf(body) <= 1 then return end
+        else
+            if not body.stopOnWalk or not body:isStarted() then return end
+            local progress = body:getJobDelta()
+            if progress <= 0 or progress >= 1 then return end
+        end
+        local pending, interrupted = {}, nil
         -- Keep removes the native row. Read the surviving rows in their current
         -- order, even if an edit shifted a sibling or moved another action here.
         for i = 2, #list do
@@ -96,54 +154,35 @@ local function bindNativeReturns(player, body, items, members, live, editor)
             if member then
                 membersByRow[row] = nil
                 remaining = remaining - 1
-                if nativeReturnRow(row, body, member, root, true) and Toolkit.ActionQueueSettlement.earned(member.handle) then
-                    pending[#pending+1] = member
+                if nativeReturnRow(row, body, member, root, true) then
+                    if Toolkit.ActionQueueSettlement.earned(member.handle) then
+                        pending[#pending+1] = member
+                    elseif member == pickup then
+                        interrupted = member
+                    end
                 end
                 if remaining == 0 then break end
             end
         end
-        if #pending == 0 then return end
-        local generation = (queue.toolkitOperationGeneration or 0) + 1
-        local cursor, issued = 1, nil
-        local function advance()
-            if ISTimedActionQueue.queues[player] ~= queue or queue.queue ~= list
-                or queue.toolkitOperationGeneration ~= generation
-                or player:isDead() or player:isAsleep() or getSpecificPlayer(player:getPlayerNum()) ~= player then return false end
-            if list[1] or queue.current then
-                return issued ~= nil and list[1] == issued and queue.current == issued and #list == 1
-            end
-            if player:hasTimedActions() or player:isPlayerMoving() or player:pressedMovement(false) then return true end
-            if not live() then return false end
-            while cursor <= #pending do
-                local member = pending[cursor]
-                cursor = cursor + 1
-                local item = root:getItemById(member.id)
-                if item and item:getFullType() == member.fullType and item:getContainer() == root
-                    and not player:isEquipped(item)
-                    and Toolkit.ActionQueuePolicy.isCarriedContainer(member.source, player)
-                    and member.source:hasRoomFor(player, item) then
-                    ISCraftingUI.ReturnItemToContainer(player, item, member.source)
-                    issued = list[1]
-                    return cursor <= #pending and issued ~= nil and issued.Type == "ISInventoryTransferAction"
-                        and issued.character == player and issued.srcContainer == root and issued.destContainer == member.source
-                        and issued.item == item and issued.allowMissingItems == true
-                end
-            end
-            return false
+        local receipt
+        local watch = interrupted and isClient() and rawget(_G, "pzWatchInterruptedPickup")
+        if type(watch) == "function" then
+            local ok, result = pcall(watch, current)
+            if ok then receipt = result end
         end
-        local function tick()
-            local ok, waiting = pcall(advance)
-            if not ok or not waiting then Events.OnTick.Remove(tick) end
-        end
-        Events.OnTick.Add(tick)
+        if #pending > 0 or receipt then returnAfterStop(player, queue, root, pending, interrupted, receipt, live) end
+    end
+    body[movementMarker] = stopped
+    for _, member in ipairs(members) do
+        member.action[movementMarker] = function(q) stopped(q, member) end
     end
     if editor then bindCancelledReturns(player, token, members) end
 end
 
-function Loans.movementStopped(body, queue)
-    local stopped = rawget(body, movementMarker)
+function Loans.movementStopped(action, queue)
+    local stopped = rawget(action, movementMarker)
     if stopped then
-        body[movementMarker] = nil
+        action[movementMarker] = nil
         stopped(queue)
     end
 end
@@ -258,7 +297,7 @@ local function captureLoans(player, body, selected, kept)
             end
             local handle = prepare(action,{guard=guard,capture=function() return {source=expected.source} end,
                 observed=function() return false end})
-            if handle then members[#members+1] = {handle=handle, item=item, source=expected.source, id=expected.id, fullType=expected.fullType} end
+            if handle then members[#members+1] = {handle=handle, action=action, item=item, source=expected.source, id=expected.id, fullType=expected.fullType} end
         end,
         returns = function(items)
             if #members == 0 or not live() then return end

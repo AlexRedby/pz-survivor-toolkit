@@ -2,7 +2,7 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'Entity/TimedActions/ISHandcraftAction'
 require 'ISUI/ISCraftingUI'
 local config=require 'QueueTestSelection'
-if config.cases[1]=='walk-editor-pinned-tools' or config.cases[1]=='walk-editor-keep-saw' or config.cases[1]=='complete-pinned-tools' or config.cases[1]=='walk-pinned-tools' or config.cases[1]=='walk-pinned-full' then require('QueueCraftWalk')();return end
+if config.cases[1]=='run-editor-pickup-drill' or config.cases[1]=='walk-editor-pinned-tools' or config.cases[1]=='walk-editor-keep-saw' or config.cases[1]=='complete-pinned-tools' or config.cases[1]=='walk-pinned-tools' or config.cases[1]=='walk-pinned-full' then require('QueueCraftWalk')();return end
 if config.cases[1]=='keep-craft-tool' or config.cases[1]=='cancel-pinned-tools' or config.cases[1]=='cancel-pinned-full' then require('QueueCraftKeep')();return end
 local Fixture=require 'QueueCraftFixture'
 local JSON=require 'QueueHealthEvents'

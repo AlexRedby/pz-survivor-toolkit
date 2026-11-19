@@ -14,7 +14,7 @@ public final class Main {
     private static int direction = -1;
     @LuaMethod(name="craftWalkInput", global=true)
     public static void input(IsoPlayer player, int value) {
-        if (GameServer.server || player == null || player != IsoPlayer.getInstance() || value < -1 || value > 4)
+        if (GameServer.server || player == null || player != IsoPlayer.getInstance() || value < -1 || value > 8)
             throw new IllegalArgumentException("Owned fixture player and direction required");
         owner = player;
         direction = value;
@@ -23,8 +23,9 @@ public final class Main {
         return !GameServer.server && owner != null && owner == IsoPlayer.getInstance() && direction >= 0;
     }
     public static boolean key(int key) {
-        return direction > 0 && key == Core.getInstance().getKey(
-            new String[]{"", "Forward", "Left", "Backward", "Right"}[direction]);
+        return direction > 4 && key == Core.getInstance().getKey("Run")
+            || direction > 0 && key == Core.getInstance().getKey(
+            new String[]{"", "Forward", "Left", "Backward", "Right"}[(direction - 1) % 4 + 1]);
     }
     @Patch(className="zombie.input.GameKeyboard", methodName="isKeyDown", warmUp=true, strictMatch=true)
     public static class Keys {
@@ -44,11 +45,21 @@ public final class Main {
     }
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="stop", warmUp=true, strictMatch=true)
     public static class Stop {
+        @Patch.OnEnter
+        public static void enter(@Patch.This LuaTimedActionNew action) {
+            if (!active() || action == null || LuaManager.env == null) return;
+            var table = action.getTable();
+            var observer = LuaManager.env.rawget("craftWalkStopEntering");
+            if (table == null || observer == null) return;
+            Object[] result = LuaManager.caller.pcall(LuaManager.thread, observer, table);
+            if (result.length == 0 || !Boolean.TRUE.equals(result[0]))
+                System.err.println("[QUEUE_TEST] FAIL craft walk native stop entry observer");
+        }
         @Patch.OnExit(onThrowable=Throwable.class)
         public static void exit(@Patch.This LuaTimedActionNew action, @Patch.Thrown Throwable failure) {
             if (!active() || action == null || LuaManager.env == null) return;
             var table = action.getTable();
-            if (table == null || !"ISHandcraftAction".equals(table.rawget("Type"))) return;
+            if (table == null || !("ISHandcraftAction".equals(table.rawget("Type")) || "ISInventoryTransferAction".equals(table.rawget("Type")))) return;
             var observer = LuaManager.env.rawget("craftWalkStopped");
             if (observer == null) return;
             Object[] result = LuaManager.caller.pcall(LuaManager.thread, observer, table, failure == null);

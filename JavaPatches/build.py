@@ -150,6 +150,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.GeneratorDropObservationChecks': '
           'net.alexredby.pztoolkitjavapatches.ItemTransactionClockChecks': 'ITEM_TRANSACTION_CLOCK_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ItemBatchAdmissionChecks': 'ITEM_BATCH_ADMISSION_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.NativeTransferRequestsChecks': 'NATIVE_TRANSFER_REQUESTS_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.InterruptedPickupChecks': 'INTERRUPTED_PICKUP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ActionValidityChecks': 'ACTION_VALIDITY_CHECKS_PASS',
@@ -444,7 +445,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.2.4',
+    'version': '0.2.5',
     'author': 'AlexRedby',
     'versionMin': '42.22',
     'versionMax': '42.22',

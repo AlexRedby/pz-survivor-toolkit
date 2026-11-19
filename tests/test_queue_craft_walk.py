@@ -23,6 +23,7 @@ class CraftWalkTests(unittest.TestCase):
         for index, case in enumerate(craft.EDITOR_ON_WALK_CASES if enabled else craft.EDITOR_OFF_CASES):
             base = 100 + 20 * index
             tools = [base, base+1]; bags = [base+2, base+3]
+            running = case == craft.RUN_PICKUP_CASE
             complete = case == 'complete-pinned-tools'; blocked = case == 'walk-pinned-full'
             kept = case == 'walk-editor-keep-saw'; retained = blocked or kept
             prep = dict(case=case, tools=tools, bags=bags, material=base+4, book=base+5,
@@ -39,7 +40,7 @@ class CraftWalkTests(unittest.TestCase):
             row = dict({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'}, event='case',
                        id=case, status='passed', producer='CraftChainRecipes.enqueue', queueEnabled=enabled,
                        toolIds=tools, pickupIds=tools, returnIds=returned, returnStarts=returned,
-                       craftProgress=True, tailProgress=complete, tailDiscarded=not complete,
+                       craftProgress=not running, tailProgress=complete, tailDiscarded=not complete,
                        nativeStop=not complete, nativeDuration=150, authorityVerified=True,
                        walkDistance=0 if complete else .3, walkProgress=0 if complete else .1,
                        inputReleased=True, blockedToolId=tools[0] if blocked else False)
@@ -47,6 +48,17 @@ class CraftWalkTests(unittest.TestCase):
                 row.update(instantActions=False, pauseOnFocusLoss=False, craftChainsEnabled=True, foreignReturnProvider=False,
                            eventTrace=['pickup-saw', 'pickup-drill', 'craft-progress'] + (['keep-saw'] if kept else []) +
                                       ['walk-input', 'native-stop'] + (['return-drill'] if kept else ['return-saw', 'return-drill']))
+                if running:
+                    row.update(runObserved=True, pickup=dict(itemId=tools[1], sourceId=bags[1], firstId=tools[0],
+                               firstConfirmed=True, sourcePresent=True, rootPresent=False, started=True, craftStarted=False,
+                               stopOnRun=True, progress=.1, duration=50, transaction=7 if kind=='mp' else 0,
+                               watchEnrolled=kind=='mp',
+                               done=False, rejected=False, stopEntry=dict(transaction=7 if kind=='mp' else 0,
+                               done=False, rejected=False, current=True, sourcePresent=True, rootPresent=False),
+                               stopTransaction=0, stopDone=False, stopRejected=False, finalTransaction=0,
+                               finalDone=False, finalRejected=False),
+                               eventTrace=['pickup-saw', 'pickup-drill', 'drill-progress', 'run-input', 'native-stop',
+                                           'return-saw', 'return-drill'])
                 if kept:
                     row.update(keptId=tools[0], keptSourceId=bags[0], siblingId=tools[1], siblingSourceId=bags[1],
                                keepSucceeded=True, keptRowPending=True, keptRowRemoved=True, siblingPreserved=True,
@@ -131,7 +143,7 @@ class CraftWalkTests(unittest.TestCase):
         from lupa import LuaRuntime
         source = (ROOT / 'tests/native_queue/craft/shared/QueueCraftWalk.lua').read_text()
         helpers = source[source.index('local function returnsFinished()'):source.index('local function chooseDirection(player)')]
-        gate = source[source.index('   if walk and walk.released then'):source.index("   assert(current and progress")]
+        gate = source[source.index('   if walk and walk.released then'):source.index("   assert(current and(progress")]
         lua = LuaRuntime()
         lua.execute("""
             local clock=1000
@@ -151,6 +163,7 @@ class CraftWalkTests(unittest.TestCase):
             local starts,returned={},{}
             local selected='walk-pinned-tools'
             local function case()return selected end
+            local function running()return false end
             local queue={queue={}}
             local function q()return queue end
             local moving=true
@@ -225,7 +238,7 @@ class CraftWalkTests(unittest.TestCase):
     def test_editor_on_server_endpoints_and_intact_material_are_required(self):
         for mutation in ('saw-returned', 'drill-root', 'wrong-origin', 'changed-saw', 'changed-material',
                          'consumed', 'output', 'authority-only'):
-            rows, raw = self.evidence('mp', enabled=True); receipt = raw[-1][1]
+            rows, raw = self.evidence('mp', enabled=True); receipt = raw[3][1]
             if mutation == 'saw-returned': receipt['resources'][0].update(sourceCount=1, rootCount=0)
             elif mutation == 'drill-root': receipt['resources'][1].update(sourceCount=0, rootCount=1)
             elif mutation == 'wrong-origin': receipt['resources'][1]['sourceId'] = receipt['resources'][0]['sourceId']
@@ -235,9 +248,72 @@ class CraftWalkTests(unittest.TestCase):
             elif mutation == 'output': receipt.update(outputs=1, outputIds=[900])
             else: receipt['toolsReturned'] = 2
             if mutation != 'authority-only':
-                rows[-1].update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
+                rows[1].update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
             with self.subTest(mutation=mutation):
                 self.assertTrue(self.verify('mp', (rows, raw), enabled=True)['issues'])
+
+
+    def test_run_during_second_pickup_requires_genuine_inflight_and_unchanged_authority(self):
+        for kind in ('sp', 'mp'):
+            self.assertEqual([], self.verify(kind, enabled=True)['issues'])
+        for key, value in [('firstConfirmed', False), ('sourcePresent', False), ('rootPresent', True),
+                           ('started', False), ('craftStarted', True), ('progress', 0), ('duration', 0),
+                           ('itemId', 1), ('sourceId', 1), ('transaction', 0), ('done', True), ('rejected', True),
+                           ('watchEnrolled', False), ('watchEnrolled', None), ('watchEnrolled', 1)]:
+            evidence = self.evidence('mp', enabled=True); evidence[0][-1]['pickup'][key] = value
+            with self.subTest(key=key):
+                self.assertTrue(self.verify('mp', evidence, enabled=True)['issues'])
+        for key, value in [('runObserved', False), ('craftProgress', True), ('returnStarts', []),
+                           ('eventTrace', ['run-input', 'native-stop'])]:
+            evidence = self.evidence('mp', enabled=True); evidence[0][-1][key] = value
+            with self.subTest(key=key):
+                self.assertTrue(self.verify('mp', evidence, enabled=True)['issues'])
+        for mutation in ('drill-root', 'saw-root', 'material-changed', 'output'):
+            rows, raw = self.evidence('mp', enabled=True); receipt = raw[-1][1]
+            if mutation == 'drill-root': receipt['resources'][1].update(sourceCount=0, rootCount=1)
+            elif mutation == 'saw-root': receipt['resources'][0].update(sourceCount=0, rootCount=1)
+            elif mutation == 'material-changed': receipt['materialCondition'] = 9
+            else: receipt.update(outputs=1, outputIds=[900])
+            rows[-1].update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.verify('mp', (rows, raw), enabled=True)['issues'])
+        rows, raw = self.evidence('mp', enabled=True)
+        rows[-1].update(returnIds=[rows[-1]['toolIds'][0]], returnStarts=[rows[-1]['toolIds'][0]])
+        rows[-1]['eventTrace'].remove('return-drill')
+        self.assertEqual([], self.verify('mp', (rows, raw), enabled=True)['issues'])
+
+    def test_host_pickup_watch_forwarder_preserves_result_and_restores_optional_global(self):
+        from lupa.lua51 import LuaRuntime
+        source = (ROOT / 'tests/native_queue/craft/shared/QueueCraftWalk.lua').read_text()
+        helpers = source[source.index('local function restorePickupWatch()'):source.index('local function keeping()')]
+        LuaRuntime().execute("""
+            local config={kind='mp'}
+            local pickupEvidence={}
+            local originalPickupWatch,pickupWatchForwarder
+        """ + helpers + """
+            local owned,foreign,receipt={},{},{}
+            local calls={}
+            local original=function(action)calls[#calls+1]=action;return receipt end
+            pzWatchInterruptedPickup=original
+            observePickupWatch(owned)
+            assert(pzWatchInterruptedPickup~=original and pickupEvidence.watchEnrolled==false)
+            assert(pzWatchInterruptedPickup(foreign)==receipt and pickupEvidence.watchEnrolled==false)
+            assert(pzWatchInterruptedPickup(owned)==receipt and pickupEvidence.watchEnrolled==true)
+            assert(calls[1]==foreign and calls[2]==owned)
+            restorePickupWatch();assert(pzWatchInterruptedPickup==original)
+            pzWatchInterruptedPickup=function()return nil end
+            local refusing=pzWatchInterruptedPickup
+            observePickupWatch(owned)
+            assert(pzWatchInterruptedPickup(owned)==nil and pickupEvidence.watchEnrolled==false)
+            restorePickupWatch();assert(pzWatchInterruptedPickup==refusing)
+            pzWatchInterruptedPickup=nil
+            observePickupWatch(owned)
+            assert(pzWatchInterruptedPickup==nil and pickupEvidence.watchEnrolled==false)
+            restorePickupWatch();assert(pzWatchInterruptedPickup==nil)
+            config.kind='sp';pzWatchInterruptedPickup=original;pickupEvidence={}
+            observePickupWatch(owned)
+            assert(pzWatchInterruptedPickup==original and pickupEvidence.watchEnrolled==nil)
+        """)
 
     def test_staging_builds_only_disposable_input_mod_and_tracks_its_sources(self):
         with tempfile.TemporaryDirectory() as directory:

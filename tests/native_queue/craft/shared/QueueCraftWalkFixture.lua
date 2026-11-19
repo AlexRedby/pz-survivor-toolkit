@@ -9,6 +9,22 @@ local function count(container,id)
  end
  return n
 end
+function F.inspect(state)
+ local resources={}
+ for i,meta in ipairs(state.toolMeta)do
+  local tool=state.root:getItemById(meta.id);local source=state.bags[i]:getItemContainer()
+  resources[i]={id=meta.id,sourceId=state.bags[i]:getID(),sourceCount=count(source,meta.id),
+   rootCount=tool and tool:getContainer()==state.root and 1 or 0,condition=tool and tool:getCondition()or false,
+   uses=tool and uses(tool)or false}
+ end
+ local material=state.root:getItemById(state.material:getID());local outputs={}
+ for i=0,state.root:getItems():size()-1 do
+  local item=state.root:getItems():get(i)
+  if item:getFullType()=='Base.WoodenStick2'and not state.outputBaseline[item:getID()]then outputs[#outputs+1]=item:getID()end
+ end
+ return {case=state.case,resources=resources,materialPresent=material~=nil,
+  materialCondition=material and material:getCondition()or false,materialUses=material and uses(material)or false,outputIds=outputs}
+end
 function F.verify(state)
  local root,complete=state.root,state.case=='complete-pinned-tools'
  local material=root:getItemById(state.material:getID())
