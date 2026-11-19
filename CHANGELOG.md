@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.25
+
+- With the queue editor off and P4 absent, walking away from a pinned craft returns borrowed tools to their carried bags once you stop moving. A full bag leaves its tool in inventory while other tools can return.
+
 ### 0.2.24
 
 - In games without P4 Tidy Up Meister, grooming now automatically returns a borrowed razor or ordinary scissors to the bag they came from and restores the previous hand item. This also works with the queue editor disabled.

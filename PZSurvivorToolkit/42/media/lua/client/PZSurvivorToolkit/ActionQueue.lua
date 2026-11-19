@@ -424,7 +424,11 @@ ISBaseTimedAction.stop = function(action)
         return
     end
     if queue then
-        if craft(action) then Toolkit.ActionQueueCraft.nativeStopped(action) end
+        if craft(action) then
+            local loans = Toolkit.ActionQueueCraftLoans
+            if loans and loans.movementStopped then pcall(loans.movementStopped, action, queue) end
+            Toolkit.ActionQueueCraft.nativeStopped(action)
+        end
         clearStop(queue); queue.toolkitGroupCancel = nil
     end
     return stop(action)

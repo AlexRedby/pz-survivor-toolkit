@@ -242,17 +242,27 @@ end
 -- The native producer owns this pickup only while its menu callback runs.
 -- Bind restoration to that episode before the first native begin.
 function Settlement.beginIndependentRestoration(episode, action)
-    local producer = Toolkit.ActionQueueRazorProducer
-    if not producer or not executionProof.closure(producer.owns, "ActionQueueRazorProducer.lua")
-        or not producer.owns(episode) or (action ~= episode.pickup and not (episode.belt and action == episode.equip))
-        or action ~= episode.currentAction
-        or action.character ~= episode.actor then return false end
+    local crafts = Toolkit.ActionQueueCraftLoans
+    local craftPickup = crafts and crafts.ownsPickup and crafts.ownsPickup(episode, action)
+        and executionProof.closure(crafts.ownsPickup, "ActionQueueCraftLoans.lua")
+    if not craftPickup then
+        local producer = Toolkit.ActionQueueRazorProducer
+        if not producer or not executionProof.closure(producer.owns, "ActionQueueRazorProducer.lua")
+            or not producer.owns(episode) or (action ~= episode.pickup and not (episode.belt and action == episode.equip))
+            or action ~= episode.currentAction then return false end
+    end
+    if action.character ~= episode.actor then return false end
     local token = action.toolkitQueueOperation
     local queue = ISTimedActionQueue.getTimedActionQueue(episode.actor)
     Toolkit.ActionQueue.updateOperationState(queue)
     if type(token) ~= "table" or token.toolkitCancelled then return false end
-    local record = operation(episode.actor, token, true, episode)
-    if not record or record.restoration ~= episode then return false end
+    local owner = craftPickup and crafts or episode
+    local record = operation(episode.actor, token, true, owner)
+    if not record or record.restoration ~= owner then return false end
+    if craftPickup then
+        record.craftPickups = record.craftPickups or {}
+        record.craftPickups[action] = true
+    end
     token[restorationMarker] = true
     return true
 end
@@ -263,6 +273,7 @@ function Settlement.restorationActive(action)
     local record = operation(action.character, token)
     local episode = record and record.restoration
     if not episode then return false end
+    if record.craftPickups then return record.craftPickups[action] == true end
     local step = record.actions[action]
     return action == episode.pickup or action == episode.equip or action == episode.body
         or step ~= nil and step.phase == "cleanup" and (episode.belt and action == episode.cleanup or step.returnClaim ~= nil or step.returnClaims ~= nil or step.required == true or step.returning ~= nil)
@@ -2044,7 +2055,9 @@ function Settlement.observePreparation(action, specification)
         else
             record.preparationScope = record.preparationScope or Settlement.deferred(action.character, record.token)
             scope = record.preparationScope
-            if record.restoration and record.restoration.pickup == action then borrowing(scope).restoration = record end
+            if record.restoration and (record.restoration.pickup == action or record.craftPickups and record.craftPickups[action]) then
+                borrowing(scope).restoration = record
+            end
             Settlement.remember(scope, action, {knownInputs = true, items = {[action.item:getID()] = true}})
             if not Settlement.preparePickup(scope, action) then step.preparation.failed = true; return end
         end

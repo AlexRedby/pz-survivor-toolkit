@@ -12,7 +12,8 @@ PINNED_FULL = 'cancel-pinned-full'
 PINNED_CANCELLATIONS = [PINNED_CANCEL, PINNED_FULL]
 PINNED_CASES = ['keep-craft-tool', *PINNED_CANCELLATIONS]
 KEEP_CASE = 'keep-craft-tool'
-CASES = PRESTART_CASES + ACTIVE_CASES + PINNED_CASES
+EDITOR_OFF_CASES = ['complete-pinned-tools', 'walk-pinned-tools', 'walk-pinned-full']
+CASES = PRESTART_CASES + ACTIVE_CASES + PINNED_CASES + EDITOR_OFF_CASES
 MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 
 
@@ -20,12 +21,16 @@ def definitions():
     return {'craft': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                                  'kinds': ['sp', 'mp'], 'languages': ['EN'],
-                                 'modes': ['toolkit'] if case in PINNED_CASES else ['native', 'toolkit']}
+                                 'modes': ['toolkit'] if case in PINNED_CASES else ['native'] if case in EDITOR_OFF_CASES else ['native', 'toolkit']}
                                 for case in CASES]}}
 
 
 def validate(selection):
     cases = selection.get('cases')
+    if isinstance(cases, list) and any(case in EDITOR_OFF_CASES for case in cases):
+        if (any(case not in EDITOR_OFF_CASES for case in cases) or selection.get('mode') != 'native'
+                or 'P4TidyUpMeister' in selection.get('mods', [])):
+            raise ValueError('Editor-off pinned craft requires an isolated native selection without P4TidyUpMeister')
     if isinstance(cases, list) and any(case in PINNED_CASES for case in cases) and (any(case not in PINNED_CASES for case in cases)
             or selection.get('mode') != 'toolkit' or 'P4TidyUpMeister' in selection.get('mods', [])):
         raise ValueError('Pinned craft scenarios require a Toolkit selection without P4TidyUpMeister')
@@ -40,13 +45,17 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted(path for path in (root / 'craft').rglob('*') if path.suffix in ('.lua', '.txt')),
-            root / 'health/shared/QueueHealthEvents.lua', *sorted((root / 'startup').rglob('*.lua'))]
+    return [*sorted(path for path in (root / 'craft').rglob('*') if path.suffix in ('.lua', '.txt', '.java')),
+            root / 'health/shared/QueueHealthEvents.lua', *sorted((root / 'startup').rglob('*.lua')),
+            Path(__file__).with_name('craft_walk.py')]
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     stage_common(project, output, game, jdk, selection, locations, runtime)
+    if selection['cases'][0] in EDITOR_OFF_CASES:
+        from . import craft_walk
+        craft_walk.stage(project, output, game, jdk, selection, runtime)
 
 
 def stage_common(project, output, game, jdk, selection, locations, runtime):
@@ -120,7 +129,7 @@ def _prepared_valid(prep, case):
     if not _ids(ids) or any(type(prep.get(key)) is not int or prep[key] < 0 for key in
                             ('outputs', 'materialCondition', 'materialUses')):
         return False
-    kinds = ('Base.Saw', 'Base.HandDrill') if case in PINNED_CASES else ('Base.Hammer', 'Base.Saw')
+    kinds = ('Base.Saw', 'Base.HandDrill') if case in PINNED_CASES + EDITOR_OFF_CASES else ('Base.Hammer', 'Base.Saw')
     for index, kind in enumerate(kinds):
         meta = prep['toolMeta'][index]
         if (type(meta) is not dict or set(meta) != {'id', 'kind', 'condition', 'uses'}
@@ -403,6 +412,9 @@ def _keep(selection, row, prep, receipt):
 
 
 def verify(root, selection, catalog):
+    if selection['cases'][0] in EDITOR_OFF_CASES:
+        from . import craft_walk
+        return craft_walk.verify(root, selection)
     from ..report import events
     root = Path(root)
     text = (root / 'client1-launch.log').read_text(errors='replace')

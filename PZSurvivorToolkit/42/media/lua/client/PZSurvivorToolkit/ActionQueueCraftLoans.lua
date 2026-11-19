@@ -8,6 +8,12 @@ local capture, origin, source = Proof.captureBindings, Proof.closure, Proof.matc
 local firstLine = getFirstLineOfClosure
 local pins
 
+local movementMarker = {}
+local observingEpisode, observingAction
+function Loans.ownsPickup(episode, action)
+    return episode ~= nil and episode == observingEpisode and action == observingAction
+end
+
 local cleanupMarker = {}
 local cleanupDefinitions
 
@@ -28,6 +34,17 @@ local function registerCleanup(definitions, operations)
     cleanupDefinitions = definitions
 end
 
+local function nativeReturnRow(row, body, member, root, afterPickup)
+    return row and row.Type == "ISInventoryTransferAction" and row.character == body.character
+        and row.toolkitQueueOperation == body.toolkitQueueOperation and not row.action and not row.started
+        and row.allowMissingItems == true and row.srcContainer == root and row.destContainer == member.source
+        -- Host replaces the item reference in an already queued return after
+        -- its native pickup. Accept only the current replica in this inventory.
+        and (row.item == member.item or afterPickup and isClient() and row.item
+            and row.item == root:getItemById(member.id) and row.item:getContainer() == root
+            and row.item:getID() == member.id and row.item:getFullType() == member.fullType)
+end
+
 local function bindCancelledReturns(player, body, returns, members)
     if #members < 2 or #members ~= #returns then return end
     local queue = ISTimedActionQueue.queues[player]
@@ -37,10 +54,7 @@ local function bindCancelledReturns(player, body, returns, members)
     local handles = {}
     for i, member in ipairs(members) do
         local row = queue.queue[index + i]
-        if not row or row.Type ~= "ISInventoryTransferAction" or row.character ~= player
-            or row.toolkitQueueOperation ~= token or row.action or row.started
-            or row.allowMissingItems ~= true or row.item ~= member.item or returns[i] ~= member.item
-            or row.srcContainer ~= player:getInventory() or row.destContainer ~= member.source then return end
+        if returns[i] ~= member.item or not nativeReturnRow(row, body, member, player:getInventory()) then return end
         handles[i] = member.handle
     end
     local settlement, operations, definitions = Toolkit.ActionQueueSettlement, Toolkit.ActionQueueOperations, Toolkit.ActionQueueDefinitions
@@ -59,6 +73,77 @@ local function bindCancelledReturns(player, body, returns, members)
     end
 end
 
+-- Capture only the native return rows the walk is about to discard. The Java
+-- movement handler also clears characterActions *after* the Lua stop returns.
+-- Issue fresh timed transfers on a later stationary tick, one tool at a time.
+local function bindMovementReturns(player, body, items, members, live)
+    local queue = ISTimedActionQueue.queues[player]
+    local index = queue and queue:indexOf(body)
+    if not index or index < 1 or #items ~= #members then return end
+    local list, root = queue.queue, player:getInventory()
+    for i, member in ipairs(members) do
+        local row = list[index+i]
+        if items[i] ~= member.item or not nativeReturnRow(row, body, member, root) then return end
+        member.row = row
+    end
+    body[movementMarker] = function(stoppedQueue)
+        if stoppedQueue ~= queue or queue.queue ~= list or queue.current ~= body or list[1] ~= body
+            or not live() or not body.stopOnWalk or not body:isStarted()
+            or not (player:isPlayerMoving() or player:pressedMovement(false)) then return end
+        local progress = body:getJobDelta()
+        if progress <= 0 or progress >= 1 then return end
+        local pending = {}
+        for i, member in ipairs(members) do
+            if list[1+i] == member.row and nativeReturnRow(member.row, body, member, root, true)
+                and Toolkit.ActionQueueSettlement.earned(member.handle) then
+                pending[#pending+1] = member
+            end
+        end
+        if #pending == 0 then return end
+        local generation = (queue.toolkitOperationGeneration or 0) + 1
+        local cursor, issued = 1, nil
+        local function advance()
+            if ISTimedActionQueue.queues[player] ~= queue or queue.queue ~= list
+                or queue.toolkitOperationGeneration ~= generation
+                or player:isDead() or player:isAsleep() or getSpecificPlayer(player:getPlayerNum()) ~= player then return false end
+            if list[1] or queue.current then
+                return issued ~= nil and list[1] == issued and queue.current == issued and #list == 1
+            end
+            if player:hasTimedActions() or player:isPlayerMoving() or player:pressedMovement(false) then return true end
+            if not live() then return false end
+            while cursor <= #pending do
+                local member = pending[cursor]
+                cursor = cursor + 1
+                local item = root:getItemById(member.id)
+                if item and item:getFullType() == member.fullType and item:getContainer() == root
+                    and not player:isEquipped(item)
+                    and Toolkit.ActionQueuePolicy.isCarriedContainer(member.source, player)
+                    and member.source:hasRoomFor(player, item) then
+                    ISCraftingUI.ReturnItemToContainer(player, item, member.source)
+                    issued = list[1]
+                    return cursor <= #pending and issued ~= nil and issued.Type == "ISInventoryTransferAction"
+                        and issued.character == player and issued.srcContainer == root and issued.destContainer == member.source
+                        and issued.item == item and issued.allowMissingItems == true
+                end
+            end
+            return false
+        end
+        local function tick()
+            local ok, waiting = pcall(advance)
+            if not ok or not waiting then Events.OnTick.Remove(tick) end
+        end
+        Events.OnTick.Add(tick)
+    end
+end
+
+function Loans.movementStopped(body, queue)
+    local stopped = rawget(body, movementMarker)
+    if stopped then
+        body[movementMarker] = nil
+        stopped(queue)
+    end
+end
+
 local function captureLoans(player, body, selected, kept)
     local settlement, policy, craft, definitions, settings, bulk = Toolkit.ActionQueueSettlement,
         Toolkit.ActionQueuePolicy, Toolkit.ActionQueueCraft, Toolkit.ActionQueueDefinitions, Toolkit.Settings, Toolkit.BulkActions
@@ -67,11 +152,13 @@ local function captureLoans(player, body, selected, kept)
         or type(settlement) ~= "table" or type(policy) ~= "table" or type(craft) ~= "table"
         or type(definitions) ~= "table" or type(settings) ~= "table" or type(bulk) ~= "table"
         or type(menu) ~= "table" or type(util) ~= "table" or type(selected) ~= "table"
-        or settings.actionQueue() ~= true or not instanceof(player, "IsoPlayer")
+        or not instanceof(player, "IsoPlayer")
         or getSpecificPlayer(player:getPlayerNum()) ~= player or player:isDead() or player:isAsleep()
         or player:hasTrait(CharacterTrait.DISORGANIZED) or not craft.supports(body)
         or body.character ~= player or body.action or body.started
         or body.craftRecipe:isCanBeDoneFromFloor() or kept:size() == 0 then return end
+    local editor = settings.actionQueue()
+    if not editor and type(settlement.beginIndependentRestoration) ~= "function" then return end
     -- Ordinary root-only crafts pay no source lease or binding scan. Retain
     -- only non-consuming kept tools; recipe books and other implicit inputs
     -- have no selected native input and cannot acquire a loan here.
@@ -136,7 +223,7 @@ local function captureLoans(player, body, selected, kept)
         pins = true
     end
     local function live()
-        if not watch() or enabled() ~= true or P4TidyUpMeister ~= nil then return false end
+        if not watch() or enabled() ~= editor or P4TidyUpMeister ~= nil then return false end
         local mods = activated()
         return mods and mods:contains("P4TidyUpMeister") == false and watch()
     end
@@ -146,7 +233,7 @@ local function captureLoans(player, body, selected, kept)
         if carried(expected.source,player) then carriedCount = carriedCount + 1 end
     end
     if carriedCount == 0 or not live() then return end
-    local members = {}
+    local members, episode = {}, {actor=player}
     return {
         pickup = function(action)
             local item = action.item
@@ -159,12 +246,23 @@ local function captureLoans(player, body, selected, kept)
                 return value == action and live() and value.character == player and value.srcContainer == expected.source
                     and value.destContainer == root and matches(value) and ordinary(value) and live()
             end
+            if not editor then
+                observingEpisode, observingAction = episode, action
+                local ok, admitted = pcall(settlement.beginIndependentRestoration, episode, action)
+                observingEpisode, observingAction = nil, nil
+                if not ok or not admitted then return end
+            end
             local handle = prepare(action,{guard=guard,capture=function() return {source=expected.source} end,
                 observed=function() return false end})
-            if handle then members[#members+1] = {handle=handle, item=item, source=expected.source} end
+            if handle then members[#members+1] = {handle=handle, item=item, source=expected.source, id=expected.id, fullType=expected.fullType} end
         end,
         returns = function(items)
-            if #members >= 2 and live() then bindCancelledReturns(player, body, items, members) end
+            if #members == 0 or not live() then return end
+            if editor then
+                bindCancelledReturns(player, body, items, members)
+            else
+                bindMovementReturns(player, body, items, members, live)
+            end
         end,
         body = function(action)
             if #members > 0 and action == body and live() then remember(action,inspect) end

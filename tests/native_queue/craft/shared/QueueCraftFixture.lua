@@ -1,5 +1,6 @@
 local Fixture={}
-local function active(case)return case=='cancel-craft' or case=='late-input'or case=='keep-craft-tool'or case=='cancel-pinned-tools'or case=='cancel-pinned-full'end
+local function editorOff(case)return case=='complete-pinned-tools'or case=='walk-pinned-tools'or case=='walk-pinned-full'end
+local function active(case)return editorOff(case) or case=='cancel-craft' or case=='late-input'or case=='keep-craft-tool'or case=='cancel-pinned-tools'or case=='cancel-pinned-full'end
 local function count(container,kind)
  local total=0
  for i=0,container:getItems():size()-1 do
@@ -20,7 +21,7 @@ local function uses(item)return instanceof(item,'DrainableComboItem') and item:g
 function Fixture.prepare(player,case)
  local inventory=player:getInventory()
  local state={case=case or 'borrowed-tools',player=player,root=inventory,bags={},tools={},toolMeta={}}
- local pinned=state.case=='keep-craft-tool'or state.case=='cancel-pinned-tools'or state.case=='cancel-pinned-full'
+ local pinned=editorOff(state.case)or state.case=='keep-craft-tool'or state.case=='cancel-pinned-tools'or state.case=='cancel-pinned-full'
  local toolKinds=pinned and {'Base.Saw','Base.HandDrill'}or {'Base.Hammer','Base.Saw'}
  for i,kind in ipairs(toolKinds) do
   local bag=assert(inventory:AddItem('Base.Bag_Schoolbag'))
@@ -102,7 +103,7 @@ end
 -- Apply the same capacity change on each authority/replica only after the
 -- exact saw is fetched. Keep both original container identities in the world.
 function Fixture.fillFirstOrigin(state)
- if state.case~='cancel-pinned-full' or state.fullOrigin then return end
+ if (state.case~='cancel-pinned-full' and state.case~='walk-pinned-full') or state.fullOrigin then return end
  local origin=state.bags[1]:getItemContainer()
  local saw=state.root:getItemById(state.tools[1]:getID())
  if not saw or saw:getContainer()~=state.root then return end
@@ -121,6 +122,7 @@ function Fixture.removeInput(state)
  return {case=state.case,materialId=item:getID(),removed=1,condition=item:getCondition(),uses=uses(item)}
 end
 function Fixture.verify(state,enabled)
+ if editorOff(state.case)then return require('QueueCraftWalkFixture').verify(state)end
  local player,inventory=state.player,state.player:getInventory()
  if state.case=='keep-craft-tool'then
   if identityCount(inventory,state.material:getID())~=0 then return nil,'kept craft plank was not consumed'end

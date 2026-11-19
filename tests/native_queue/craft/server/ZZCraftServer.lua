@@ -32,7 +32,7 @@ Events.OnClientCommand.Add(function(module,command,player,args)
  if not ok then fail(player,problem) end
 end)
 Events.OnTick.Add(function()
- if session and session.case=='cancel-pinned-full' then Fixture.fillFirstOrigin(session) end
+ if session and (session.case=='cancel-pinned-full' or session.case=='walk-pinned-full') then Fixture.fillFirstOrigin(session) end
  if waiting and waiting.player:getSquare() then
   local request=waiting;waiting=nil
   local ok,problem=pcall(prepare,request.player,request.case)
@@ -43,6 +43,7 @@ Events.OnTick.Add(function()
  if not ok then fail(pending.player,result);pending=nil
  elseif result then
   if session.case=='borrowed-tools' then print('[CRAFT_QUEUE_TEST] AUTHORITY consumed=1 outputs=1 toolsReturned=2 tailRead=true')
+  elseif session.case=='complete-pinned-tools'or session.case=='walk-pinned-tools'or session.case=='walk-pinned-full'then print('[CRAFT_QUEUE_TEST] WALK_AUTHORITY '..JSON.encode(result))
   elseif session.case=='keep-craft-tool'then print('[CRAFT_QUEUE_TEST] KEEP_AUTHORITY '..JSON.encode(result))
   elseif session.case=='cancel-craft'or session.case=='late-input'or session.case=='cancel-pinned-tools'or session.case=='cancel-pinned-full'then print('[CRAFT_QUEUE_TEST] ACTIVE_AUTHORITY '..JSON.encode(result))
   else print('[CRAFT_QUEUE_TEST] ABORT_AUTHORITY '..JSON.encode(result)) end
