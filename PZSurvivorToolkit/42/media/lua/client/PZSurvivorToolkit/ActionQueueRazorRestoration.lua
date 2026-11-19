@@ -1,5 +1,4 @@
--- P4 owns the selected pack until cutover. In P4-free games, install the
--- qualified generator and belt paths at startup. Other grooming paths remain opt-in.
+-- P4 owns grooming while present. Otherwise observe tools selected by the native menu.
 local Toolkit = PZSurvivorToolkit
 local Hand = require 'PZSurvivorToolkit/ActionQueueHandRestoration'
 local Heavy = require 'PZSurvivorToolkit/ActionQueueHeavyPickup'
@@ -10,9 +9,8 @@ Toolkit.ActionQueueRazorRestoration = Razor
 local installed = false
 local commandMarker = {}
 
-local defaultPathsOnly
-function Razor.enabled(actor)
-    return installed and (not defaultPathsOnly or not actor or Generator.holding(actor) or Belt.available(actor))
+function Razor.enabled()
+    return installed
 end
 
 local function command(actor, callback)
@@ -23,11 +21,8 @@ local function command(actor, callback)
     return action
 end
 
-function Razor.install(useDefaultPaths)
-    if installed then
-        if not useDefaultPaths then defaultPathsOnly = false end
-        return true
-    end
+function Razor.install()
+    if installed then return true end
     local definitions, ops = Toolkit.ActionQueueDefinitions, Toolkit.ActionQueueOperations
     if not definitions or not ops or not Toolkit.ActionQueueTidyIntent
         or not Toolkit.ActionQueueRestoration.prepareOwnHandIntent()
@@ -43,7 +38,6 @@ function Razor.install(useDefaultPaths)
                 equipment=action.character, deferred=true, cancelWaiting=true}
         end,
     })
-    defaultPathsOnly = useDefaultPaths == true
     installed = true
     return true
 end
@@ -78,7 +72,6 @@ function Razor.observe(episode, action)
         if not Toolkit.Settings.actionQueue() and not settlement.beginIndependentRestoration(episode, action) then return end
     end
     if action == episode.pickup then
-        if defaultPathsOnly and not Generator.holding(actor) then return end
         local itemType = tool:getFullType()
         if (itemType ~= 'Base.Razor' and itemType ~= 'Base.Scissors') or not policy.matchesNative(action)
             or not policy.isOrdinaryTransfer(action) or not policy.isCarriedContainer(action.srcContainer, actor)
@@ -290,7 +283,7 @@ function Razor.finish(episode)
 end
 
 if Events and Events.OnGameStart then Events.OnGameStart.Add(function()
-    if P4TidyUpMeister == nil and not getActivatedMods():contains('P4TidyUpMeister') then Razor.install(true) end
+    if P4TidyUpMeister == nil and not getActivatedMods():contains('P4TidyUpMeister') then Razor.install() end
 end) end
 
 return Razor

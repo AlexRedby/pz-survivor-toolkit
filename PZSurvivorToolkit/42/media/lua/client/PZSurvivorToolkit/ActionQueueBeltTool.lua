@@ -61,17 +61,4 @@ function Belt.current(actor,item)
  local ok,result=pcall(state,actor,item,true)
  if ok then return result end
 end
-function Belt.available(actor)
- local ok,result=pcall(function()
-  local hotbar=getPlayerHotbar(actor:getPlayerNum())
-  if not hotbar or type(hotbar.attachedItems)~='table' or getmetatable(hotbar.attachedItems) then return false end
-  -- This only opens observation of the menu. Capture verifies the item the
-  -- native producer actually selected, before any hand restoration is owned.
-  for _,item in pairs(hotbar.attachedItems)do
-   if item:getFullType()=='Base.Scissors' then return true end
-  end
-  return false
- end)
- return ok and result==true
-end
 return Belt

@@ -482,9 +482,8 @@ return function(client,options)
     if options.razor then
         env.require('PZSurvivorToolkit/ActionQueueTidyIntent')
         local razor=env.require('PZSurvivorToolkit/ActionQueueRazorRestoration')
-        if options.belt then
-            for _,callback in ipairs(events.OnGameStart or {})do callback()end
-        else assert(razor.install(),'qualification razor installation failed')end
+        for _,callback in ipairs(events.OnGameStart or {})do callback()end
+        assert(razor.enabled()==(not p4Enabled and not p4Selected),'incorrect grooming provider at startup')
     end
     local queue=env.ISTimedActionQueue.getTimedActionQueue(player)
     local function phase(action,name)

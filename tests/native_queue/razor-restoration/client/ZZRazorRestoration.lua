@@ -284,9 +284,10 @@ end
 local function produce()
  assert(empty()and F.same(F.snapshot(state),ids.baseline),'native producer baseline differs')
  assert(beltReady(),'exact native belt cache/slot not ready at menu boundary')
+ assert(Razor.enabled(getPlayer()),'shipped grooming path unavailable for prepared actor')
  actions,tracks,order={},{},{}
  local cut=ids.case=='cut-hair-scissors'
- evidence={before=F.snapshot(state),producer=cut and'ISCharacterScreen.onCutHair'or'ISCharacterScreen.onTrimBeard',target=cut and ids.targetHair or ids.targetBeard,installed=Razor.enabled()==true,
+ evidence={before=F.snapshot(state),producer=cut and'ISCharacterScreen.onCutHair'or'ISCharacterScreen.onTrimBeard',target=cut and ids.targetHair or ids.targetBeard,installed=Razor.enabled(getPlayer())==true,
   explicitRequested=false,initialRevision=T.ActionQueueTidyIntent.primaryRequestRevision(getPlayer())}
  if editorOff then evidence.editor={};editorTicks=0;observeEditor('before-producer')end
  assert(evidence.initialRevision~=nil,'own primary intent tracking unavailable')
@@ -552,7 +553,7 @@ require('QueuePreflight').onTick(Events,function()
    assert(config.mode=='toolkit'and not player:isTimedActionInstant(),'ordinary Toolkit native durations required')
    assert(not P4TidyUpMeister and not getActivatedMods():contains('P4TidyUpMeister'),'native own return provider required')
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not editorOff)
-   if not F.beltCase(config.cases[index])then assert(Razor.install()and Razor.enabled(),'real Razor.install consumer did not install')else assert(Razor.enabled(),'shipped grooming activation unavailable')end
+   assert(Razor.enabled(),'shipped grooming activation unavailable')
    player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false);getCore():setOptionAutoDrink(false);getCore():setOptionPauseOnFocusloss(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
    menu,cutMenu,primaryMenu=ISCharacterScreen.onTrimBeard,ISCharacterScreen.onCutHair,ISInventoryPaneContextMenu.OnPrimaryWeapon

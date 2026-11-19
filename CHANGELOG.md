@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.24
+
+- In games without P4 Tidy Up Meister, grooming now automatically returns a borrowed razor or ordinary scissors to the bag they came from and restores the previous hand item. This also works with the queue editor disabled.
+
 ### 0.2.23
 
 - Without P4 Tidy Up Meister, grooming with scissors from a belt slot restores the previous hand item after completion or cancellation. A later belt-slot choice takes precedence.
